@@ -1,3 +1,4 @@
+from urllib.parse import urlparse, urlunparse
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -32,22 +33,24 @@ class Settings(BaseSettings):
     celery_broker_url: str = ""
     celery_result_backend: str = ""
 
+    def _redis_with_db(self, db: int) -> str:
+        """Replace Redis DB number in URL using proper URL parsing."""
+        parsed = urlparse(self.redis_url)
+        return urlunparse(parsed._replace(path=f"/{db}"))
+
     @property
     def effective_celery_broker_url(self) -> str:
         """Use explicit CELERY_BROKER_URL if set, otherwise derive from REDIS_URL."""
         if self.celery_broker_url:
             return self.celery_broker_url
-        # Replace the DB number: /0 -> /1
-        base = self.redis_url.rsplit("/", 1)[0]
-        return f"{base}/1"
+        return self._redis_with_db(1)
 
     @property
     def effective_celery_result_backend(self) -> str:
         """Use explicit CELERY_RESULT_BACKEND if set, otherwise derive from REDIS_URL."""
         if self.celery_result_backend:
             return self.celery_result_backend
-        base = self.redis_url.rsplit("/", 1)[0]
-        return f"{base}/2"
+        return self._redis_with_db(2)
 
     # JWT — MUST be overridden via JWT_SECRET_KEY env var in production
     jwt_secret_key: str = "changeme_jwt_secret_at_least_32_chars_long"
