@@ -1,0 +1,85 @@
+{
+  "app_name": "SocyBase",
+  "tagline": "社交媒体数据提取平台",
+  "nav": {
+    "dashboard": "仪表盘",
+    "new_job": "新建任务",
+    "my_jobs": "我的任务",
+    "credits": "积分",
+    "history": "历史记录",
+    "settings": "设置",
+    "guides": "指南",
+    "fb_ads_guide": "FB广告指南",
+    "admin": "管理面板",
+    "sign_out": "退出登录"
+  },
+  "auth": {
+    "sign_in": "登录",
+    "sign_up": "注册账户",
+    "email": "邮箱",
+    "password": "密码",
+    "full_name": "全名",
+    "company_name": "公司/团队名称",
+    "no_account": "还没有账户？",
+    "has_account": "已有账户？",
+    "create_one": "立即注册",
+    "sign_in_link": "立即登录",
+    "signing_in": "登录中...",
+    "creating_account": "创建账户中..."
+  },
+  "dashboard": {
+    "welcome": "欢迎使用 SocyBase",
+    "credit_balance": "积分余额",
+    "credits_used": "已使用积分",
+    "quick_start": "快速开始",
+    "new_scraping_job": "新建数据提取任务",
+    "recent_jobs": "最近任务",
+    "view_all": "查看全部",
+    "no_jobs": "暂无任务。创建您的第一个数据提取任务吧！"
+  },
+  "jobs": {
+    "title": "我的任务",
+    "subtitle": "所有数据提取任务",
+    "new_job": "+ 新建任务",
+    "all": "全部",
+    "input": "输入",
+    "status": "状态",
+    "progress": "进度",
+    "results": "结果",
+    "credits": "积分",
+    "created": "创建时间",
+    "profiles": "个人资料",
+    "no_jobs": "未找到任务"
+  },
+  "credits": {
+    "title": "积分",
+    "subtitle": "购买积分以运行数据提取任务",
+    "current_balance": "当前余额",
+    "lifetime": "累计",
+    "purchased": "已购买",
+    "used": "已使用",
+    "choose_package": "选择套餐",
+    "payment_method": "支付方式",
+    "stripe": "Stripe",
+    "credit_card": "信用卡/借记卡",
+    "duitnow": "DuitNow",
+    "bank_transfer": "马来西亚银行转账",
+    "purchase": "购买积分",
+    "processing": "处理中...",
+    "bonus": "额外赠送！",
+    "per_credit": "/积分"
+  },
+  "export": {
+    "csv": "导出 CSV",
+    "fb_ads": "导出至 FB 广告管理器"
+  },
+  "status": {
+    "pending": "等待中",
+    "queued": "排队中",
+    "scheduled": "已计划",
+    "running": "运行中",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消"
+  }
+}

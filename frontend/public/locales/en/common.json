@@ -1,0 +1,85 @@
+{
+  "app_name": "SocyBase",
+  "tagline": "Social Media Data Extraction Platform",
+  "nav": {
+    "dashboard": "Dashboard",
+    "new_job": "New Job",
+    "my_jobs": "My Jobs",
+    "credits": "Credits",
+    "history": "History",
+    "settings": "Settings",
+    "guides": "Guides",
+    "fb_ads_guide": "FB Ads Guide",
+    "admin": "Admin Panel",
+    "sign_out": "Sign Out"
+  },
+  "auth": {
+    "sign_in": "Sign In",
+    "sign_up": "Create Account",
+    "email": "Email",
+    "password": "Password",
+    "full_name": "Full Name",
+    "company_name": "Company / Team Name",
+    "no_account": "Don't have an account?",
+    "has_account": "Already have an account?",
+    "create_one": "Create one",
+    "sign_in_link": "Sign in",
+    "signing_in": "Signing in...",
+    "creating_account": "Creating account..."
+  },
+  "dashboard": {
+    "welcome": "Welcome to SocyBase",
+    "credit_balance": "Credit Balance",
+    "credits_used": "Credits Used",
+    "quick_start": "Quick Start",
+    "new_scraping_job": "New Scraping Job",
+    "recent_jobs": "Recent Jobs",
+    "view_all": "View all",
+    "no_jobs": "No jobs yet. Create your first scraping job!"
+  },
+  "jobs": {
+    "title": "My Jobs",
+    "subtitle": "All your scraping jobs",
+    "new_job": "+ New Job",
+    "all": "All",
+    "input": "Input",
+    "status": "Status",
+    "progress": "Progress",
+    "results": "Results",
+    "credits": "Credits",
+    "created": "Created",
+    "profiles": "profiles",
+    "no_jobs": "No jobs found"
+  },
+  "credits": {
+    "title": "Credits",
+    "subtitle": "Purchase credits to run scraping jobs",
+    "current_balance": "Current Balance",
+    "lifetime": "Lifetime",
+    "purchased": "purchased",
+    "used": "used",
+    "choose_package": "Choose a Package",
+    "payment_method": "Payment Method",
+    "stripe": "Stripe",
+    "credit_card": "Credit/Debit Card",
+    "duitnow": "DuitNow",
+    "bank_transfer": "Malaysian Bank Transfer",
+    "purchase": "Purchase Credits",
+    "processing": "Processing...",
+    "bonus": "bonus!",
+    "per_credit": "/credit"
+  },
+  "export": {
+    "csv": "Export CSV",
+    "fb_ads": "Export for FB Ads Manager"
+  },
+  "status": {
+    "pending": "Pending",
+    "queued": "Queued",
+    "scheduled": "Scheduled",
+    "running": "Running",
+    "completed": "Completed",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  }
+}

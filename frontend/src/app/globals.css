@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
+    --radius: 0.75rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-navy-900 text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  /* Glassmorphism card */
+  .glass-card {
+    @apply rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-xl shadow-2xl;
+  }
+
+  /* Gradient text — brand color flow (matching logo) */
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #00AAFF, #7C5CFF, #FF3366, #FFAA00);
+  }
+
+  /* Softer gradient text for secondary elements */
+  .gradient-text-soft {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(90deg, #00AAFF, #7C5CFF, #FF3366);
+  }
+
+  /* Glow button — brand gradient */
+  .btn-glow {
+    @apply relative overflow-hidden rounded-xl px-6 py-3 text-white font-semibold transition-all duration-300
+           hover:scale-[1.03] hover:shadow-[0_8px_30px_rgba(124,92,255,0.4)];
+    background: linear-gradient(135deg, #00AAFF 0%, #7C5CFF 50%, #FF3366 100%);
+    background-size: 200% 200%;
+    animation: gradientX 6s ease infinite;
+  }
+
+  /* Outlined button variant */
+  .btn-outline {
+    @apply relative rounded-xl px-6 py-3 font-medium transition-all duration-300
+           border border-white/10 text-white/80 hover:text-white hover:border-white/25
+           hover:bg-white/[0.04] backdrop-blur-sm;
+  }
+
+  /* Input with glass effect */
+  .input-glass {
+    @apply w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3
+           text-white placeholder:text-white/30 backdrop-blur-sm
+           focus:border-[#7C5CFF]/50 focus:outline-none focus:ring-2 focus:ring-[#7C5CFF]/20
+           transition-all duration-200;
+  }
+
+  /* Brand icon colors */
+  .social-facebook { @apply text-[#1877F2]; }
+  .social-tiktok { @apply text-[#00F2EA]; }
+  .social-instagram { @apply text-[#E4405F]; }
+
+  /* Sidebar link */
+  .sidebar-link {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-white/60
+           transition-all duration-200 hover:bg-white/5 hover:text-white;
+  }
+  .sidebar-link.active {
+    @apply bg-primary-500/10 text-primary-400 border-l-2 border-primary-500;
+  }
+
+  /* Brand color border glow */
+  .border-social-glow {
+    border-image: linear-gradient(135deg, #00AAFF, #7C5CFF, #FF3366, #FFAA00) 1;
+  }
+
+  /* Refined glassmorphism — softer version */
+  .glass-card-soft {
+    @apply rounded-2xl border border-white/[0.05] bg-white/[0.02] backdrop-blur-xl;
+  }
+
+  /* Gradient mesh background — hero atmospheric layer */
+  .gradient-mesh-bg {
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 30%, rgba(0,170,255,0.08) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 80% at 75% 20%, rgba(124,92,255,0.07) 0%, transparent 55%),
+      radial-gradient(ellipse 70% 50% at 50% 80%, rgba(255,51,102,0.05) 0%, transparent 50%),
+      radial-gradient(ellipse 50% 60% at 85% 70%, rgba(255,170,0,0.04) 0%, transparent 50%);
+  }
+
+  /* Subtle dot grid pattern */
+  .dot-grid {
+    background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* Refined button — less saturated glow */
+  .btn-glow-refined {
+    @apply relative overflow-hidden rounded-xl px-6 py-3 text-white font-semibold transition-all duration-300
+           hover:scale-[1.02] hover:shadow-[0_8px_30px_rgba(124,92,255,0.3)];
+    background: linear-gradient(135deg, #0090dd 0%, #6a4de0 50%, #dd2a56 100%);
+    background-size: 200% 200%;
+    animation: gradientX 8s ease infinite;
+  }
+
+  /* Ghost button — refined */
+  .btn-ghost {
+    @apply relative rounded-xl px-6 py-3 font-medium transition-all duration-300
+           border border-white/[0.08] text-white/70 hover:text-white hover:border-white/20
+           hover:bg-white/[0.03];
+  }
+
+  /* Section accent line */
+  .accent-line {
+    @apply h-[2px] w-12 rounded-full;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}

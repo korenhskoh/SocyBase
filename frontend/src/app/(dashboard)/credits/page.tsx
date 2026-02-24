@@ -1,0 +1,272 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { creditsApi, paymentsApi, uploadsApi } from "@/lib/api-client";
+import { formatCredits, formatCurrency } from "@/lib/utils";
+import type { CreditBalance, CreditPackage } from "@/types";
+
+export default function CreditsPage() {
+  const [balance, setBalance] = useState<CreditBalance | null>(null);
+  const [packages, setPackages] = useState<CreditPackage[]>([]);
+  const [selectedPkg, setSelectedPkg] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"stripe" | "bank_transfer">("stripe");
+  const [loading, setLoading] = useState(false);
+  const [showBankModal, setShowBankModal] = useState(false);
+  const [bankReference, setBankReference] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    creditsApi.getBalance().then((r) => setBalance(r.data)).catch(() => {});
+    creditsApi.getPackages().then((r) => setPackages(r.data)).catch(() => {});
+  }, []);
+
+  const handlePurchase = async () => {
+    if (!selectedPkg) return;
+    setLoading(true);
+    try {
+      if (paymentMethod === "stripe") {
+        const res = await paymentsApi.createStripeCheckout(selectedPkg);
+        window.location.href = res.data.checkout_url;
+      } else {
+        setShowBankModal(true);
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Payment failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBankTransferSubmit = async () => {
+    if (!selectedPkg || !proofFile || !bankReference.trim()) {
+      alert("Please fill in the reference number and upload proof of payment");
+      return;
+    }
+    setUploading(true);
+    try {
+      const uploadRes = await uploadsApi.uploadProof(proofFile);
+      const proofUrl = uploadRes.data.proof_url;
+      await paymentsApi.submitBankTransfer({
+        package_id: selectedPkg,
+        reference: bankReference.trim(),
+        proof_url: proofUrl,
+      });
+      setShowBankModal(false);
+      setBankReference("");
+      setProofFile(null);
+      alert("Bank transfer submitted successfully! Awaiting admin approval.");
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Submission failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const selectedPackage = packages.find((p) => p.id === selectedPkg);
+
+  const packageColors = [
+    "from-primary-500 to-blue-600",
+    "from-accent-purple to-purple-700",
+    "from-accent-pink to-rose-600",
+    "from-cyan-500 to-teal-600",
+  ];
+
+  return (
+    <div className="space-y-8">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl md:text-3xl font-bold text-white">Credits</h1>
+        <p className="text-white/50 mt-1">Purchase credits to run scraping jobs</p>
+      </div>
+
+      {/* Current Balance */}
+      <div className="glass-card p-5 md:p-8">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm text-white/50">Current Balance</p>
+            <p className="text-3xl md:text-4xl font-bold gradient-text mt-1">
+              {balance ? formatCredits(balance.balance) : "---"}
+            </p>
+            <p className="text-xs text-white/30 mt-2">
+              Lifetime: {balance ? formatCredits(balance.lifetime_purchased) : "0"} purchased,{" "}
+              {balance ? formatCredits(balance.lifetime_used) : "0"} used
+            </p>
+          </div>
+          <div className="hidden sm:flex h-20 w-20 rounded-2xl bg-gradient-to-br from-primary-500/20 to-accent-purple/20 items-center justify-center shrink-0">
+            <svg className="h-10 w-10 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* Credit Packages */}
+      <div>
+        <h2 className="text-xl font-semibold text-white mb-4">Choose a Package</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {packages.map((pkg, i) => (
+            <button
+              key={pkg.id}
+              onClick={() => setSelectedPkg(pkg.id)}
+              className={`glass-card p-6 text-left transition-all hover:scale-[1.02] ${
+                selectedPkg === pkg.id
+                  ? "border-primary-500 shadow-[0_0_20px_rgba(59,130,246,0.2)]"
+                  : ""
+              }`}
+            >
+              <div className={`h-2 w-12 rounded-full bg-gradient-to-r ${packageColors[i % packageColors.length]} mb-4`} />
+              <h3 className="text-lg font-bold text-white">{pkg.name}</h3>
+              <p className="text-3xl font-bold text-white mt-2">
+                {formatCurrency(pkg.price_cents, pkg.currency)}
+              </p>
+              <div className="mt-3 space-y-1">
+                <p className="text-sm text-white/60">
+                  {formatCredits(pkg.credits)} credits
+                </p>
+                {pkg.bonus_credits > 0 && (
+                  <p className="text-sm text-emerald-400">
+                    +{formatCredits(pkg.bonus_credits)} bonus!
+                  </p>
+                )}
+              </div>
+              <p className="text-xs text-white/30 mt-2">
+                ~{formatCurrency(Math.round(pkg.price_cents / (pkg.credits + pkg.bonus_credits)), pkg.currency)}/credit
+              </p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Payment Method */}
+      {selectedPkg && (
+        <div className="space-y-4 animate-slide-up">
+          <h2 className="text-xl font-semibold text-white">Payment Method</h2>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setPaymentMethod("stripe")}
+              className={`flex-1 glass-card p-4 text-center transition-all ${
+                paymentMethod === "stripe" ? "border-primary-500 bg-primary-500/10" : ""
+              }`}
+            >
+              <p className="font-medium text-white">Stripe</p>
+              <p className="text-xs text-white/40 mt-1">Credit/Debit Card</p>
+            </button>
+            <button
+              onClick={() => setPaymentMethod("bank_transfer")}
+              className={`flex-1 glass-card p-4 text-center transition-all ${
+                paymentMethod === "bank_transfer" ? "border-primary-500 bg-primary-500/10" : ""
+              }`}
+            >
+              <p className="font-medium text-white">DuitNow</p>
+              <p className="text-xs text-white/40 mt-1">Malaysian Bank Transfer</p>
+            </button>
+          </div>
+
+          <button
+            onClick={handlePurchase}
+            disabled={loading}
+            className="btn-glow w-full text-lg py-4 disabled:opacity-50"
+          >
+            {loading ? "Processing..." : "Purchase Credits"}
+          </button>
+        </div>
+      )}
+
+      {/* Bank Transfer Modal */}
+      {showBankModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="glass-card max-w-md w-full mx-4 p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-bold text-white">
+                DuitNow Bank Transfer
+              </h3>
+              <button
+                onClick={() => setShowBankModal(false)}
+                className="text-white/40 hover:text-white text-2xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Bank Details */}
+            <div className="rounded-lg bg-white/5 border border-white/10 p-4 space-y-2">
+              <p className="text-sm text-white/40">Transfer to:</p>
+              <p className="text-white font-medium">SocyBase Sdn Bhd</p>
+              <p className="text-white/60 text-sm">Bank: Maybank</p>
+              <p className="text-white/60 text-sm">Account: 5621 2345 6789</p>
+              <p className="text-white/60 text-sm">
+                DuitNow ID: socybase@duitnow
+              </p>
+              <div className="mt-2 pt-2 border-t border-white/10">
+                <p className="text-sm text-white/40">Amount</p>
+                <p className="text-lg font-bold text-white">
+                  {selectedPackage
+                    ? formatCurrency(
+                        selectedPackage.price_cents,
+                        selectedPackage.currency
+                      )
+                    : "---"}
+                </p>
+              </div>
+            </div>
+
+            {/* Reference Number */}
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">
+                Transaction Reference Number
+              </label>
+              <input
+                type="text"
+                value={bankReference}
+                onChange={(e) => setBankReference(e.target.value)}
+                placeholder="e.g., FT2402221234567"
+                className="w-full rounded-lg bg-white/5 border border-white/10 px-4 py-2.5 text-white placeholder-white/30 focus:border-primary-500 focus:outline-none"
+              />
+            </div>
+
+            {/* File Upload */}
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">
+                Upload Payment Proof
+              </label>
+              <label className="flex items-center justify-center rounded-lg border-2 border-dashed border-white/10 hover:border-primary-500/30 p-6 cursor-pointer transition">
+                <input
+                  type="file"
+                  accept="image/*,.pdf"
+                  onChange={(e) =>
+                    setProofFile(e.target.files?.[0] || null)
+                  }
+                  className="hidden"
+                />
+                <div className="text-center">
+                  {proofFile ? (
+                    <p className="text-sm text-primary-400">{proofFile.name}</p>
+                  ) : (
+                    <>
+                      <p className="text-sm text-white/40">
+                        Click to upload screenshot
+                      </p>
+                      <p className="text-xs text-white/20 mt-1">
+                        JPG, PNG, PDF (max 10MB)
+                      </p>
+                    </>
+                  )}
+                </div>
+              </label>
+            </div>
+
+            {/* Submit */}
+            <button
+              onClick={handleBankTransferSubmit}
+              disabled={uploading || !bankReference.trim() || !proofFile}
+              className="btn-glow w-full py-3 disabled:opacity-50"
+            >
+              {uploading ? "Submitting..." : "Submit Bank Transfer"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
