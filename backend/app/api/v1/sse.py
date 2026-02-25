@@ -111,6 +111,10 @@ async def stream_job_progress(
         await pubsub.subscribe(channel)
 
         try:
+            # Read current stage from pipeline_state
+            pipeline_state = (job.error_details or {}).get("pipeline_state", {})
+            current_stage = pipeline_state.get("current_stage", "")
+
             # Send the initial state so the client has something immediately.
             yield {
                 "event": "progress",
@@ -121,6 +125,11 @@ async def stream_job_progress(
                     "total_items": job.total_items,
                     "failed_items": job.failed_items,
                     "result_row_count": job.result_row_count,
+                    "current_stage": current_stage,
+                    "stage_data": {
+                        k: v for k, v in pipeline_state.items()
+                        if k not in ("current_stage", "last_cursor")
+                    },
                 }),
             }
 
@@ -135,6 +144,8 @@ async def stream_job_progress(
                         "total_items": job.total_items,
                         "failed_items": job.failed_items,
                         "result_row_count": job.result_row_count,
+                        "current_stage": current_stage,
+                        "stage_data": {},
                     }),
                 }
                 return

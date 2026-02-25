@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { jobsApi, exportApi } from "@/lib/api-client";
@@ -8,15 +8,28 @@ import { formatDate, getStatusColor } from "@/lib/utils";
 import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile } from "@/types";
 
 const STAGE_LABELS: Record<string, string> = {
-  parse_input: "Parse Input",
-  fetch_comments: "Fetch Comments",
-  fetch_posts: "Fetch Posts",
-  deduplicate: "Deduplicate Users",
-  enrich_profiles: "Enrich Profiles",
-  finalize: "Finalize",
+  start: "Starting",
+  parse_input: "Parsing Input",
+  fetch_author: "Fetching Page Info",
+  fetch_comments: "Fetching Comments",
+  fetch_posts: "Fetching Posts",
+  deduplicate: "Finding Unique Users",
+  enrich_profiles: "Enriching Profiles",
+  finalize: "Finalizing",
 };
 
 const formatNumber = (n: number) => n.toLocaleString();
+
+interface ProgressEvent {
+  status: string;
+  progress_pct: number;
+  processed_items: number;
+  total_items: number;
+  failed_items: number;
+  result_row_count: number;
+  current_stage?: string;
+  stage_data?: Record<string, unknown>;
+}
 
 export default function JobDetailPage() {
   const params = useParams();
@@ -30,13 +43,18 @@ export default function JobDetailPage() {
   const [loading, setLoading] = useState(true);
   const [resuming, setResuming] = useState(false);
   const [queueInfo, setQueueInfo] = useState<{ position: number; estimated_seconds: number; ahead: number } | null>(null);
+  const [liveProgress, setLiveProgress] = useState<ProgressEvent | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
-  const fetchJob = useCallback(async () => {
+  const fetchJob = useCallback(async (opts?: { loadResults?: boolean }) => {
     try {
       const res = await jobsApi.get(jobId);
       setJob(res.data);
 
-      if (res.data.status === "completed" || res.data.status === "paused" || res.data.status === "cancelled") {
+      const loadResults = opts?.loadResults ||
+        ["completed", "paused", "cancelled"].includes(res.data.status);
+
+      if (loadResults) {
         if (res.data.job_type === "post_discovery") {
           const postRes = await jobsApi.getPosts(jobId, { page: 1, page_size: 200 });
           setPosts(postRes.data);
@@ -77,15 +95,98 @@ export default function JobDetailPage() {
     }
   }, [jobId]);
 
+  // SSE connection for real-time progress
+  const sseInitialized = useRef(false);
+
+  useEffect(() => {
+    if (!job) return;
+
+    const isActive = job.status === "running" || job.status === "queued";
+
+    if (!isActive) {
+      // Close any existing SSE connection for terminal states
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+        sseInitialized.current = false;
+      }
+      return;
+    }
+
+    // Don't create duplicate connections
+    if (eventSourceRef.current || sseInitialized.current) return;
+
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    if (!token) return;
+
+    sseInitialized.current = true;
+    const url = `${jobsApi.getProgressStreamUrl(jobId)}?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url);
+    eventSourceRef.current = es;
+
+    es.addEventListener("progress", (e) => {
+      try {
+        const data: ProgressEvent = JSON.parse(e.data);
+        setLiveProgress(data);
+
+        // Update key fields on the job object for consistency
+        setJob((prev) => prev ? {
+          ...prev,
+          progress_pct: data.progress_pct,
+          processed_items: data.processed_items,
+          total_items: data.total_items,
+          failed_items: data.failed_items,
+          result_row_count: data.result_row_count,
+        } : prev);
+      } catch { /* ignore parse errors */ }
+    });
+
+    es.addEventListener("done", (e) => {
+      try {
+        const data: ProgressEvent = JSON.parse(e.data);
+        setLiveProgress(data);
+        // Update the job status to terminal so the UI re-renders correctly
+        setJob((prev) => prev ? {
+          ...prev,
+          status: data.status as ScrapingJob["status"],
+          progress_pct: data.progress_pct,
+          processed_items: data.processed_items,
+          total_items: data.total_items,
+          failed_items: data.failed_items,
+          result_row_count: data.result_row_count,
+        } : prev);
+      } catch { /* ignore */ }
+      es.close();
+      eventSourceRef.current = null;
+      sseInitialized.current = false;
+      // Re-fetch full job data (includes results, profiles, etc.)
+      fetchJob({ loadResults: true });
+    });
+
+    es.onerror = () => {
+      // SSE failed — fall back to polling
+      es.close();
+      eventSourceRef.current = null;
+      sseInitialized.current = false;
+    };
+
+    return () => {
+      es.close();
+      eventSourceRef.current = null;
+      sseInitialized.current = false;
+    };
+  }, [job?.status, jobId, fetchJob]);
+
+  // Initial fetch + fallback poll (only if SSE is not connected)
   useEffect(() => {
     fetchJob();
 
-    // Poll for progress if job is running
     const interval = setInterval(() => {
-      if (job?.status === "running" || job?.status === "queued") {
+      // Only poll if SSE is not active
+      if (!eventSourceRef.current && (job?.status === "running" || job?.status === "queued")) {
         fetchJob();
       }
-    }, 3000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [fetchJob, job?.status]);
@@ -278,28 +379,74 @@ export default function JobDetailPage() {
       {/* Progress Card */}
       {(job.status === "running" || job.status === "queued") && (
         <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-white/60">Progress</p>
-            {isPostDiscovery ? (
-              <p className="text-sm font-medium text-white">
-                {posts.length} posts discovered
-              </p>
-            ) : (
-              <p className="text-sm font-medium text-white">
-                {job.processed_items} / {job.total_items} profiles
-              </p>
-            )}
-          </div>
-          <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-primary-500 via-accent-purple to-accent-pink rounded-full transition-all duration-500 animate-pulse"
-              style={{ width: `${job.progress_pct}%` }}
-            />
-          </div>
-          <p className="text-xs text-white/30 mt-2">
-            {Number(job.progress_pct).toFixed(1)}% complete
-            {job.failed_items > 0 && ` - ${job.failed_items} failed`}
-          </p>
+          {(() => {
+            const stage = liveProgress?.current_stage || "";
+            const stageData = liveProgress?.stage_data || {};
+            const pct = liveProgress?.progress_pct ?? job.progress_pct;
+            const processed = liveProgress?.processed_items ?? job.processed_items;
+            const total = liveProgress?.total_items ?? job.total_items;
+
+            // Stage-aware status text
+            let stageText = "";
+            let detailText = "";
+            if (isPostDiscovery) {
+              stageText = "Discovering posts";
+              detailText = `${posts.length} posts found`;
+            } else if (stage === "parse_input" || stage === "start") {
+              stageText = "Starting pipeline";
+              detailText = "Parsing input URL...";
+            } else if (stage === "fetch_author") {
+              stageText = "Fetching page info";
+              detailText = stageData.name ? `Page: ${stageData.name}` : "Loading page details...";
+            } else if (stage === "fetch_comments") {
+              stageText = "Fetching comments";
+              const pages = stageData.pages_fetched || 0;
+              const comments = stageData.total_comments || 0;
+              detailText = `${formatNumber(comments)} comments from ${pages} page${pages !== 1 ? "s" : ""}`;
+            } else if (stage === "deduplicate") {
+              stageText = "Finding unique users";
+              const users = stageData.unique_users || total;
+              detailText = users > 0 ? `${formatNumber(users)} unique users found` : "Deduplicating...";
+            } else if (stage === "enrich_profiles") {
+              stageText = "Enriching profiles";
+              detailText = `${formatNumber(processed)} / ${formatNumber(total)} profiles`;
+            } else if (stage === "finalize") {
+              stageText = "Finalizing";
+              detailText = "Compiling results...";
+            } else {
+              stageText = "Processing";
+              detailText = total > 0 ? `${formatNumber(processed)} / ${formatNumber(total)} profiles` : "Initializing...";
+            }
+
+            return (
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="h-2 w-2 rounded-full bg-primary-400 animate-pulse" />
+                    <p className="text-sm font-medium text-white">{stageText}</p>
+                  </div>
+                  <p className="text-sm text-white/60">{detailText}</p>
+                </div>
+                <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-primary-500 via-accent-purple to-accent-pink rounded-full transition-all duration-700"
+                    style={{ width: `${Math.max(pct, 2)}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between mt-2">
+                  <p className="text-xs text-white/30">
+                    {Number(pct).toFixed(1)}% complete
+                    {(liveProgress?.failed_items ?? job.failed_items) > 0 && ` - ${liveProgress?.failed_items ?? job.failed_items} failed`}
+                  </p>
+                  {stage && (
+                    <p className="text-xs text-white/20">
+                      {STAGE_LABELS[stage] || stage}
+                    </p>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 

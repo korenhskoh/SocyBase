@@ -32,6 +32,51 @@ logger = logging.getLogger(__name__)
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
+def _calc_stage_progress(stage: str, **ctx) -> float:
+    """Calculate overall progress percentage based on current pipeline stage.
+
+    Stage weights:
+      parse_input   →  0-5%
+      fetch_author  →  5-8%
+      fetch_comments→  8-35%  (scales with pages fetched)
+      deduplicate   → 35-40%
+      enrich_profiles→ 40-98% (scales with profiles done)
+      finalize      → 100%
+    """
+    if stage == "parse_input":
+        return 5.0
+    if stage == "fetch_author":
+        return 8.0
+    if stage == "fetch_comments":
+        pages = ctx.get("pages_fetched", 0)
+        return min(8.0 + pages * 2.0, 35.0)
+    if stage == "deduplicate":
+        return 38.0
+    if stage == "enrich_profiles":
+        done = ctx.get("done", 0)
+        total = ctx.get("total", 1)
+        if total == 0:
+            return 40.0
+        return round(40.0 + (done / total) * 58.0, 2)
+    if stage == "finalize":
+        return 100.0
+    return 0.0
+
+
+def _build_progress_event(job: ScrapingJob, stage: str, stage_data: dict | None = None) -> dict:
+    """Build a progress event dict with stage info for Redis publish."""
+    return {
+        "status": job.status,
+        "progress_pct": float(job.progress_pct),
+        "processed_items": job.processed_items,
+        "total_items": job.total_items,
+        "failed_items": job.failed_items,
+        "result_row_count": job.result_row_count,
+        "current_stage": stage,
+        "stage_data": stage_data or {},
+    }
+
+
 async def _save_pipeline_state(db: AsyncSession, job: ScrapingJob, stage: str, **extra):
     """Persist incremental pipeline progress to error_details.pipeline_state."""
     current = dict(job.error_details or {})
@@ -141,14 +186,7 @@ async def _execute_pipeline(job_id: str, celery_task):
             await _append_log(db, job, "info", "start", "Job started")
 
             # Publish initial "running" state to SSE subscribers
-            publish_job_progress(str(job.id), {
-                "status": job.status,
-                "progress_pct": float(job.progress_pct),
-                "processed_items": job.processed_items,
-                "total_items": job.total_items,
-                "failed_items": job.failed_items,
-                "result_row_count": job.result_row_count,
-            })
+            publish_job_progress(str(job.id), _build_progress_event(job, "start"))
 
             # Read job settings
             job_settings = job.settings or {}
@@ -174,14 +212,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "parse_input")
                     await _append_log(db, job, "warn", "parse_input", f"Job {current_status} by user")
-                    publish_job_progress(str(job.id), {
-                        "status": job.status,
-                        "progress_pct": float(job.progress_pct),
-                        "processed_items": job.processed_items,
-                        "total_items": job.total_items,
-                        "failed_items": job.failed_items,
-                        "result_row_count": job.result_row_count,
-                    })
+                    publish_job_progress(str(job.id), _build_progress_event(job, "parse_input"))
                     return
 
                 logger.info(f"[Job {job_id}] Stage 1: Parsing input")
@@ -190,7 +221,9 @@ async def _execute_pipeline(job_id: str, celery_task):
                 post_id = parsed["post_id"]
                 is_group = parsed["is_group"]
                 job.input_metadata = parsed
+                job.progress_pct = _calc_stage_progress("parse_input")
                 await _save_pipeline_state(db, job, "parse_input")
+                publish_job_progress(str(job.id), _build_progress_event(job, "parse_input"))
 
                 # ── STAGE 1.5: Fetch page/author profile ────────
                 page_id = parsed.get("page_id")
@@ -219,7 +252,12 @@ async def _execute_pipeline(job_id: str, celery_task):
                         )
                         db.add(author_profile)
                         await db.commit()
+                        job.progress_pct = _calc_stage_progress("fetch_author")
                         await _save_pipeline_state(db, job, "fetch_author")
+                        publish_job_progress(str(job.id), _build_progress_event(
+                            job, "fetch_author",
+                            {"name": author_mapped.get("name")},
+                        ))
                         logger.info(f"[Job {job_id}] Author profile saved: {author_mapped.get('name')}")
                         await _append_log(db, job, "info", "fetch_author", f"Author profile saved: {author_mapped.get('name')}")
                     except Exception as author_err:
@@ -233,14 +271,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "fetch_comments")
                     await _append_log(db, job, "warn", "fetch_comments", f"Job {current_status} by user")
-                    publish_job_progress(str(job.id), {
-                        "status": job.status,
-                        "progress_pct": float(job.progress_pct),
-                        "processed_items": job.processed_items,
-                        "total_items": job.total_items,
-                        "failed_items": job.failed_items,
-                        "result_row_count": job.result_row_count,
-                    })
+                    publish_job_progress(str(job.id), _build_progress_event(job, "fetch_comments"))
                     return
 
                 logger.info(f"[Job {job_id}] Stage 2: Fetching comments for post {post_id}")
@@ -333,12 +364,19 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                         # Save cursor after each page
                         next_cursor = extracted.get("next_cursor")
+                        job.progress_pct = _calc_stage_progress("fetch_comments", pages_fetched=page_count)
                         await _save_pipeline_state(
                             db, job, "fetch_comments",
                             comment_pages_fetched=page_count,
                             last_cursor=next_cursor,
                             total_comments_fetched=len(all_comments),
                         )
+
+                        # Publish progress after each page
+                        publish_job_progress(str(job.id), _build_progress_event(
+                            job, "fetch_comments",
+                            {"pages_fetched": page_count, "total_comments": len(all_comments)},
+                        ))
 
                         # Check for pause/cancel after each page fetch
                         current_status = await _check_job_status(db, job.id)
@@ -351,14 +389,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 total_comments_fetched=len(all_comments),
                             )
                             await _append_log(db, job, "warn", "fetch_comments", f"Job {current_status} by user after {page_count} pages")
-                            publish_job_progress(str(job.id), {
-                                "status": job.status,
-                                "progress_pct": float(job.progress_pct),
-                                "processed_items": job.processed_items,
-                                "total_items": job.total_items,
-                                "failed_items": job.failed_items,
-                                "result_row_count": job.result_row_count,
-                            })
+                            publish_job_progress(str(job.id), _build_progress_event(job, "fetch_comments"))
                             return
 
                         if not extracted["has_next"] or not next_cursor:
@@ -374,14 +405,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "deduplicate")
                     await _append_log(db, job, "warn", "deduplicate", f"Job {current_status} by user")
-                    publish_job_progress(str(job.id), {
-                        "status": job.status,
-                        "progress_pct": float(job.progress_pct),
-                        "processed_items": job.processed_items,
-                        "total_items": job.total_items,
-                        "failed_items": job.failed_items,
-                        "result_row_count": job.result_row_count,
-                    })
+                    publish_job_progress(str(job.id), _build_progress_event(job, "deduplicate"))
                     return
 
                 logger.info(f"[Job {job_id}] Stage 3: Deduplicating user IDs")
@@ -414,10 +438,15 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                 user_ids = list(unique_users.keys())
                 job.total_items = len(user_ids)
+                job.progress_pct = _calc_stage_progress("deduplicate")
                 await _save_pipeline_state(
                     db, job, "deduplicate",
                     unique_user_ids_found=len(user_ids),
                 )
+                publish_job_progress(str(job.id), _build_progress_event(
+                    job, "deduplicate",
+                    {"unique_users": len(user_ids), "total_comments": len(all_comments)},
+                ))
 
                 logger.info(f"[Job {job_id}] Found {len(user_ids)} unique users")
                 await _append_log(db, job, "info", "deduplicate", f"Found {len(user_ids)} unique users")
@@ -505,18 +534,17 @@ async def _execute_pipeline(job_id: str, celery_task):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "enrich_profiles")
                     await _append_log(db, job, "warn", "enrich_profiles", f"Job {current_status} by user")
-                    publish_job_progress(str(job.id), {
-                        "status": job.status,
-                        "progress_pct": float(job.progress_pct),
-                        "processed_items": job.processed_items,
-                        "total_items": job.total_items,
-                        "failed_items": job.failed_items,
-                        "result_row_count": job.result_row_count,
-                    })
+                    publish_job_progress(str(job.id), _build_progress_event(job, "enrich_profiles"))
                     return
 
                 logger.info(f"[Job {job_id}] Stage 4: Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
                 await _append_log(db, job, "info", "enrich_profiles", f"Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
+                job.progress_pct = _calc_stage_progress("enrich_profiles", done=already_done, total=len(user_ids))
+                publish_job_progress(str(job.id), _build_progress_event(
+                    job, "enrich_profiles",
+                    {"profiles_done": already_done, "profiles_total": len(user_ids),
+                     "profiles_failed": 0},
+                ))
                 credits_used = new_pages if resume_from_job_id else page_count
                 already_done = len(skip_user_ids)
 
@@ -578,7 +606,9 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                     total_done = already_done + i + 1
                     job.processed_items = total_done
-                    job.progress_pct = round(total_done / len(user_ids) * 100, 2)
+                    job.progress_pct = _calc_stage_progress(
+                        "enrich_profiles", done=total_done, total=len(user_ids),
+                    )
                     await _save_pipeline_state(
                         db, job, "enrich_profiles",
                         profiles_enriched=total_done,
@@ -596,14 +626,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 profiles_failed=job.failed_items,
                             )
                             await _append_log(db, job, "warn", "enrich_profiles", f"Job {current_status} by user after {total_done} profiles")
-                            publish_job_progress(str(job.id), {
-                                "status": job.status,
-                                "progress_pct": float(job.progress_pct),
-                                "processed_items": job.processed_items,
-                                "total_items": job.total_items,
-                                "failed_items": job.failed_items,
-                                "result_row_count": job.result_row_count,
-                            })
+                            publish_job_progress(str(job.id), _build_progress_event(job, "enrich_profiles"))
                             return
 
                     # Update Celery task state for progress tracking
@@ -617,14 +640,11 @@ async def _execute_pipeline(job_id: str, celery_task):
                     )
 
                     # Publish progress to SSE subscribers
-                    publish_job_progress(str(job.id), {
-                        "status": job.status,
-                        "progress_pct": float(job.progress_pct),
-                        "processed_items": job.processed_items,
-                        "total_items": job.total_items,
-                        "failed_items": job.failed_items,
-                        "result_row_count": job.result_row_count,
-                    })
+                    publish_job_progress(str(job.id), _build_progress_event(
+                        job, "enrich_profiles",
+                        {"profiles_done": total_done, "profiles_total": len(user_ids),
+                         "profiles_failed": job.failed_items},
+                    ))
 
                 # ── STAGE 5: Finalize ────────────────────────────
                 # Check status before starting stage
@@ -633,14 +653,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "finalize")
                     await _append_log(db, job, "warn", "finalize", f"Job {current_status} by user")
-                    publish_job_progress(str(job.id), {
-                        "status": job.status,
-                        "progress_pct": float(job.progress_pct),
-                        "processed_items": job.processed_items,
-                        "total_items": job.total_items,
-                        "failed_items": job.failed_items,
-                        "result_row_count": job.result_row_count,
-                    })
+                    publish_job_progress(str(job.id), _build_progress_event(job, "finalize"))
                     return
 
                 logger.info(f"[Job {job_id}] Stage 5: Compiling results")
@@ -648,6 +661,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                 job.credits_used = credits_used
                 job.status = "completed"
                 job.completed_at = datetime.now(timezone.utc)
+                job.progress_pct = _calc_stage_progress("finalize")
 
                 # Count successful results
                 count_result = await db.execute(
@@ -680,14 +694,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                 await _append_log(db, job, "info", "finalize", f"Completed: {job.result_row_count} profiles, {credits_used} credits used")
 
                 # Publish completion to SSE subscribers
-                publish_job_progress(str(job.id), {
-                    "status": job.status,
-                    "progress_pct": float(job.progress_pct),
-                    "processed_items": job.processed_items,
-                    "total_items": job.total_items,
-                    "failed_items": job.failed_items,
-                    "result_row_count": job.result_row_count,
-                })
+                publish_job_progress(str(job.id), _build_progress_event(job, "finalize"))
 
                 logger.info(
                     f"[Job {job_id}] Completed: {job.result_row_count} profiles, "
@@ -728,14 +735,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                 await _append_log(db, job, "error", failed_stage, f"Pipeline failed: {type(e).__name__}: {e}")
 
                 # Publish failure to SSE subscribers
-                publish_job_progress(str(job.id), {
-                    "status": job.status,
-                    "progress_pct": float(job.progress_pct),
-                    "processed_items": job.processed_items,
-                    "total_items": job.total_items,
-                    "failed_items": job.failed_items,
-                    "result_row_count": job.result_row_count,
-                })
+                publish_job_progress(str(job.id), _build_progress_event(job, failed_stage))
 
                 # Send failure notification
                 try:
