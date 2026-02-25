@@ -1,6 +1,5 @@
 import os
 import logging
-import traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -93,12 +92,25 @@ async def lifespan(app: FastAPI):
         # Add columns that were added to models after the table was first created.
         # create_all only creates NEW tables; it won't alter existing ones.
         missing_columns = [
+            # scraped_profiles — added after initial table creation
             ("scraped_profiles", "birthday", "VARCHAR(100)"),
             ("scraped_profiles", "relationship", "VARCHAR(255)"),
             ("scraped_profiles", "website", "TEXT"),
             ("scraped_profiles", "languages", "TEXT"),
             ("scraped_profiles", "phone", "VARCHAR(100)"),
             ("scraped_profiles", "picture_url", "TEXT"),
+            # scraped_posts — added after initial table creation
+            ("scraped_posts", "updated_time", "TIMESTAMPTZ"),
+            ("scraped_posts", "from_name", "VARCHAR(255)"),
+            ("scraped_posts", "from_id", "VARCHAR(255)"),
+            ("scraped_posts", "comment_count", "INTEGER DEFAULT 0"),
+            ("scraped_posts", "reaction_count", "INTEGER DEFAULT 0"),
+            ("scraped_posts", "share_count", "INTEGER DEFAULT 0"),
+            ("scraped_posts", "attachment_type", "VARCHAR(50)"),
+            ("scraped_posts", "attachment_url", "TEXT"),
+            ("scraped_posts", "post_url", "TEXT"),
+            # credit_balances — may have been added after initial table creation
+            ("credit_balances", "lifetime_used", "INTEGER DEFAULT 0"),
         ]
         for tbl, col, col_type in missing_columns:
             await conn.execute(text(
