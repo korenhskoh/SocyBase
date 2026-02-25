@@ -42,6 +42,7 @@ export default function JobDetailPage() {
   const [postsPageSize, setPostsPageSize] = useState(50);
   const [author, setAuthor] = useState<PageAuthorProfile | null>(null);
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
+  const [showOnlyHighPotential, setShowOnlyHighPotential] = useState(false);
   const [creatingJobs, setCreatingJobs] = useState(false);
   const [loading, setLoading] = useState(true);
   const [resuming, setResuming] = useState(false);
@@ -307,12 +308,21 @@ export default function JobDetailPage() {
   };
 
   const toggleAllPosts = () => {
-    if (selectedPosts.size === posts.length) {
+    if (selectedPosts.size === displayedPosts.length) {
       setSelectedPosts(new Set());
     } else {
-      setSelectedPosts(new Set(posts.map(p => p.post_id)));
+      setSelectedPosts(new Set(displayedPosts.map(p => p.post_id)));
     }
   };
+
+  // High-potential post detection
+  const HIGH_POTENTIAL_TYPES = new Set(["video_inline", "video", "photo", "native_templates", "share", "album"]);
+  const isHighPotential = (p: ScrapedPost) =>
+    p.comment_count >= 50 && p.reaction_count >= 20 &&
+    (HIGH_POTENTIAL_TYPES.has(p.attachment_type || "") || !p.attachment_type || p.attachment_type === "post");
+
+  const highPotentialCount = posts.filter(isHighPotential).length;
+  const displayedPosts = showOnlyHighPotential ? posts.filter(isHighPotential) : posts;
 
   const handleScrapeSelected = async () => {
     if (selectedPosts.size === 0) return;
@@ -739,9 +749,24 @@ export default function JobDetailPage() {
       {isPostDiscovery && (posts.length > 0 || postsTotal > 0) && (
         <div className="glass-card overflow-x-auto">
           <div className="p-4 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-white">
-              Discovered Posts ({postsTotal || posts.length})
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold text-white">
+                Discovered Posts ({postsTotal || posts.length})
+              </h2>
+              {highPotentialCount > 0 && (
+                <button
+                  onClick={() => setShowOnlyHighPotential(!showOnlyHighPotential)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                    showOnlyHighPotential
+                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-[0_0_8px_rgba(245,158,11,0.15)]"
+                      : "bg-amber-500/10 text-amber-400/70 border border-amber-500/20 hover:bg-amber-500/15 hover:text-amber-400"
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                  {highPotentialCount} High Potential
+                </button>
+              )}
+            </div>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-white/40">Show:</span>
@@ -790,12 +815,12 @@ export default function JobDetailPage() {
                 <th className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3">
                   <input
                     type="checkbox"
-                    checked={posts.length > 0 && selectedPosts.size === posts.length}
+                    checked={displayedPosts.length > 0 && selectedPosts.size === displayedPosts.length}
                     onChange={toggleAllPosts}
                     className="rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
                   />
                 </th>
-                {["Message", "Author", "Created", "Comments", "Reactions", "Shares", "Type", "Actions"].map((h) => (
+                {["Priority", "Message", "Author", "Created", "Comments", "Reactions", "Shares", "Type", "Actions"].map((h) => (
                   <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3">
                     {h}
                   </th>
@@ -803,43 +828,60 @@ export default function JobDetailPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {posts.map((p) => (
-                <tr key={p.id} className="hover:bg-white/[0.02]">
-                  <td className="px-4 py-3">
-                    <input
-                      type="checkbox"
-                      checked={selectedPosts.has(p.post_id)}
-                      onChange={() => togglePostSelection(p.post_id)}
-                      className="rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
-                    />
-                  </td>
-                  <td className="px-4 py-3 text-white/60 max-w-[250px]">
-                    <span className="line-clamp-2">
-                      {p.message ? (p.message.length > 100 ? p.message.slice(0, 100) + "..." : p.message) : "N/A"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-white/60">{p.from_name || "N/A"}</td>
-                  <td className="px-4 py-3 text-white/60">{p.created_time ? formatDate(p.created_time) : "N/A"}</td>
-                  <td className="px-4 py-3 text-white/60">{formatNumber(p.comment_count)}</td>
-                  <td className="px-4 py-3 text-white/60">{formatNumber(p.reaction_count)}</td>
-                  <td className="px-4 py-3 text-white/60">{formatNumber(p.share_count)}</td>
-                  <td className="px-4 py-3 text-white/60">{p.attachment_type || "post"}</td>
-                  <td className="px-4 py-3">
-                    {p.post_url ? (
-                      <a
-                        href={p.post_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary-400 hover:text-primary-300 text-xs font-medium"
-                      >
-                        View Post
-                      </a>
-                    ) : (
-                      <span className="text-white/30 text-xs">No link</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {displayedPosts.map((p) => {
+                const hp = isHighPotential(p);
+                return (
+                  <tr key={p.id} className={`hover:bg-white/[0.02] ${hp ? "bg-amber-500/[0.03]" : ""}`}>
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedPosts.has(p.post_id)}
+                        onChange={() => togglePostSelection(p.post_id)}
+                        className="rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      {hp ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                          HIGH
+                        </span>
+                      ) : (
+                        <span className="text-white/20 text-[10px]">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-white/60 max-w-[250px]">
+                      <span className="line-clamp-2">
+                        {p.message ? (p.message.length > 100 ? p.message.slice(0, 100) + "..." : p.message) : "N/A"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-white/60">{p.from_name || "N/A"}</td>
+                    <td className="px-4 py-3 text-white/60">{p.created_time ? formatDate(p.created_time) : "N/A"}</td>
+                    <td className="px-4 py-3 text-white/60">
+                      <span className={p.comment_count >= 50 ? "text-amber-400 font-semibold" : ""}>{formatNumber(p.comment_count)}</span>
+                    </td>
+                    <td className="px-4 py-3 text-white/60">
+                      <span className={p.reaction_count >= 20 ? "text-amber-400 font-semibold" : ""}>{formatNumber(p.reaction_count)}</span>
+                    </td>
+                    <td className="px-4 py-3 text-white/60">{formatNumber(p.share_count)}</td>
+                    <td className="px-4 py-3 text-white/60">{p.attachment_type || "post"}</td>
+                    <td className="px-4 py-3">
+                      {p.post_url ? (
+                        <a
+                          href={p.post_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary-400 hover:text-primary-300 text-xs font-medium"
+                        >
+                          View Post
+                        </a>
+                      ) : (
+                        <span className="text-white/30 text-xs">No link</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
