@@ -37,6 +37,9 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<ScrapingJob | null>(null);
   const [profiles, setProfiles] = useState<ScrapedProfile[]>([]);
   const [posts, setPosts] = useState<ScrapedPost[]>([]);
+  const [postsTotal, setPostsTotal] = useState(0);
+  const [postsPage, setPostsPage] = useState(1);
+  const [postsPageSize, setPostsPageSize] = useState(50);
   const [author, setAuthor] = useState<PageAuthorProfile | null>(null);
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
   const [creatingJobs, setCreatingJobs] = useState(false);
@@ -48,6 +51,22 @@ export default function JobDetailPage() {
   const [liveProgress, setLiveProgress] = useState<ProgressEvent | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  const fetchPosts = useCallback(async (page?: number, pageSize?: number) => {
+    const pg = page ?? postsPage;
+    const ps = pageSize ?? postsPageSize;
+    try {
+      const res = await jobsApi.getPosts(jobId, { page: pg, page_size: ps });
+      const data = res.data;
+      if (data.items) {
+        setPosts(data.items);
+        setPostsTotal(data.total);
+      } else {
+        // Backwards compat: if API returns array directly
+        setPosts(Array.isArray(data) ? data : []);
+      }
+    } catch { /* ignore */ }
+  }, [jobId, postsPage, postsPageSize]);
+
   const fetchJob = useCallback(async (opts?: { loadResults?: boolean }) => {
     try {
       const res = await jobsApi.get(jobId);
@@ -58,8 +77,7 @@ export default function JobDetailPage() {
 
       if (loadResults) {
         if (res.data.job_type === "post_discovery") {
-          const postRes = await jobsApi.getPosts(jobId, { page: 1, page_size: 200 });
-          setPosts(postRes.data);
+          fetchPosts();
         } else {
           const profRes = await jobsApi.getResults(jobId, { page: 1, page_size: 50 });
           setProfiles(profRes.data);
@@ -68,8 +86,7 @@ export default function JobDetailPage() {
 
       // Fetch posts for running/queued post_discovery jobs so users see them in real-time
       if (res.data.job_type === "post_discovery" && (res.data.status === "running" || res.data.status === "queued")) {
-        const postRes = await jobsApi.getPosts(jobId, { page: 1, page_size: 200 });
-        setPosts(postRes.data);
+        fetchPosts();
       }
 
       // Fetch queue position for queued jobs
@@ -95,7 +112,7 @@ export default function JobDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [jobId]);
+  }, [jobId, fetchPosts]);
 
   // SSE connection for real-time progress
   const sseInitialized = useRef(false);
@@ -198,15 +215,15 @@ export default function JobDetailPage() {
     if (!job || job.job_type !== "post_discovery") return;
     if (job.status !== "running") return;
 
-    const interval = setInterval(async () => {
-      try {
-        const postRes = await jobsApi.getPosts(jobId, { page: 1, page_size: 200 });
-        setPosts(postRes.data);
-      } catch { /* ignore */ }
-    }, 4000);
-
+    const interval = setInterval(() => fetchPosts(), 4000);
     return () => clearInterval(interval);
-  }, [job?.status, job?.job_type, jobId]);
+  }, [job?.status, job?.job_type, fetchPosts]);
+
+  // Re-fetch posts when pagination changes
+  useEffect(() => {
+    if (!job || job.job_type !== "post_discovery") return;
+    fetchPosts();
+  }, [postsPage, postsPageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleExportCsv = async () => {
     const res = await exportApi.downloadCsv(jobId);
@@ -463,7 +480,7 @@ export default function JobDetailPage() {
             let detailText = "";
             if (isPostDiscovery) {
               stageText = "Discovering posts";
-              const postsFound = stageData.total_posts || liveProgress?.result_row_count || posts.length || 0;
+              const postsFound = stageData.total_posts || liveProgress?.result_row_count || postsTotal || posts.length || 0;
               const pagesDone = stageData.pages_fetched || 0;
               const maxPg = stageData.max_pages || 0;
               detailText = `${formatNumber(postsFound)} posts found`;
@@ -549,7 +566,7 @@ export default function JobDetailPage() {
         {(() => {
           const isRunning = job.status === "running" || job.status === "queued";
           const liveTotal = isPostDiscovery
-            ? (liveProgress?.result_row_count ?? (isRunning ? job.result_row_count : 0)) || posts.length
+            ? (liveProgress?.result_row_count ?? (isRunning ? job.result_row_count : 0)) || postsTotal || posts.length
             : job.result_row_count;
           const liveCredits = isRunning
             ? (liveProgress?.stage_data as any)?.pages_fetched || job.credits_used
@@ -667,7 +684,7 @@ export default function JobDetailPage() {
       )}
 
       {/* Export Buttons + Report Link */}
-      {job.status === "completed" && (isPostDiscovery ? posts.length > 0 : job.result_row_count > 0) && (
+      {job.status === "completed" && (isPostDiscovery ? (postsTotal > 0 || posts.length > 0) : job.result_row_count > 0) && (
         <div className="flex flex-col sm:flex-row gap-3">
           {isPostDiscovery ? (
             <>
@@ -719,17 +736,37 @@ export default function JobDetailPage() {
       )}
 
       {/* Posts Table (post_discovery jobs) */}
-      {isPostDiscovery && posts.length > 0 && (
+      {isPostDiscovery && (posts.length > 0 || postsTotal > 0) && (
         <div className="glass-card overflow-x-auto">
-          <div className="p-4 border-b border-white/5 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Discovered Posts ({posts.length})</h2>
-            <button
-              onClick={handleScrapeSelected}
-              disabled={creatingJobs || selectedPosts.size === 0}
-              className="btn-glow text-sm px-4 py-2 disabled:opacity-50 disabled:hover:scale-100"
-            >
-              {creatingJobs ? "Creating Jobs..." : `Scrape Selected (${selectedPosts.size})`}
-            </button>
+          <div className="p-4 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-white">
+              Discovered Posts ({postsTotal || posts.length})
+            </h2>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-white/40">Show:</span>
+                {[30, 50, 100, 200].map((size) => (
+                  <button
+                    key={size}
+                    onClick={() => { setPostsPageSize(size); setPostsPage(1); }}
+                    className={`text-xs px-2 py-1 rounded transition-all ${
+                      postsPageSize === size
+                        ? "bg-primary-500/20 text-primary-400 font-semibold"
+                        : "text-white/40 hover:text-white/60 hover:bg-white/5"
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={handleScrapeSelected}
+                disabled={creatingJobs || selectedPosts.size === 0}
+                className="btn-glow text-sm px-4 py-2 disabled:opacity-50 disabled:hover:scale-100"
+              >
+                {creatingJobs ? "Creating Jobs..." : `Scrape Selected (${selectedPosts.size})`}
+              </button>
+            </div>
           </div>
 
           {selectedPosts.size > 0 && (
@@ -805,6 +842,45 @@ export default function JobDetailPage() {
               ))}
             </tbody>
           </table>
+
+          {/* Pagination */}
+          {postsTotal > postsPageSize && (
+            <div className="p-4 border-t border-white/5 flex items-center justify-between">
+              <p className="text-xs text-white/40">
+                Showing {(postsPage - 1) * postsPageSize + 1}–{Math.min(postsPage * postsPageSize, postsTotal)} of {postsTotal}
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPostsPage((p) => Math.max(1, p - 1))}
+                  disabled={postsPage <= 1}
+                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                >
+                  Prev
+                </button>
+                {Array.from({ length: Math.min(Math.ceil(postsTotal / postsPageSize), 7) }, (_, i) => i + 1).map((pg) => (
+                  <button
+                    key={pg}
+                    onClick={() => setPostsPage(pg)}
+                    className={`px-3 py-1.5 text-xs rounded-lg transition ${
+                      postsPage === pg ? "bg-primary-500/20 text-primary-400 font-semibold" : "text-white/40 hover:bg-white/5"
+                    }`}
+                  >
+                    {pg}
+                  </button>
+                ))}
+                {Math.ceil(postsTotal / postsPageSize) > 7 && (
+                  <span className="text-xs text-white/30 px-1">...</span>
+                )}
+                <button
+                  onClick={() => setPostsPage((p) => Math.min(Math.ceil(postsTotal / postsPageSize), p + 1))}
+                  disabled={postsPage >= Math.ceil(postsTotal / postsPageSize)}
+                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

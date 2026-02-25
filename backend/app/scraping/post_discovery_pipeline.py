@@ -56,12 +56,20 @@ def _extract_post_fields(item: dict) -> dict:
     from_name = from_info.get("name")
     from_id = from_info.get("id")
 
-    # Engagement metrics
+    # Engagement metrics — handle multiple API response shapes:
+    #   Shape A: {"comments": {"count": 170}}
+    #   Shape B: {"comments": {"summary": {"total_count": 170}}}
+    comments_obj = item.get("comments") or {}
     comment_count = (
-        (item.get("comments") or {}).get("summary", {}).get("total_count", 0)
+        comments_obj.get("count")
+        or comments_obj.get("summary", {}).get("total_count")
+        or 0
     )
+    reactions_obj = item.get("reactions") or {}
     reaction_count = (
-        (item.get("reactions") or {}).get("summary", {}).get("total_count", 0)
+        reactions_obj.get("count")
+        or reactions_obj.get("summary", {}).get("total_count")
+        or 0
     )
     share_count = (item.get("shares") or {}).get("count", 0)
 

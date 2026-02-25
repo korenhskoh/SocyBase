@@ -172,6 +172,15 @@ export default function NewJobPage() {
     if (checked) loadDiscoveryCursorHistory();
   };
 
+  // Auto-load cursor history when page input changes (debounced)
+  useEffect(() => {
+    if (!pageInput.trim() || selectedScrapeType?.id !== "post_discovery") return;
+    const timer = setTimeout(() => {
+      loadDiscoveryCursorHistory();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [pageInput]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const formatTimeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
@@ -674,57 +683,57 @@ export default function NewJobPage() {
                   </p>
                 </div>
 
-                {/* Continue from previous cursor */}
-                <div className="glass-card p-6 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id="discoveryCursor"
-                      checked={useDiscoveryCursor}
-                      onChange={(e) => handleDiscoveryCursorToggle(e.target.checked)}
-                      className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
-                    />
-                    <label htmlFor="discoveryCursor" className="text-sm font-medium text-white/80">
-                      Continue from previous scrape
-                    </label>
-                  </div>
-                  {useDiscoveryCursor && (
-                    <div className="space-y-3">
-                      {loadingDiscoveryCursors ? (
-                        <p className="text-xs text-white/40">Loading previous scrapes...</p>
-                      ) : discoveryCursorHistory.length === 0 ? (
-                        <p className="text-xs text-white/40">No previous scrapes found for this page. Run a discovery first.</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {discoveryCursorHistory.map((h) => (
-                            <button
-                              key={h.job_id}
-                              type="button"
-                              onClick={() => setSelectedDiscoveryCursor(h.last_after_cursor || "")}
-                              className={`w-full text-left rounded-lg border p-3 transition-all ${
-                                selectedDiscoveryCursor === h.last_after_cursor
-                                  ? "border-primary-500 bg-primary-500/10"
-                                  : "border-white/10 hover:border-white/20"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm text-white/70">
-                                  {h.total_posts_fetched} posts from {h.pages_fetched} pages
-                                </span>
-                                <span className="text-xs text-white/40">{formatTimeAgo(h.created_at)}</span>
-                              </div>
-                              <span className={`text-xs mt-1 inline-block px-1.5 py-0.5 rounded ${
-                                h.status === "completed" ? "bg-emerald-500/10 text-emerald-400" : "bg-yellow-500/10 text-yellow-400"
-                              }`}>
-                                {h.status}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                {/* Continue from previous scrape — auto-shown when cursors exist */}
+                {discoveryCursorHistory.length > 0 && (
+                  <div className="glass-card p-6 space-y-4 border border-amber-500/20">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="discoveryCursor"
+                        checked={useDiscoveryCursor}
+                        onChange={(e) => handleDiscoveryCursorToggle(e.target.checked)}
+                        className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
+                      />
+                      <label htmlFor="discoveryCursor" className="text-sm font-medium text-white/80">
+                        Continue from previous scrape
+                      </label>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400">
+                        {discoveryCursorHistory.length} previous
+                      </span>
                     </div>
-                  )}
-                </div>
+                    {useDiscoveryCursor && (
+                      <div className="space-y-2">
+                        {discoveryCursorHistory.map((h) => (
+                          <button
+                            key={h.job_id}
+                            type="button"
+                            onClick={() => setSelectedDiscoveryCursor(h.last_after_cursor || "")}
+                            className={`w-full text-left rounded-lg border p-3 transition-all ${
+                              selectedDiscoveryCursor === h.last_after_cursor
+                                ? "border-primary-500 bg-primary-500/10"
+                                : "border-white/10 hover:border-white/20"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-white/70">
+                                {h.total_posts_fetched} posts from {h.pages_fetched} pages
+                              </span>
+                              <span className="text-xs text-white/40">{formatTimeAgo(h.created_at)}</span>
+                            </div>
+                            <span className={`text-xs mt-1 inline-block px-1.5 py-0.5 rounded ${
+                              h.status === "completed" ? "bg-emerald-500/10 text-emerald-400" : "bg-yellow-500/10 text-yellow-400"
+                            }`}>
+                              {h.status}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {loadingDiscoveryCursors && (
+                  <p className="text-xs text-white/40 px-2">Checking for previous scrapes...</p>
+                )}
               </>
             )}
 

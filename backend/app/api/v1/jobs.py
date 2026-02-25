@@ -549,16 +549,22 @@ class ScrapedPostResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-@router.get("/{job_id}/posts", response_model=list[ScrapedPostResponse])
+@router.get("/{job_id}/posts")
 async def get_job_posts(
     job_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=500),
 ):
     """Get discovered posts for a post_discovery job."""
     await _get_tenant_job(db, job_id, user.tenant_id)
+
+    total_result = await db.execute(
+        select(func.count(ScrapedPost.id)).where(ScrapedPost.job_id == job_id)
+    )
+    total = total_result.scalar() or 0
+
     result = await db.execute(
         select(ScrapedPost)
         .where(ScrapedPost.job_id == job_id)
@@ -566,7 +572,8 @@ async def get_job_posts(
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
-    return result.scalars().all()
+    posts = result.scalars().all()
+    return {"items": posts, "total": total, "page": page, "page_size": page_size}
 
 
 class CreateFromPostsRequest(BaseModel):
