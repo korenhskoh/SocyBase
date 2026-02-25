@@ -248,6 +248,11 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         after=cursor,
                     )
 
+                    logger.info(
+                        "[Job %s] Raw API response keys: %s, first 500 chars: %s",
+                        job_id, list(raw_response.keys()), str(raw_response)[:500],
+                    )
+
                     posts_data, paging = _unwrap_response(raw_response)
                     pages_fetched += 1
 
