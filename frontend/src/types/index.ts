@@ -50,6 +50,11 @@ export interface ScrapingJob {
       unique_user_ids_found?: number;
       profiles_enriched?: number;
       profiles_failed?: number;
+      // Post discovery fields
+      pages_fetched?: number;
+      total_posts_fetched?: number;
+      first_before_cursor?: string;
+      last_after_cursor?: string;
     };
     error?: {
       stage: string;
