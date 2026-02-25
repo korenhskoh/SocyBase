@@ -649,8 +649,12 @@ export default function JobDetailPage() {
             } else if (stage === "fetch_comments") {
               stageText = "Fetching comments";
               const pages = stageData.pages_fetched || 0;
-              const comments = stageData.total_comments || 0;
-              detailText = `${formatNumber(comments)} comments from ${pages} page${pages !== 1 ? "s" : ""}`;
+              const topLevel = stageData.top_level_comments || 0;
+              const replies = stageData.reply_comments || 0;
+              const total = stageData.total_comments || 0;
+              detailText = total > 0
+                ? `${formatNumber(topLevel as number)} comments + ${formatNumber(replies as number)} replies from ${pages} page${pages !== 1 ? "s" : ""}`
+                : `Fetching from page ${pages}...`;
             } else if (stage === "deduplicate") {
               stageText = "Finding unique users";
               const users = stageData.unique_users || total;
@@ -793,9 +797,9 @@ export default function JobDetailPage() {
                   )}
                   {pipelineState.total_comments_fetched != null && (
                     <div className="bg-white/5 rounded-lg p-3">
-                      <p className="text-white/40">Comments</p>
+                      <p className="text-white/40">Comments + Replies</p>
                       <p className="text-white/70 font-semibold text-base mt-0.5">
-                        {pipelineState.total_comments_fetched}
+                        {pipelineState.top_level_comments ?? "?"} + {pipelineState.reply_comments ?? "?"} = {pipelineState.total_comments_fetched}
                       </p>
                     </div>
                   )}

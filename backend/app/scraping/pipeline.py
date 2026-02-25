@@ -291,6 +291,8 @@ async def _execute_pipeline(job_id: str, celery_task):
                 all_comments = []
                 next_cursor = None
                 page_count = 0
+                total_top_level = 0
+                total_replies = 0
 
                 # If resuming, load comments from original job
                 if resume_from_job_id and original_job:
@@ -360,6 +362,8 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                         extracted = mapper.extract_comments_data(response, is_group=is_group)
                         all_comments.extend(extracted["comments"])
+                        total_top_level += extracted.get("top_level_count", 0)
+                        total_replies += extracted.get("reply_count", 0)
                         page_count += 1
 
                         # Store comments in DB
@@ -382,12 +386,15 @@ async def _execute_pipeline(job_id: str, celery_task):
                             comment_pages_fetched=page_count,
                             last_cursor=next_cursor,
                             total_comments_fetched=len(all_comments),
+                            top_level_comments=total_top_level,
+                            reply_comments=total_replies,
                         )
 
                         # Publish progress after each page
                         publish_job_progress(str(job.id), _build_progress_event(
                             job, "fetch_comments",
-                            {"pages_fetched": page_count, "total_comments": len(all_comments)},
+                            {"pages_fetched": page_count, "total_comments": len(all_comments),
+                             "top_level_comments": total_top_level, "reply_comments": total_replies},
                         ))
 
                         # Check for pause/cancel after each page fetch
@@ -399,6 +406,8 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 comment_pages_fetched=page_count,
                                 last_cursor=next_cursor,
                                 total_comments_fetched=len(all_comments),
+                                top_level_comments=total_top_level,
+                                reply_comments=total_replies,
                             )
                             await _append_log(db, job, "warn", "fetch_comments", f"Job {current_status} by user after {page_count} pages")
                             publish_job_progress(str(job.id), _build_progress_event(job, "fetch_comments"))
@@ -407,8 +416,8 @@ async def _execute_pipeline(job_id: str, celery_task):
                         if not extracted["has_next"] or not next_cursor:
                             break
 
-                logger.info(f"[Job {job_id}] Fetched {len(all_comments)} comments from {page_count} pages")
-                await _append_log(db, job, "info", "fetch_comments", f"Fetched {len(all_comments)} comments from {page_count} pages")
+                logger.info(f"[Job {job_id}] Fetched {len(all_comments)} total ({total_top_level} comments + {total_replies} replies) from {page_count} pages")
+                await _append_log(db, job, "info", "fetch_comments", f"Fetched {total_top_level} comments + {total_replies} replies = {len(all_comments)} total from {page_count} pages")
 
                 # ── STAGE 3: Extract & deduplicate user IDs ──────
                 # Check status before starting stage
@@ -472,10 +481,11 @@ async def _execute_pipeline(job_id: str, celery_task):
                     {"unique_users": len(user_ids), "total_comments": len(all_comments)},
                 ))
 
-                logger.info(f"[Job {job_id}] Found {len(user_ids)} unique users")
-                await _append_log(db, job, "info", "deduplicate", f"Found {len(user_ids)} unique users")
+                logger.info(f"[Job {job_id}] Found {len(user_ids)} unique users from {len(all_comments)} comments")
+                await _append_log(db, job, "info", "deduplicate", f"Found {len(user_ids)} unique users from {len(all_comments)} comments")
 
                 # Check credit balance
+                logger.info(f"[Job {job_id}] Checking credit balance for tenant {job.tenant_id}")
                 balance_result = await db.execute(
                     select(CreditBalance).where(CreditBalance.tenant_id == job.tenant_id)
                 )
@@ -511,6 +521,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     return
 
                 # Create ScrapedProfile rows for ALL unique users
+                logger.info(f"[Job {job_id}] Creating {len(unique_users)} ScrapedProfile rows")
                 for uid, uname in unique_users.items():
                     profile = ScrapedProfile(
                         job_id=job.id,
@@ -521,6 +532,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     )
                     db.add(profile)
                 await db.commit()
+                logger.info(f"[Job {job_id}] ScrapedProfile rows created and committed")
 
                 # Copy enriched data from original job for profiles we're skipping
                 if skip_user_ids:
@@ -561,7 +573,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     publish_job_progress(str(job.id), _build_progress_event(job, "enrich_profiles"))
                     return
 
-                logger.info(f"[Job {job_id}] Stage 4: Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
+                logger.info(f"[Job {job_id}] Stage 4: Starting profile enrichment for {len(user_ids_to_enrich)} users ({len(skip_user_ids)} skipped)")
                 await _append_log(db, job, "info", "enrich_profiles", f"Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
                 already_done = len(skip_user_ids)
                 credits_used = new_pages if resume_from_job_id else page_count

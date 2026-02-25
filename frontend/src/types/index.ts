@@ -47,6 +47,8 @@ export interface ScrapingJob {
       comment_pages_fetched?: number;
       last_cursor?: string;
       total_comments_fetched?: number;
+      top_level_comments?: number;
+      reply_comments?: number;
       unique_user_ids_found?: number;
       profiles_enriched?: number;
       profiles_failed?: number;

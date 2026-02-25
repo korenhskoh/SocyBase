@@ -126,8 +126,8 @@ class FacebookGraphClient(AbstractSocialClient):
         Groups use the direct /comments endpoint.
         Pages/profiles use nested field expansion on the post object.
         """
-        comment_fields = "created_time,from,message,can_remove,like_count,message_tags,user_like"
-        reply_fields = f"comments{{{comment_fields}}}"
+        comment_fields = "message,created_time,from,like_count,can_remove,message_tags"
+        reply_fields = "comments.limit(25)"
 
         if is_group:
             url = f"{self.base_url}/{post_id}/comments"

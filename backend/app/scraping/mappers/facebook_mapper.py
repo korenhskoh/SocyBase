@@ -151,6 +151,8 @@ class FacebookProfileMapper(AbstractProfileMapper):
         comments_list = []
         next_cursor = None
         has_next = False
+        top_level_count = 0
+        reply_count = 0
 
         # Unwrap AKNG response wrapper if present
         inner = api_response
@@ -158,7 +160,7 @@ class FacebookProfileMapper(AbstractProfileMapper):
             inner = api_response["data"]
 
         # Direct /comments endpoint: { data: [...], paging: {...} }
-        # Also handle legacy nested format: { comments: { data: [...], paging: {...} } }
+        # Also handle nested format: { comments: { data: [...], paging: {...} } }
         if "data" in inner and isinstance(inner.get("data"), list):
             data = inner["data"]
             paging = inner.get("paging", {})
@@ -172,13 +174,15 @@ class FacebookProfileMapper(AbstractProfileMapper):
 
         for comment in data:
             from_data = comment.get("from", {})
-            comments_list.append({
-                "user_id": from_data.get("id", ""),
-                "user_name": from_data.get("name", ""),
-                "comment_id": comment.get("id", ""),
-                "message": comment.get("message", ""),
-                "created_time": comment.get("created_time", ""),
-            })
+            if from_data.get("id"):
+                comments_list.append({
+                    "user_id": from_data.get("id", ""),
+                    "user_name": from_data.get("name", ""),
+                    "comment_id": comment.get("id", ""),
+                    "message": comment.get("message", ""),
+                    "created_time": comment.get("created_time", ""),
+                })
+                top_level_count += 1
 
             # Also extract reply commenters
             replies = comment.get("comments", {}).get("data", [])
@@ -192,6 +196,7 @@ class FacebookProfileMapper(AbstractProfileMapper):
                         "message": reply.get("message", ""),
                         "created_time": reply.get("created_time", ""),
                     })
+                    reply_count += 1
 
         # Pagination
         cursors = paging.get("cursors", {})
@@ -202,6 +207,8 @@ class FacebookProfileMapper(AbstractProfileMapper):
 
         return {
             "comments": comments_list,
+            "top_level_count": top_level_count,
+            "reply_count": reply_count,
             "next_cursor": next_cursor,
             "has_next": has_next,
         }
