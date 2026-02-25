@@ -131,6 +131,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # CORS
+logger.info("CORS allowed origins: %s", settings.cors_origin_list)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
