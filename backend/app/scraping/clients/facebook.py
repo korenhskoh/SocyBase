@@ -13,7 +13,7 @@ class FacebookGraphClient(AbstractSocialClient):
         self.base_url = settings.akng_base_url
         self.access_token = settings.akng_access_token
         self.api_version = settings.akng_api_version
-        self.client = httpx.AsyncClient(timeout=30.0)
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0))
 
     async def close(self):
         await self.client.aclose()

@@ -369,34 +369,57 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         max_requests=settings_rate_limit(),
                     )
 
-                    # Try current token_type first; on 401, cycle through fallbacks
+                    # Retry wrapper for timeout errors (AKNG can be slow)
                     raw_response = None
-                    tried_types = [token_type] + [t for t in _TOKEN_FALLBACKS if t != token_type]
-                    last_err = None
-                    for try_token in tried_types:
-                        try:
-                            raw_response = await client.get_page_feed(
-                                page_id,
-                                token_type=try_token,
-                                limit=10,
-                                order="reverse_chronological",
-                                pagination_params=page_params,
-                            )
-                            if try_token != token_type:
-                                logger.info(f"[Job {job_id}] Token type {token_type} failed, switched to {try_token}")
-                                await _append_log(db, job, "info", "fetch_posts",
-                                    f"Switched token type from {token_type} to {try_token}")
-                                token_type = try_token
-                            last_err = None
-                            break
-                        except httpx.HTTPStatusError as e:
-                            if e.response.status_code == 401:
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        # Try current token_type first; on 401, cycle through fallbacks
+                        tried_types = [token_type] + [t for t in _TOKEN_FALLBACKS if t != token_type]
+                        last_err = None
+                        for try_token in tried_types:
+                            try:
+                                raw_response = await client.get_page_feed(
+                                    page_id,
+                                    token_type=try_token,
+                                    limit=10,
+                                    order="reverse_chronological",
+                                    pagination_params=page_params,
+                                )
+                                if try_token != token_type:
+                                    logger.info(f"[Job {job_id}] Token type {token_type} failed, switched to {try_token}")
+                                    await _append_log(db, job, "info", "fetch_posts",
+                                        f"Switched token type from {token_type} to {try_token}")
+                                    token_type = try_token
+                                last_err = None
+                                break
+                            except httpx.HTTPStatusError as e:
+                                if e.response.status_code == 401:
+                                    last_err = e
+                                    logger.warning(f"[Job {job_id}] 401 with token_type={try_token}, trying next...")
+                                    continue
+                                raise  # Non-401 errors should propagate immediately
+                            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
                                 last_err = e
-                                logger.warning(f"[Job {job_id}] 401 with token_type={try_token}, trying next...")
+                                break  # Break token loop, retry with same token
+
+                        if raw_response is not None:
+                            break  # Success
+
+                        if isinstance(last_err, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout)):
+                            if attempt < max_retries - 1:
+                                wait = 5 * (attempt + 1)
+                                logger.warning(
+                                    f"[Job {job_id}] Timeout on page {pages_fetched + 1} (attempt {attempt + 1}/{max_retries}), retrying in {wait}s..."
+                                )
+                                await _append_log(db, job, "warn", "fetch_posts",
+                                    f"Timeout on page {pages_fetched + 1}, retrying ({attempt + 1}/{max_retries})")
+                                await asyncio.sleep(wait)
                                 continue
-                            raise  # Non-401 errors should propagate immediately
-                    if last_err is not None:
-                        raise last_err  # All token types failed with 401
+                            else:
+                                raise last_err  # All retries exhausted
+
+                        if last_err is not None:
+                            raise last_err  # All token types failed with 401
 
                     logger.info(
                         "[Job %s] Page %d – pagination_params=%s",
