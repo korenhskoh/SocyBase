@@ -159,7 +159,7 @@ def _next_cursor(paging: dict) -> str | None:
     return cursors.get("after")
 
 
-def _publish_progress(job: ScrapingJob) -> None:
+def _publish_progress(job: ScrapingJob, stage: str = "", stage_data: dict | None = None) -> None:
     """Publish the current job progress snapshot to SSE subscribers."""
     publish_job_progress(str(job.id), {
         "status": job.status,
@@ -168,6 +168,8 @@ def _publish_progress(job: ScrapingJob) -> None:
         "total_items": job.total_items,
         "failed_items": job.failed_items,
         "result_row_count": job.result_row_count,
+        "current_stage": stage,
+        "stage_data": stage_data or {},
     })
 
 
@@ -210,7 +212,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
             await db.commit()
 
             await _append_log(db, job, "info", "start", "Post discovery pipeline started")
-            _publish_progress(job)
+            _publish_progress(job, "start")
 
             job_settings = job.settings or {}
 
@@ -221,7 +223,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "parse_input")
                     await _append_log(db, job, "warn", "parse_input", f"Job {current_status} by user")
-                    _publish_progress(job)
+                    _publish_progress(job, "parse_input")
                     return
 
                 logger.info(f"[Job {job_id}] Stage 1: Parsing page/group input")
@@ -276,7 +278,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "fetch_posts")
                     await _append_log(db, job, "warn", "fetch_posts", f"Job {current_status} by user")
-                    _publish_progress(job)
+                    _publish_progress(job, "fetch_posts")
                     return
 
                 logger.info(f"[Job {job_id}] Stage 2: Fetching posts for {page_id}")
@@ -361,7 +363,10 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         },
                     )
 
-                    _publish_progress(job)
+                    _publish_progress(job, "fetch_posts", {
+                        "pages_fetched": pages_fetched,
+                        "total_posts": total_posts_fetched,
+                    })
 
                     # Check for pause/cancel after each page
                     current_status = await _check_job_status(db, job.id)
@@ -377,7 +382,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                             db, job, "warn", "fetch_posts",
                             f"Job {current_status} by user after {pages_fetched} pages ({total_posts_fetched} posts)",
                         )
-                        _publish_progress(job)
+                        _publish_progress(job, "fetch_posts")
                         return
 
                     # Advance cursor
@@ -399,7 +404,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "finalize")
                     await _append_log(db, job, "warn", "finalize", f"Job {current_status} by user")
-                    _publish_progress(job)
+                    _publish_progress(job, "finalize")
                     return
 
                 logger.info(f"[Job {job_id}] Stage 3: Finalizing")
@@ -443,7 +448,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     f"Completed: {total_posts_fetched} posts, {credits_used} credits used",
                 )
 
-                _publish_progress(job)
+                _publish_progress(job, "finalize")
 
                 logger.info(
                     f"[Job {job_id}] Completed: {total_posts_fetched} posts, "
@@ -486,7 +491,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     f"Pipeline failed: {type(e).__name__}: {e}",
                 )
 
-                _publish_progress(job)
+                _publish_progress(job, failed_stage)
 
                 # Send failure notification
                 try:
