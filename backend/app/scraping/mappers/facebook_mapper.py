@@ -190,15 +190,18 @@ class FacebookProfileMapper(AbstractProfileMapper):
         if "success" in api_response and isinstance(api_response.get("data"), dict):
             inner = api_response["data"]
 
-        if is_group:
-            # Group comments: response is { data: [...], paging: { cursors: { after }, next } }
-            data = inner.get("data", [])
+        # Direct /comments endpoint: { data: [...], paging: {...} }
+        # Also handle legacy nested format: { comments: { data: [...], paging: {...} } }
+        if "data" in inner and isinstance(inner.get("data"), list):
+            data = inner["data"]
             paging = inner.get("paging", {})
-        else:
-            # Page/profile comments: response is { comments: { data: [...], paging: {...} } }
-            comments_obj = inner.get("comments", {})
+        elif "comments" in inner:
+            comments_obj = inner["comments"]
             data = comments_obj.get("data", [])
             paging = comments_obj.get("paging", {})
+        else:
+            data = []
+            paging = {}
 
         for comment in data:
             from_data = comment.get("from", {})

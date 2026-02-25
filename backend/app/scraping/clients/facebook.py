@@ -123,28 +123,16 @@ class FacebookGraphClient(AbstractSocialClient):
         """
         Fetch comments for a post with pagination.
 
-        For page/profile posts: GET /graph/{post_id}?fields=comments.limit(25){...}
-        For group posts: GET /graph/{post_id}/comments
+        Uses the direct /comments endpoint for all post types.
         """
-        if is_group:
-            url = f"{self.base_url}/{post_id}/comments"
-            params = {
-                "access_token": self.access_token,
-                "fields": "created_time,from,message,can_remove,like_count,message_tags,user_like,comments{created_time,from,message,can_remove,like_count,message_tags,user_like}",
-                "limit": limit,
-            }
-            if after:
-                params["after"] = after
-        else:
-            url = f"{self.base_url}/{post_id}"
-            fields = f"comments.limit({limit})"
-            if after:
-                fields = f"comments.limit({limit}).after({after})"
-            fields += "{message,created_time,from,like_count,can_remove,message_tags,comments.limit(25)}"
-            params = {
-                "access_token": self.access_token,
-                "fields": fields,
-            }
+        url = f"{self.base_url}/{post_id}/comments"
+        params = {
+            "access_token": self.access_token,
+            "fields": "created_time,from,message,can_remove,like_count,message_tags,user_like,comments{created_time,from,message,can_remove,like_count,message_tags,user_like}",
+            "limit": limit,
+        }
+        if after:
+            params["after"] = after
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()
