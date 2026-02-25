@@ -275,6 +275,11 @@ async def _execute_pipeline(job_id: str, celery_task):
                             limit=25,
                         )
 
+                        logger.info(
+                            "[Job %s] Raw comments response keys: %s, first 500 chars: %s",
+                            job_id, list(response.keys()), str(response)[:500],
+                        )
+
                         extracted = mapper.extract_comments_data(response, is_group=is_group)
                         all_comments.extend(extracted["comments"])
                         page_count += 1
