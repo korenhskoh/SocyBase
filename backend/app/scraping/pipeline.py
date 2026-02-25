@@ -17,7 +17,6 @@ import traceback as tb_module
 from datetime import datetime, timezone
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import async_session
 from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
 from app.models.user import User
@@ -170,8 +169,21 @@ async def _execute_pipeline(job_id: str, celery_task):
     mapper = FacebookProfileMapper()
     rate_limiter = RateLimiter()
 
+    # Create a fresh engine per invocation to avoid stale event loop issues
+    # with Celery prefork workers (each task gets a new event loop via asyncio.new_event_loop)
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker as local_async_sessionmaker, AsyncSession as LocalAsyncSession
+    from app.config import get_settings as _get_settings
+    _settings = _get_settings()
+    local_engine = create_async_engine(
+        _settings.async_database_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=5,
+    )
+    local_session = local_async_sessionmaker(local_engine, class_=LocalAsyncSession, expire_on_commit=False)
+
     try:
-        async with async_session() as db:
+        async with local_session() as db:
             # Load job
             result = await db.execute(select(ScrapingJob).where(ScrapingJob.id == job_id))
             job = result.scalar_one_or_none()
@@ -417,7 +429,19 @@ async def _execute_pipeline(job_id: str, celery_task):
                         unique_users[uid] = c["user_name"]
 
                 # Cross-job deduplication: skip users already scraped for this post
-                if job_settings.get("ignore_duplicate_users"):
+                # Check system-level feature flag first
+                dedup_enabled = True
+                try:
+                    from app.models.system import SystemSetting
+                    ff_result = await db.execute(
+                        select(SystemSetting).where(SystemSetting.key == "feature_flag_dedup_save_credits")
+                    )
+                    ff = ff_result.scalar_one_or_none()
+                    if ff and not ff.value.get("enabled", True):
+                        dedup_enabled = False
+                except Exception:
+                    pass  # If check fails, default to enabled
+                if dedup_enabled and job_settings.get("ignore_duplicate_users"):
                     prev_profiles = await db.execute(
                         select(ScrapedProfile.platform_user_id)
                         .join(ScrapingJob, ScrapedProfile.job_id == ScrapingJob.id)
@@ -730,13 +754,19 @@ async def _execute_pipeline(job_id: str, celery_task):
 
             except Exception as e:
                 logger.exception(f"[Job {job_id}] Pipeline failed: {e}")
-                current_state = (job.error_details or {}).get("pipeline_state", {})
-                failed_stage = current_state.get("current_stage", "unknown")
-                await _save_error_details(db, job, failed_stage, e)
-                await _append_log(db, job, "error", failed_stage, f"Pipeline failed: {type(e).__name__}: {e}")
+                try:
+                    current_state = (job.error_details or {}).get("pipeline_state", {})
+                    failed_stage = current_state.get("current_stage", "unknown")
+                    await _save_error_details(db, job, failed_stage, e)
+                    await _append_log(db, job, "error", failed_stage, f"Pipeline failed: {type(e).__name__}: {e}")
+                except Exception as save_err:
+                    logger.error(f"[Job {job_id}] Failed to save error details: {save_err}")
 
                 # Publish failure to SSE subscribers
-                publish_job_progress(str(job.id), _build_progress_event(job, failed_stage))
+                try:
+                    publish_job_progress(str(job.id), _build_progress_event(job, "error"))
+                except Exception:
+                    pass
 
                 # Send failure notification
                 try:
@@ -764,9 +794,34 @@ async def _execute_pipeline(job_id: str, celery_task):
                 except Exception as notify_err:
                     logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
+    except Exception as outer_err:
+        # Fallback: if the DB session itself is broken (e.g., event loop mismatch),
+        # create a fresh session to mark the job as failed
+        logger.exception(f"[Job {job_id}] Pipeline crashed (session-level error): {outer_err}")
+        try:
+            async with local_session() as fallback_db:
+                result = await fallback_db.execute(
+                    select(ScrapingJob).where(ScrapingJob.id == job_id)
+                )
+                fallback_job = result.scalar_one_or_none()
+                if fallback_job and fallback_job.status == "running":
+                    fallback_job.status = "failed"
+                    fallback_job.error_message = f"Pipeline crashed: {type(outer_err).__name__}: {outer_err}"
+                    await fallback_db.commit()
+                    logger.info(f"[Job {job_id}] Marked as failed via fallback session")
+                    publish_job_progress(str(job_id), {
+                        "status": "failed",
+                        "progress_pct": 0,
+                        "current_stage": "error",
+                        "stage_data": {"error": str(outer_err)},
+                    })
+        except Exception as fallback_err:
+            logger.error(f"[Job {job_id}] Fallback error save also failed: {fallback_err}")
+
     finally:
         await client.close()
         await rate_limiter.close()
+        await local_engine.dispose()
 
 
 def settings_rate_limit() -> int:

@@ -104,6 +104,9 @@ export default function NewJobPage() {
   const [activeJobCount, setActiveJobCount] = useState(0);
   const [concurrencyLimit] = useState<number | null>(null);
 
+  // Feature flags
+  const [dedupFeatureEnabled, setDedupFeatureEnabled] = useState(true);
+
   useEffect(() => {
     jobsApi.list({ page: 1, page_size: 50, status: "running" }).then((r) => {
       const running = Array.isArray(r.data) ? r.data.length : 0;
@@ -111,6 +114,12 @@ export default function NewJobPage() {
         const queued = Array.isArray(r2.data) ? r2.data.length : 0;
         setActiveJobCount(running + queued);
       }).catch(() => {});
+    }).catch(() => {});
+
+    // Load feature flags
+    jobsApi.getFeatureFlags().then((r) => {
+      const flags = r.data?.flags || {};
+      if (flags.dedup_save_credits === false) setDedupFeatureEnabled(false);
     }).catch(() => {});
   }, []);
 
@@ -510,7 +519,8 @@ export default function NewJobPage() {
                 <div className="glass-card p-6 space-y-5">
                   <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">Advanced Options</h3>
 
-                  {/* Ignore duplicate users */}
+                  {/* Ignore duplicate users — only show when feature flag is enabled */}
+                  {dedupFeatureEnabled && (
                   <div className="space-y-1">
                     <div className="flex items-center gap-3">
                       <input
@@ -528,6 +538,7 @@ export default function NewJobPage() {
                       Skip users already scraped in previous jobs for the same post. Saves credits.
                     </p>
                   </div>
+                  )}
 
                   {/* Start from previous cursor */}
                   <div className="space-y-3">

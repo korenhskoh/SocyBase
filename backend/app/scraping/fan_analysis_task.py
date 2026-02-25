@@ -25,8 +25,8 @@ def run_fan_analysis_batch(self, job_id: str, tenant_id: str, min_comments: int 
 
 async def _execute_batch_analysis(celery_task, job_id_str: str, tenant_id_str: str, min_comments: int, limit: int):
     from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from app.config import get_settings
-    from app.database import async_session
     from app.models.fan_analysis import FanAnalysisCache
     from app.models.job import ExtractedComment
     from app.models.tenant import Tenant
@@ -37,112 +37,122 @@ async def _execute_batch_analysis(celery_task, job_id_str: str, tenant_id_str: s
     job_id = UUID(job_id_str)
     tenant_id = UUID(tenant_id_str)
 
-    async with async_session() as db:
-        # Get business context
-        tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
-        tenant = tenant_result.scalar_one_or_none()
-        biz = (tenant.settings or {}).get("business", {}) if tenant else {}
-        business_ctx = biz.get("business_name", "") or ""
+    # Create a fresh engine per invocation to avoid stale event loop issues
+    # with Celery prefork workers (each task gets a new event loop)
+    local_engine = create_async_engine(
+        settings.async_database_url, pool_pre_ping=True, pool_size=5, max_overflow=5
+    )
+    local_session = async_sessionmaker(local_engine, class_=AsyncSession, expire_on_commit=False)
 
-        # Find top fans by comment count, excluding already-analyzed
-        already_analyzed = select(FanAnalysisCache.commenter_user_id).where(
-            FanAnalysisCache.job_id == job_id,
-            FanAnalysisCache.buying_intent_score.is_not(None),
-        )
+    try:
+        async with local_session() as db:
+            # Get business context
+            tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+            tenant = tenant_result.scalar_one_or_none()
+            biz = (tenant.settings or {}).get("business", {}) if tenant else {}
+            business_ctx = biz.get("business_name", "") or ""
 
-        fan_stmt = (
-            select(
-                ExtractedComment.commenter_user_id,
-                func.max(ExtractedComment.commenter_name).label("name"),
-                func.count().label("cnt"),
+            # Find top fans by comment count, excluding already-analyzed
+            already_analyzed = select(FanAnalysisCache.commenter_user_id).where(
+                FanAnalysisCache.job_id == job_id,
+                FanAnalysisCache.buying_intent_score.is_not(None),
             )
-            .where(
-                ExtractedComment.job_id == job_id,
-                ExtractedComment.commenter_user_id.is_not(None),
-                ExtractedComment.commenter_user_id != "",
-                ExtractedComment.commenter_user_id.notin_(already_analyzed),
-            )
-            .group_by(ExtractedComment.commenter_user_id)
-            .having(func.count() >= min_comments)
-            .order_by(func.count().desc())
-            .limit(limit)
-        )
-        fan_rows = (await db.execute(fan_stmt)).all()
 
-        if not fan_rows:
-            logger.info(f"[FanAnalysis {job_id}] No fans to analyze")
-            return
-
-        openai_svc = OpenAIService(api_key=settings.openai_api_key)
-        total = len(fan_rows)
-        analyzed = 0
-
-        for idx, row in enumerate(fan_rows):
-            uid = row.commenter_user_id
-            fan_name = row.name or "Unknown"
-
-            # Fetch comments
-            comments_stmt = (
-                select(ExtractedComment.comment_text)
+            fan_stmt = (
+                select(
+                    ExtractedComment.commenter_user_id,
+                    func.max(ExtractedComment.commenter_name).label("name"),
+                    func.count().label("cnt"),
+                )
                 .where(
                     ExtractedComment.job_id == job_id,
-                    ExtractedComment.commenter_user_id == uid,
-                    ExtractedComment.comment_text.is_not(None),
+                    ExtractedComment.commenter_user_id.is_not(None),
+                    ExtractedComment.commenter_user_id != "",
+                    ExtractedComment.commenter_user_id.notin_(already_analyzed),
                 )
-                .order_by(ExtractedComment.comment_time.desc())
-                .limit(50)
+                .group_by(ExtractedComment.commenter_user_id)
+                .having(func.count() >= min_comments)
+                .order_by(func.count().desc())
+                .limit(limit)
             )
-            texts = [r[0] for r in (await db.execute(comments_stmt)).all() if r[0]]
+            fan_rows = (await db.execute(fan_stmt)).all()
 
-            if not texts:
-                continue
+            if not fan_rows:
+                logger.info(f"[FanAnalysis {job_id}] No fans to analyze")
+                return
 
-            analysis = await openai_svc.analyze_fan_comments(
-                comments=texts,
-                fan_name=fan_name,
-                business_context=business_ctx,
-            )
+            openai_svc = OpenAIService(api_key=settings.openai_api_key)
+            total = len(fan_rows)
+            analyzed = 0
 
-            cache = FanAnalysisCache(
-                tenant_id=tenant_id,
-                job_id=job_id,
-                commenter_user_id=uid,
-                buying_intent_score=analysis.get("buying_intent_score", 0),
-                interests=analysis.get("interests", []),
-                sentiment=analysis.get("sentiment", "neutral"),
-                persona_type=analysis.get("persona_type", "casual"),
-                ai_summary=analysis.get("summary", ""),
-                key_phrases=analysis.get("key_phrases", []),
-                analyzed_at=datetime.now(timezone.utc),
-                token_cost=analysis.get("token_cost", 0),
-            )
-            db.add(cache)
-            await db.flush()
-            analyzed += 1
+            for idx, row in enumerate(fan_rows):
+                uid = row.commenter_user_id
+                fan_name = row.name or "Unknown"
 
-            # Publish progress
+                # Fetch comments
+                comments_stmt = (
+                    select(ExtractedComment.comment_text)
+                    .where(
+                        ExtractedComment.job_id == job_id,
+                        ExtractedComment.commenter_user_id == uid,
+                        ExtractedComment.comment_text.is_not(None),
+                    )
+                    .order_by(ExtractedComment.comment_time.desc())
+                    .limit(50)
+                )
+                texts = [r[0] for r in (await db.execute(comments_stmt)).all() if r[0]]
+
+                if not texts:
+                    continue
+
+                analysis = await openai_svc.analyze_fan_comments(
+                    comments=texts,
+                    fan_name=fan_name,
+                    business_context=business_ctx,
+                )
+
+                cache = FanAnalysisCache(
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    commenter_user_id=uid,
+                    buying_intent_score=analysis.get("buying_intent_score", 0),
+                    interests=analysis.get("interests", []),
+                    sentiment=analysis.get("sentiment", "neutral"),
+                    persona_type=analysis.get("persona_type", "casual"),
+                    ai_summary=analysis.get("summary", ""),
+                    key_phrases=analysis.get("key_phrases", []),
+                    analyzed_at=datetime.now(timezone.utc),
+                    token_cost=analysis.get("token_cost", 0),
+                )
+                db.add(cache)
+                await db.flush()
+                analyzed += 1
+
+                # Publish progress
+                publish_job_progress(str(job_id), {
+                    "status": "running",
+                    "current_stage": "ai_fan_analysis",
+                    "progress_pct": round((idx + 1) / total * 100, 1),
+                    "stage_data": {
+                        "analyzed": analyzed,
+                        "total": total,
+                        "current_fan": fan_name,
+                    },
+                })
+
+                celery_task.update_state(
+                    state="PROGRESS",
+                    meta={"analyzed": analyzed, "total": total},
+                )
+
+            await db.commit()
+            logger.info(f"[FanAnalysis {job_id}] Batch analysis complete: {analyzed}/{total} fans")
+
             publish_job_progress(str(job_id), {
-                "status": "running",
+                "status": "completed",
                 "current_stage": "ai_fan_analysis",
-                "progress_pct": round((idx + 1) / total * 100, 1),
-                "stage_data": {
-                    "analyzed": analyzed,
-                    "total": total,
-                    "current_fan": fan_name,
-                },
+                "progress_pct": 100,
+                "stage_data": {"analyzed": analyzed, "total": total},
             })
-
-            celery_task.update_state(
-                state="PROGRESS",
-                meta={"analyzed": analyzed, "total": total},
-            )
-
-        await db.commit()
-        logger.info(f"[FanAnalysis {job_id}] Batch analysis complete: {analyzed}/{total} fans")
-
-        publish_job_progress(str(job_id), {
-            "status": "completed",
-            "current_stage": "ai_fan_analysis",
-            "progress_pct": 100,
-            "stage_data": {"analyzed": analyzed, "total": total},
-        })
+    finally:
+        await local_engine.dispose()

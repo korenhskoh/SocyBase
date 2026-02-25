@@ -10,6 +10,7 @@ from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, ScrapedPost, PageAuthorProfile
 from app.models.platform import Platform
+from app.models.system import SystemSetting
 from app.schemas.job import (
     CreateJobRequest,
     ResumeJobRequest,
@@ -22,6 +23,32 @@ from app.schemas.job import (
 )
 
 router = APIRouter()
+
+
+# ── Feature flags defaults (shared with admin.py) ────────────────────
+FEATURE_FLAG_DEFAULTS = {
+    "dedup_save_credits": True,
+}
+
+
+@router.get("/feature-flags")
+async def get_public_feature_flags(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get feature flags relevant to job creation (any authenticated user)."""
+    flags = {}
+    for key, default_enabled in FEATURE_FLAG_DEFAULTS.items():
+        db_key = f"feature_flag_{key}"
+        result = await db.execute(
+            select(SystemSetting).where(SystemSetting.key == db_key)
+        )
+        setting = result.scalar_one_or_none()
+        if setting:
+            flags[key] = setting.value.get("enabled", default_enabled)
+        else:
+            flags[key] = default_enabled
+    return {"flags": flags}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

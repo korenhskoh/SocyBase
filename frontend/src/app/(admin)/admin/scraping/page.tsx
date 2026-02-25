@@ -40,10 +40,38 @@ interface ScrapingOverview {
   recent_jobs: RecentJob[];
 }
 
+interface FeatureFlags {
+  [key: string]: { enabled: boolean; description: string };
+}
+
+const FLAG_LABELS: Record<string, string> = {
+  dedup_save_credits: "Deduplicate Users (Save Credits)",
+};
+
 export default function AdminScrapingPage() {
   const { user } = useAuth(true);
   const [data, setData] = useState<ScrapingOverview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({});
+  const [flagsLoading, setFlagsLoading] = useState(false);
+
+  const loadFeatureFlags = () => {
+    adminApi.getFeatureFlags().then((r) => {
+      setFeatureFlags(r.data?.flags || {});
+    }).catch(() => {});
+  };
+
+  const toggleFlag = async (key: string, currentEnabled: boolean) => {
+    setFlagsLoading(true);
+    try {
+      await adminApi.updateFeatureFlag(key, !currentEnabled);
+      loadFeatureFlags();
+    } catch {
+      // ignore
+    } finally {
+      setFlagsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (user?.role === "super_admin") {
@@ -52,6 +80,7 @@ export default function AdminScrapingPage() {
         .then((r) => setData(r.data))
         .catch(() => {})
         .finally(() => setLoading(false));
+      loadFeatureFlags();
     }
   }, [user]);
 
@@ -89,6 +118,38 @@ export default function AdminScrapingPage() {
         </div>
         <p className="text-white/50 mt-1 ml-7">All scraping activity across every user</p>
       </div>
+
+      {/* Feature Flags */}
+      {Object.keys(featureFlags).length > 0 && (
+        <div className="glass-card p-6">
+          <h2 className="text-sm font-medium text-white/60 uppercase tracking-wider mb-4">
+            Feature Flags
+          </h2>
+          <div className="space-y-3">
+            {Object.entries(featureFlags).map(([key, flag]) => (
+              <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-white/[0.02]">
+                <div>
+                  <p className="text-sm text-white/80 font-medium">{FLAG_LABELS[key] || key}</p>
+                  <p className="text-xs text-white/40">{flag.description}</p>
+                </div>
+                <button
+                  onClick={() => toggleFlag(key, flag.enabled)}
+                  disabled={flagsLoading}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    flag.enabled ? "bg-primary-500" : "bg-white/10"
+                  } ${flagsLoading ? "opacity-50" : ""}`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      flag.enabled ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Status Breakdown */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">

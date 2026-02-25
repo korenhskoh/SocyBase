@@ -11,6 +11,7 @@ from app.models.job import ScrapingJob
 from app.models.payment import Payment
 from app.models.credit import CreditBalance, CreditPackage, CreditTransaction
 from app.models.audit import AuditLog
+from app.models.system import SystemSetting
 from pydantic import BaseModel, Field
 from app.schemas.admin import (
     AdminDashboardResponse,
@@ -458,3 +459,73 @@ async def scraping_overview(
         "status_breakdown": status_breakdown,
         "recent_jobs": recent_jobs,
     }
+
+
+# ── System Feature Flags ─────────────────────────────────────────────
+
+
+class FeatureFlagUpdate(BaseModel):
+    key: str
+    enabled: bool
+    description: str | None = None
+
+
+# Known feature flags with their defaults
+FEATURE_FLAG_DEFAULTS = {
+    "dedup_save_credits": {"enabled": True, "description": "Allow users to skip duplicate comment users across jobs to save credits"},
+}
+
+
+@router.get("/feature-flags")
+async def get_feature_flags(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all feature flags with their current state."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key.like("feature_flag_%"))
+    )
+    stored = {s.key: s.value for s in result.scalars().all()}
+
+    flags = {}
+    for key, defaults in FEATURE_FLAG_DEFAULTS.items():
+        db_key = f"feature_flag_{key}"
+        if db_key in stored:
+            flags[key] = stored[db_key]
+        else:
+            flags[key] = defaults
+    return {"flags": flags}
+
+
+@router.put("/feature-flags")
+async def update_feature_flag(
+    data: FeatureFlagUpdate,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Enable or disable a feature flag."""
+    if data.key not in FEATURE_FLAG_DEFAULTS:
+        raise HTTPException(status_code=400, detail=f"Unknown feature flag: {data.key}")
+
+    db_key = f"feature_flag_{data.key}"
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == db_key)
+    )
+    setting = result.scalar_one_or_none()
+
+    value = {"enabled": data.enabled, "description": data.description or FEATURE_FLAG_DEFAULTS[data.key]["description"]}
+
+    if setting:
+        setting.value = value
+        setting.updated_by = admin.id
+    else:
+        setting = SystemSetting(
+            key=db_key,
+            value=value,
+            description=FEATURE_FLAG_DEFAULTS[data.key]["description"],
+            updated_by=admin.id,
+        )
+        db.add(setting)
+
+    await db.commit()
+    return {"key": data.key, **value}

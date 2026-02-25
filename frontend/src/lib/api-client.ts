@@ -113,6 +113,7 @@ export const jobsApi = {
   getQueuePosition: (id: string) => api.get(`/jobs/${id}/queue-position`),
   getPostDiscoveryCursors: (inputValue: string) =>
     api.get("/jobs/post-discovery-cursors", { params: { input_value: inputValue } }),
+  getFeatureFlags: () => api.get("/jobs/feature-flags"),
 };
 
 // Credits API
@@ -211,6 +212,9 @@ export const adminApi = {
     api.get(`/admin/tenants/${tenantId}/concurrency`),
   setTenantConcurrency: (tenantId: string, maxConcurrentJobs: number) =>
     api.put(`/admin/tenants/${tenantId}/concurrency`, { max_concurrent_jobs: maxConcurrentJobs }),
+  getFeatureFlags: () => api.get("/admin/feature-flags"),
+  updateFeatureFlag: (key: string, enabled: boolean) =>
+    api.put("/admin/feature-flags", { key, enabled }),
 };
 
 // Telegram API

@@ -18,7 +18,6 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import async_session
 from app.models.job import ScrapingJob, ScrapedPost, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
 from app.models.user import User
@@ -206,8 +205,21 @@ async def _execute_post_discovery(job_id: str, celery_task):
     mapper = FacebookProfileMapper()
     rate_limiter = RateLimiter()
 
+    # Create a fresh engine per invocation to avoid stale event loop issues
+    # with Celery prefork workers (each task gets a new event loop)
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker as local_async_sessionmaker, AsyncSession as LocalAsyncSession
+    from app.config import get_settings as _get_settings
+    _settings = _get_settings()
+    local_engine = create_async_engine(
+        _settings.async_database_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=5,
+    )
+    local_session = local_async_sessionmaker(local_engine, class_=LocalAsyncSession, expire_on_commit=False)
+
     try:
-        async with async_session() as db:
+        async with local_session() as db:
             # ── Load job ────────────────────────────────────────
             result = await db.execute(
                 select(ScrapingJob).where(ScrapingJob.id == job_id)
@@ -586,15 +598,21 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
             except Exception as e:
                 logger.exception(f"[Job {job_id}] Post discovery pipeline failed: {e}")
-                current_state = (job.error_details or {}).get("pipeline_state", {})
-                failed_stage = current_state.get("current_stage", "unknown")
-                await _save_error_details(db, job, failed_stage, e)
-                await _append_log(
-                    db, job, "error", failed_stage,
-                    f"Pipeline failed: {type(e).__name__}: {e}",
-                )
+                try:
+                    current_state = (job.error_details or {}).get("pipeline_state", {})
+                    failed_stage = current_state.get("current_stage", "unknown")
+                    await _save_error_details(db, job, failed_stage, e)
+                    await _append_log(
+                        db, job, "error", failed_stage,
+                        f"Pipeline failed: {type(e).__name__}: {e}",
+                    )
+                except Exception as save_err:
+                    logger.error(f"[Job {job_id}] Failed to save error details: {save_err}")
 
-                _publish_progress(job, failed_stage)
+                try:
+                    _publish_progress(job, "error")
+                except Exception:
+                    pass
 
                 # Send failure notification
                 try:
@@ -622,6 +640,24 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 except Exception as notify_err:
                     logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
+    except Exception as outer_err:
+        # Fallback: if the DB session itself is broken, create a fresh session to mark job as failed
+        logger.exception(f"[Job {job_id}] Post discovery pipeline crashed (session-level error): {outer_err}")
+        try:
+            async with local_session() as fallback_db:
+                result = await fallback_db.execute(
+                    select(ScrapingJob).where(ScrapingJob.id == job_id)
+                )
+                fallback_job = result.scalar_one_or_none()
+                if fallback_job and fallback_job.status == "running":
+                    fallback_job.status = "failed"
+                    fallback_job.error_message = f"Pipeline crashed: {type(outer_err).__name__}: {outer_err}"
+                    await fallback_db.commit()
+                    logger.info(f"[Job {job_id}] Marked as failed via fallback session")
+        except Exception as fallback_err:
+            logger.error(f"[Job {job_id}] Fallback error save also failed: {fallback_err}")
+
     finally:
         await client.close()
         await rate_limiter.close()
+        await local_engine.dispose()
