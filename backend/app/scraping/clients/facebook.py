@@ -24,9 +24,11 @@ class FacebookGraphClient(AbstractSocialClient):
 
         Supported URL formats:
         - https://facebook.com/{page}/posts/{id}
+        - https://facebook.com/{page}/posts/pfbid...
         - https://www.facebook.com/permalink.php?story_fbid={id}&id={page_id}
         - https://facebook.com/groups/{group_id}/posts/{post_id}
         - https://facebook.com/photo.php?fbid={id}
+        - https://www.facebook.com/{page}/videos/{id}
         - https://www.facebook.com/reel/{id}
         - https://www.facebook.com/watch/?v={id}
         - Direct post ID (pfbid...)
@@ -45,10 +47,16 @@ class FacebookGraphClient(AbstractSocialClient):
             result["is_group"] = True
             return result
 
-        # Page/profile post - /posts/{id}
-        post_match = re.search(r"/posts/(\w+)", url)
+        # Page/profile post - /posts/{id} or /posts/pfbid...
+        post_match = re.search(r"/posts/(pfbid\w+|\w+)", url)
         if post_match:
             result["post_id"] = post_match.group(1)
+            return result
+
+        # Video post - /{page}/videos/{id}
+        video_match = re.search(r"/videos/(\d+)", url)
+        if video_match:
+            result["post_id"] = video_match.group(1)
             return result
 
         # permalink.php?story_fbid=...
