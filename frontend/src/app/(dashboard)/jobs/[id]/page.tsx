@@ -1123,8 +1123,8 @@ export default function JobDetailPage() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-navy-900/95 backdrop-blur-sm z-10">
                 <tr className="border-b border-white/5">
-                  {["Name", "Gender", "Location", "Hometown", "Education", "Username"].map((h) => (
-                    <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3">
+                  {["Name", "First Name", "Last Name", "ID", "Gender", "Birthday", "Location", "Hometown", "Education", "Work", "Username", "Username Link"].map((h) => (
+                    <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3 whitespace-nowrap">
                       {h}
                     </th>
                   ))}
@@ -1136,7 +1136,10 @@ export default function JobDetailPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
-                          <span className="text-xs text-white/40">{(p.name || "?")[0]}</span>
+                          {p.picture_url && p.picture_url !== "NA" ? (
+                            <img src={p.picture_url} alt="" className="w-8 h-8 rounded-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling && ((e.target as HTMLImageElement).nextElementSibling as HTMLElement).style.removeProperty('display'); }} />
+                          ) : null}
+                          <span className={`text-xs text-white/40${p.picture_url && p.picture_url !== "NA" ? " hidden" : ""}`}>{(p.name || "?")[0]}</span>
                         </div>
                         <div className="min-w-0">
                           <p className="text-white font-medium truncate">{p.name || "N/A"}</p>
@@ -1150,11 +1153,23 @@ export default function JobDetailPage() {
                         </div>
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-white/60">{p.first_name && p.first_name !== "NA" ? p.first_name : "—"}</td>
+                    <td className="px-4 py-3 text-white/60">{p.last_name && p.last_name !== "NA" ? p.last_name : "—"}</td>
+                    <td className="px-4 py-3 text-white/40 text-xs font-mono">{p.platform_user_id}</td>
                     <td className="px-4 py-3 text-white/60">{p.gender && p.gender !== "NA" ? p.gender : "—"}</td>
+                    <td className="px-4 py-3 text-white/60 whitespace-nowrap">{p.birthday && p.birthday !== "NA" ? p.birthday : "—"}</td>
                     <td className="px-4 py-3 text-white/60">{p.location && p.location !== "NA" ? p.location : "—"}</td>
                     <td className="px-4 py-3 text-white/60">{p.hometown && p.hometown !== "NA" ? p.hometown : "—"}</td>
                     <td className="px-4 py-3 text-white/60 truncate max-w-[180px]">{p.education && p.education !== "NA" ? p.education : "—"}</td>
+                    <td className="px-4 py-3 text-white/60 truncate max-w-[180px]">{p.work && p.work !== "NA" ? p.work : "—"}</td>
                     <td className="px-4 py-3 text-white/60">{p.username && p.username !== "NA" ? p.username : "—"}</td>
+                    <td className="px-4 py-3 text-white/60 text-xs">
+                      {p.username_link && p.username_link !== "NA" ? (
+                        <a href={p.username_link} target="_blank" rel="noopener noreferrer" className="text-primary-400 hover:text-primary-300 truncate block max-w-[200px]">
+                          {p.username_link.replace("https://facebook.com/", "").replace("https://www.facebook.com/", "")}
+                        </a>
+                      ) : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>

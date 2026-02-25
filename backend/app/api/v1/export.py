@@ -115,7 +115,7 @@ async def export_facebook_ads(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Export in Facebook Ads Manager Custom Audience CSV format."""
+    """Export in same format as CSV/XLSX (full 20-field profile data)."""
     job_result = await db.execute(
         select(ScrapingJob).where(
             ScrapingJob.id == job_id,
@@ -133,26 +133,42 @@ async def export_facebook_ads(
     profiles = result.scalars().all()
 
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=FB_ADS_FIELDNAMES)
+
+    # Author info header
+    author = await _get_author(db, job_id)
+    if author:
+        output.write(f"# Page: {author.name or ''} ({author.platform_object_id})")
+        if author.category:
+            output.write(f" | Category: {author.category}")
+        if author.location:
+            output.write(f" | Location: {author.location}")
+        output.write("\n")
+
+    writer = csv.DictWriter(output, fieldnames=FIELDNAMES)
     writer.writeheader()
 
     for p in profiles:
-        # Convert birthday format if available (e.g., "January 15, 1990" -> "01151990")
-        dob = ""
-        if p.birthday and p.birthday != "NA":
-            dob = p.birthday  # User may need to manually format
-
         writer.writerow({
-            "email": "",  # Not available from Facebook scraping
-            "phone": (p.phone or "") if p.phone and p.phone != "NA" else "",
-            "fn": (p.first_name or "").lower(),
-            "ln": (p.last_name or "").lower(),
-            "ct": (p.location or "").lower(),
-            "st": "",
-            "country": "",
-            "dob": dob,
-            "gender": "m" if p.gender and p.gender.lower() == "male" else ("f" if p.gender and p.gender.lower() == "female" else ""),
-            "zip": "",
+            "ID": p.platform_user_id,
+            "Name": p.name or "NA",
+            "First Name": p.first_name or "NA",
+            "Last Name": p.last_name or "NA",
+            "Gender": p.gender or "NA",
+            "Birthday": p.birthday or "NA",
+            "Phone": p.phone or "NA",
+            "Relationship": p.relationship_status or "NA",
+            "Education": p.education or "NA",
+            "Work": p.work or "NA",
+            "Position": p.position or "NA",
+            "Hometown": p.hometown or "NA",
+            "Location": p.location or "NA",
+            "Website": p.website or "NA",
+            "Languages": p.languages or "NA",
+            "UsernameLink": p.username_link or "NA",
+            "Username": p.username or "NA",
+            "About": p.about or "NA",
+            "Picture URL": p.picture_url or "NA",
+            "Updated Time": p.scraped_at.strftime("%Y-%m-%d %H:%M:%S") if p.scraped_at else "NA",
         })
 
     output.seek(0)

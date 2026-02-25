@@ -147,25 +147,37 @@ def _unwrap_response(raw: dict) -> tuple[list[dict], dict]:
     return posts, paging
 
 
-def _next_cursor(paging: dict) -> str | None:
+def _next_page_params(paging: dict) -> dict | None:
     """
-    Extract the pagination cursor from the AKNG paging object.
+    Extract ALL pagination parameters from the AKNG paging ``next`` URL.
 
-    AKNG returns paging.next as a URL containing __paging_token param.
-    Falls back to standard Facebook cursors.after format.
+    Facebook feeds use time-based pagination that requires BOTH ``until``
+    AND ``__paging_token`` to advance.  Extracting only ``__paging_token``
+    (without ``until``) causes the API to return the first page repeatedly.
+
+    Falls back to standard ``cursors.after`` format.
     """
-    # AKNG format: extract __paging_token from the "next" URL
+    from urllib.parse import urlparse, parse_qs
+
     next_url = paging.get("next")
     if next_url:
-        from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(next_url).query)
-        token = qs.get("__paging_token", [None])[0]
-        if token:
-            return token
+        # Collect all pagination-related query params
+        pagination_keys = ("__paging_token", "until", "since", "after", "before")
+        params = {}
+        for key in pagination_keys:
+            val = qs.get(key, [None])[0]
+            if val:
+                params[key] = val
+        if params:
+            return params
 
     # Fallback: standard Facebook cursors format
     cursors = paging.get("cursors", {})
-    return cursors.get("after")
+    after = cursors.get("after")
+    if after:
+        return {"after": after}
+    return None
 
 
 def _publish_progress(job: ScrapingJob, stage: str = "", stage_data: dict | None = None) -> None:
@@ -334,7 +346,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 # Token types to try on 401 (fallback order)
                 _TOKEN_FALLBACKS = ["EAAAAU", "EAAGNO", "EAAD6V"]
 
-                cursor: str | None = None
+                page_params: dict | None = None  # pagination params for next API call
                 pages_fetched = 0
                 total_posts_fetched = 0
                 duplicate_count = 0
@@ -346,7 +358,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 # Allow continuing from a previous job's cursor
                 start_cursor = job_settings.get("start_from_cursor")
                 if start_cursor:
-                    cursor = start_cursor
+                    page_params = {"__paging_token": start_cursor}
                     logger.info(f"[Job {job_id}] Starting from user-selected cursor")
                     await _append_log(db, job, "info", "fetch_posts", "Continuing from previous cursor")
 
@@ -367,8 +379,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                 page_id,
                                 token_type=try_token,
                                 limit=10,
-                                after=cursor,
                                 order="reverse_chronological",
+                                pagination_params=page_params,
                             )
                             if try_token != token_type:
                                 logger.info(f"[Job {job_id}] Token type {token_type} failed, switched to {try_token}")
@@ -387,12 +399,23 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         raise last_err  # All token types failed with 401
 
                     logger.info(
+                        "[Job %s] Page %d – pagination_params=%s",
+                        job_id, pages_fetched + 1, page_params,
+                    )
+                    logger.info(
                         "[Job %s] Raw API response keys: %s, first 500 chars: %s",
                         job_id, list(raw_response.keys()), str(raw_response)[:500],
                     )
 
                     posts_data, paging = _unwrap_response(raw_response)
                     pages_fetched += 1
+
+                    logger.info(
+                        "[Job %s] Page %d – paging keys: %s, next URL present: %s",
+                        job_id, pages_fetched,
+                        list(paging.keys()),
+                        bool(paging.get("next")),
+                    )
 
                     # Capture the "before" cursor from the first page (for backward/newer pagination)
                     if pages_fetched == 1:
@@ -441,10 +464,13 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     job.total_items = total_posts_fetched  # grows as we discover
                     job.result_row_count = total_posts_fetched
                     job.progress_pct = round(pages_fetched / max_pages * 100, 2)
+                    # Extract the last __paging_token for state saving / continuation
+                    last_cursor = (page_params or {}).get("__paging_token")
+
                     await _save_pipeline_state(
                         db, job, "fetch_posts",
                         pages_fetched=pages_fetched,
-                        last_cursor=cursor,
+                        last_cursor=last_cursor,
                         total_posts_fetched=total_posts_fetched,
                     )
 
@@ -472,7 +498,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         await _save_pipeline_state(
                             db, job, "fetch_posts",
                             pages_fetched=pages_fetched,
-                            last_cursor=cursor,
+                            last_cursor=last_cursor,
                             total_posts_fetched=total_posts_fetched,
                         )
                         await _append_log(
@@ -493,9 +519,9 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         )
                         break
 
-                    # Advance cursor
-                    cursor = _next_cursor(paging)
-                    if not cursor:
+                    # Advance pagination — extract all params (until + __paging_token etc.)
+                    page_params = _next_page_params(paging)
+                    if not page_params:
                         break
 
                 logger.info(
@@ -555,7 +581,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     pages_with_posts=pages_with_posts,
                     total_posts_fetched=total_posts_fetched,
                     first_before_cursor=first_before_cursor,
-                    last_after_cursor=cursor,
+                    last_after_cursor=(page_params or {}).get("__paging_token"),
                 )
 
                 await _append_log(

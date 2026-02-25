@@ -226,12 +226,17 @@ class FacebookGraphClient(AbstractSocialClient):
         limit: int = 10,
         after: str | None = None,
         order: str = "chronological",
+        pagination_params: dict | None = None,
     ) -> dict:
         """
         Get posts from a page/profile/group feed.
         GET /graph/{version}/{page_id}/feed
 
         AKNG wraps the response: {"success": true, "data": {"data": [...], "paging": {...}}}
+
+        For pagination, pass ``pagination_params`` (extracted from the paging
+        ``next`` URL) which includes ``until`` + ``__paging_token`` — both are
+        required for Facebook's time-based feed pagination to advance.
         """
         url = f"{self.base_url}/{self.api_version}/{page_id}/feed"
         params = {
@@ -241,8 +246,10 @@ class FacebookGraphClient(AbstractSocialClient):
             "limit": limit,
             "order": order,
         }
-        if after:
-            params["__paging_token"] = after
+        if pagination_params:
+            params.update(pagination_params)
+        elif after:
+            params["after"] = after
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()
