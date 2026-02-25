@@ -144,7 +144,7 @@ async def create_job(
 # ── List / Get ───────────────────────────────────────────────────────
 
 
-@router.get("", response_model=list[JobResponse])
+@router.get("")
 async def list_jobs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -152,18 +152,25 @@ async def list_jobs(
     page_size: int = Query(20, ge=1, le=100),
     status_filter: str | None = Query(None, alias="status"),
 ):
-    query = (
+    base_where = [ScrapingJob.tenant_id == user.tenant_id]
+    if status_filter:
+        base_where.append(ScrapingJob.status == status_filter)
+
+    # Count total
+    total_result = await db.execute(
+        select(func.count(ScrapingJob.id)).where(*base_where)
+    )
+    total = total_result.scalar() or 0
+
+    result = await db.execute(
         select(ScrapingJob)
-        .where(ScrapingJob.tenant_id == user.tenant_id)
+        .where(*base_where)
         .order_by(ScrapingJob.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
-    if status_filter:
-        query = query.where(ScrapingJob.status == status_filter)
-
-    result = await db.execute(query)
-    return result.scalars().all()
+    jobs = result.scalars().all()
+    return {"items": jobs, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/cursor-history")
@@ -234,8 +241,11 @@ async def get_post_discovery_cursors(
                 "created_at": j.created_at.isoformat(),
                 "last_after_cursor": last_after,
                 "first_before_cursor": first_before,
+                "last_page_params": state.get("last_page_params"),
                 "pages_fetched": state.get("pages_fetched", 0),
                 "total_posts_fetched": state.get("total_posts_fetched", 0),
+                "oldest_post_date": state.get("oldest_post_date"),
+                "newest_post_date": state.get("newest_post_date"),
             })
 
     return history
@@ -584,6 +594,8 @@ async def get_job_posts(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     include_related: bool = Query(True),
+    sort_by: str = Query("created_time", pattern="^(created_time|comment_count|reaction_count|share_count)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ):
     """Get discovered posts for a post_discovery job.
 
@@ -626,11 +638,21 @@ async def get_job_posts(
         .where(ScrapedPost.job_id.in_(job_ids))
     ).subquery()
 
+    # Dynamic sort column
+    sort_column_map = {
+        "created_time": ScrapedPost.created_time,
+        "comment_count": ScrapedPost.comment_count,
+        "reaction_count": ScrapedPost.reaction_count,
+        "share_count": ScrapedPost.share_count,
+    }
+    sort_col = sort_column_map.get(sort_by, ScrapedPost.created_time)
+    order_clause = sort_col.desc().nulls_last() if sort_order == "desc" else sort_col.asc().nulls_first()
+
     result = await db.execute(
         select(ScrapedPost)
         .join(dedup_subq, ScrapedPost.id == dedup_subq.c.id)
         .where(dedup_subq.c.rn == 1)
-        .order_by(ScrapedPost.created_time.desc().nulls_last())
+        .order_by(order_clause)
         .offset((page - 1) * page_size)
         .limit(page_size)
     )

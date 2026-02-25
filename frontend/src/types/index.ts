@@ -57,6 +57,9 @@ export interface ScrapingJob {
       total_posts_fetched?: number;
       first_before_cursor?: string;
       last_after_cursor?: string;
+      last_page_params?: Record<string, string>;
+      oldest_post_date?: string;
+      newest_post_date?: string;
     };
     error?: {
       stage: string;

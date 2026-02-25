@@ -12,7 +12,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     creditsApi.getBalance().then((r) => setBalance(r.data)).catch(() => {});
-    jobsApi.list({ page: 1, page_size: 5 }).then((r) => setRecentJobs(r.data)).catch(() => {});
+    jobsApi.list({ page: 1, page_size: 5 }).then((r) => {
+      const data = r.data;
+      setRecentJobs(data?.items || (Array.isArray(data) ? data : []));
+    }).catch(() => {});
   }, []);
 
   return (

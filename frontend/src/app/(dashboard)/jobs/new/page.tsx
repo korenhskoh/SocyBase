@@ -109,9 +109,11 @@ export default function NewJobPage() {
 
   useEffect(() => {
     jobsApi.list({ page: 1, page_size: 50, status: "running" }).then((r) => {
-      const running = Array.isArray(r.data) ? r.data.length : 0;
+      const data = r.data;
+      const running = data?.items ? data.items.length : (Array.isArray(data) ? data.length : 0);
       jobsApi.list({ page: 1, page_size: 50, status: "queued" }).then((r2) => {
-        const queued = Array.isArray(r2.data) ? r2.data.length : 0;
+        const data2 = r2.data;
+        const queued = data2?.items ? data2.items.length : (Array.isArray(data2) ? data2.length : 0);
         setActiveJobCount(running + queued);
       }).catch(() => {});
     }).catch(() => {});
@@ -137,8 +139,9 @@ export default function NewJobPage() {
   const [maxPages, setMaxPages] = useState(50);
   const [useDiscoveryCursor, setUseDiscoveryCursor] = useState(false);
   const [selectedDiscoveryCursor, setSelectedDiscoveryCursor] = useState("");
+  const [selectedDiscoveryPageParams, setSelectedDiscoveryPageParams] = useState<Record<string, string> | null>(null);
   const [discoveryCursorHistory, setDiscoveryCursorHistory] = useState<
-    { job_id: string; status: string; created_at: string; last_after_cursor: string | null; pages_fetched: number; total_posts_fetched: number }[]
+    { job_id: string; status: string; created_at: string; last_after_cursor: string | null; last_page_params?: Record<string, string> | null; pages_fetched: number; total_posts_fetched: number; oldest_post_date?: string | null; newest_post_date?: string | null }[]
   >([]);
   const [loadingDiscoveryCursors, setLoadingDiscoveryCursors] = useState(false);
 
@@ -178,6 +181,7 @@ export default function NewJobPage() {
   const handleDiscoveryCursorToggle = (checked: boolean) => {
     setUseDiscoveryCursor(checked);
     setSelectedDiscoveryCursor("");
+    setSelectedDiscoveryPageParams(null);
     if (checked) loadDiscoveryCursorHistory();
   };
 
@@ -270,6 +274,7 @@ export default function NewJobPage() {
             token_type: tokenType,
             max_pages: maxPages,
             ...(useDiscoveryCursor && selectedDiscoveryCursor && { start_from_cursor: selectedDiscoveryCursor }),
+            ...(useDiscoveryCursor && selectedDiscoveryPageParams && { start_from_page_params: selectedDiscoveryPageParams }),
           },
         });
         router.push(`/jobs/${res.data.id}`);
@@ -718,7 +723,10 @@ export default function NewJobPage() {
                           <button
                             key={h.job_id}
                             type="button"
-                            onClick={() => setSelectedDiscoveryCursor(h.last_after_cursor || "")}
+                            onClick={() => {
+                              setSelectedDiscoveryCursor(h.last_after_cursor || "");
+                              setSelectedDiscoveryPageParams(h.last_page_params || null);
+                            }}
                             className={`w-full text-left rounded-lg border p-3 transition-all ${
                               selectedDiscoveryCursor === h.last_after_cursor
                                 ? "border-primary-500 bg-primary-500/10"
@@ -731,11 +739,18 @@ export default function NewJobPage() {
                               </span>
                               <span className="text-xs text-white/40">{formatTimeAgo(h.created_at)}</span>
                             </div>
-                            <span className={`text-xs mt-1 inline-block px-1.5 py-0.5 rounded ${
-                              h.status === "completed" ? "bg-emerald-500/10 text-emerald-400" : "bg-yellow-500/10 text-yellow-400"
-                            }`}>
-                              {h.status}
-                            </span>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-xs inline-block px-1.5 py-0.5 rounded ${
+                                h.status === "completed" ? "bg-emerald-500/10 text-emerald-400" : "bg-yellow-500/10 text-yellow-400"
+                              }`}>
+                                {h.status}
+                              </span>
+                              {(h.oldest_post_date || h.newest_post_date) && (
+                                <span className="text-[10px] text-white/30">
+                                  {h.newest_post_date ? new Date(h.newest_post_date).toLocaleDateString() : "?"} — {h.oldest_post_date ? new Date(h.oldest_post_date).toLocaleDateString() : "?"}
+                                </span>
+                              )}
+                            </div>
                           </button>
                         ))}
                       </div>

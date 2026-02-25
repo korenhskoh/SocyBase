@@ -79,6 +79,9 @@ const JOB_TYPE_BADGE: Record<string, { label: string; color: string }> = {
 export default function JobsPage() {
   const router = useRouter();
   const [jobs, setJobs] = useState<ScrapingJob[]>([]);
+  const [jobsTotal, setJobsTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [typeFilter, setTypeFilter] = useState<string>("");
@@ -98,24 +101,34 @@ export default function JobsPage() {
   const [actionError, setActionError] = useState("");
 
   const fetchJobs = useCallback(() => {
-    const params: Record<string, any> = { page: 1, page_size: 50 };
+    const params: Record<string, any> = { page, page_size: pageSize };
     if (statusFilter) params.status = statusFilter;
 
     setLoading(true);
     jobsApi
       .list(params)
-      .then((r) => setJobs(r.data))
+      .then((r) => {
+        const data = r.data;
+        if (data.items) {
+          setJobs(data.items);
+          setJobsTotal(data.total || 0);
+        } else if (Array.isArray(data)) {
+          setJobs(data);
+          setJobsTotal(data.length);
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [statusFilter]);
+  }, [statusFilter, page, pageSize]);
 
   useEffect(() => {
     fetchJobs();
   }, [fetchJobs]);
 
-  // Clear selection on filter change
+  // Clear selection and reset page on filter change
   useEffect(() => {
     setSelectedJobs(new Set());
+    setPage(1);
   }, [statusFilter, typeFilter]);
 
   // Close export dropdown on outside click
@@ -707,6 +720,80 @@ export default function JobsPage() {
             </table>
           </div>
         )}
+
+        {/* Pagination */}
+        {jobsTotal > pageSize && (() => {
+          const totalPages = Math.ceil(jobsTotal / pageSize);
+          const getPageNumbers = () => {
+            const pages: (number | "...")[] = [];
+            if (totalPages <= 7) {
+              for (let i = 1; i <= totalPages; i++) pages.push(i);
+            } else {
+              pages.push(1);
+              if (page > 3) pages.push("...");
+              const start = Math.max(2, page - 1);
+              const end = Math.min(totalPages - 1, page + 1);
+              for (let i = start; i <= end; i++) pages.push(i);
+              if (page < totalPages - 2) pages.push("...");
+              pages.push(totalPages);
+            }
+            return pages;
+          };
+          return (
+            <div className="p-4 border-t border-white/5 flex items-center justify-between">
+              <p className="text-xs text-white/40">
+                Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, jobsTotal)} of {jobsTotal}
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(1)}
+                  disabled={page <= 1}
+                  title="First page"
+                  className="px-2 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                >
+                  &laquo;
+                </button>
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                >
+                  Prev
+                </button>
+                {getPageNumbers().map((pg, i) =>
+                  pg === "..." ? (
+                    <span key={`dots-${i}`} className="text-xs text-white/30 px-1">...</span>
+                  ) : (
+                    <button
+                      key={pg}
+                      onClick={() => setPage(pg as number)}
+                      className={`px-3 py-1.5 text-xs rounded-lg transition ${
+                        page === pg ? "bg-primary-500/20 text-primary-400 font-semibold" : "text-white/40 hover:bg-white/5"
+                      }`}
+                    >
+                      {pg}
+                    </button>
+                  )
+                )}
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                >
+                  Next
+                </button>
+                <button
+                  onClick={() => setPage(totalPages)}
+                  disabled={page >= totalPages}
+                  title="Last page"
+                  className="px-2 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                >
+                  &raquo;
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Confirmation Modal */}

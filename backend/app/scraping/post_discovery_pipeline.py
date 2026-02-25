@@ -381,12 +381,20 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 pages_with_posts = 0
                 first_before_cursor: str | None = None
                 seen_post_ids: set[str] = set()
+                oldest_post_date: str | None = None
+                newest_post_date: str | None = None
 
                 # Allow continuing from a previous job's cursor
+                start_page_params = job_settings.get("start_from_page_params")
                 start_cursor = job_settings.get("start_from_cursor")
-                if start_cursor:
+                if start_page_params and isinstance(start_page_params, dict):
+                    # Full pagination params (includes __paging_token + until etc.)
+                    page_params = start_page_params
+                    logger.info(f"[Job {job_id}] Starting from saved page params: {list(start_page_params.keys())}")
+                    await _append_log(db, job, "info", "fetch_posts", "Continuing from previous cursor (full params)")
+                elif start_cursor:
                     page_params = {"__paging_token": start_cursor}
-                    logger.info(f"[Job {job_id}] Starting from user-selected cursor")
+                    logger.info(f"[Job {job_id}] Starting from user-selected cursor (token only)")
                     await _append_log(db, job, "info", "fetch_posts", "Continuing from previous cursor")
 
                 while pages_fetched < max_pages:
@@ -502,6 +510,15 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         total_posts_fetched += 1
                         new_posts_this_page += 1
 
+                        # Track date range of discovered posts
+                        ct = fields["created_time"]
+                        if ct:
+                            ct_iso = ct.isoformat()
+                            if oldest_post_date is None or ct_iso < oldest_post_date:
+                                oldest_post_date = ct_iso
+                            if newest_post_date is None or ct_iso > newest_post_date:
+                                newest_post_date = ct_iso
+
                     # Track consecutive empty pages to stop early
                     if new_posts_this_page > 0:
                         empty_streak = 0
@@ -519,10 +536,14 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     _pp = page_params or {}
                     last_cursor = _pp.get("__paging_token") or _pp.get("after")
 
+                    # Pre-compute next page params so we can save them
+                    next_pp = _next_page_params(paging)
+
                     await _save_pipeline_state(
                         db, job, "fetch_posts",
                         pages_fetched=pages_fetched,
                         last_cursor=last_cursor,
+                        last_page_params=next_pp,
                         total_posts_fetched=total_posts_fetched,
                     )
 
@@ -555,6 +576,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                             db, job, "fetch_posts",
                             pages_fetched=pages_fetched,
                             last_cursor=last_cursor,
+                            last_page_params=next_pp,
                             total_posts_fetched=total_posts_fetched,
                         )
                         await _append_log(
@@ -575,8 +597,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         )
                         break
 
-                    # Advance pagination — extract all params (until + __paging_token etc.)
-                    page_params = _next_page_params(paging)
+                    # Advance pagination — use pre-computed next page params
+                    page_params = next_pp
                     if not page_params:
                         break
 
@@ -622,6 +644,9 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     total_posts_fetched=total_posts_fetched,
                     first_before_cursor=first_before_cursor,
                     last_after_cursor=(page_params or {}).get("__paging_token") or (page_params or {}).get("after"),
+                    last_page_params=page_params,
+                    oldest_post_date=oldest_post_date,
+                    newest_post_date=newest_post_date,
                 )
 
                 await _append_log(

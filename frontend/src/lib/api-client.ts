@@ -86,7 +86,17 @@ export const jobsApi = {
     settings?: Record<string, unknown>;
   }) => api.post("/jobs", data),
   list: (params?: { page?: number; page_size?: number; status?: string }) =>
-    api.get("/jobs", { params }),
+    api.get("/jobs", { params }).then((res) => {
+      // Handle both new paginated response {items, total, ...} and old array format
+      if (res.data && Array.isArray(res.data.items)) {
+        return res;
+      }
+      // Backwards compat: wrap old array response
+      if (Array.isArray(res.data)) {
+        res.data = { items: res.data, total: res.data.length, page: 1, page_size: res.data.length };
+      }
+      return res;
+    }),
   get: (id: string) => api.get(`/jobs/${id}`),
   getProgress: (id: string) => api.get(`/jobs/${id}/progress`),
   cancel: (id: string) => api.delete(`/jobs/${id}`),
@@ -105,7 +115,7 @@ export const jobsApi = {
   hardDelete: (id: string) => api.delete(`/jobs/${id}/delete`),
   batchAction: (data: { action: string; job_ids: string[] }) => api.post("/jobs/batch", data),
   getLogs: (id: string) => api.get(`/jobs/${id}/logs`),
-  getPosts: (id: string, params?: { page?: number; page_size?: number }) =>
+  getPosts: (id: string, params?: { page?: number; page_size?: number; sort_by?: string; sort_order?: string }) =>
     api.get(`/jobs/${id}/posts`, { params }),
   createFromPosts: (data: { post_ids: string[]; settings?: Record<string, unknown> }) =>
     api.post("/jobs/create-from-posts", data),

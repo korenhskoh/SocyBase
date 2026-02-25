@@ -44,6 +44,8 @@ export default function JobDetailPage() {
   const [postsTotal, setPostsTotal] = useState(0);
   const [postsPage, setPostsPage] = useState(1);
   const [postsPageSize, setPostsPageSize] = useState(30);
+  const [postsSortBy, setPostsSortBy] = useState("created_time");
+  const [postsSortOrder, setPostsSortOrder] = useState<"asc" | "desc">("desc");
   const [author, setAuthor] = useState<PageAuthorProfile | null>(null);
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
   const [showOnlyHighPotential, setShowOnlyHighPotential] = useState(false);
@@ -93,7 +95,7 @@ export default function JobDetailPage() {
     const pg = page ?? postsPage;
     const ps = pageSize ?? postsPageSize;
     try {
-      const res = await jobsApi.getPosts(jobId, { page: pg, page_size: ps });
+      const res = await jobsApi.getPosts(jobId, { page: pg, page_size: ps, sort_by: postsSortBy, sort_order: postsSortOrder });
       const data = res.data;
       if (data.items) {
         setPosts(data.items);
@@ -105,7 +107,7 @@ export default function JobDetailPage() {
     } catch (err) {
       console.warn("[fetchPosts] Failed:", err);
     }
-  }, [jobId, postsPage, postsPageSize]);
+  }, [jobId, postsPage, postsPageSize, postsSortBy, postsSortOrder]);
 
   // Keep refs current so SSE handler always uses latest fetch functions
   fetchPostsRef.current = fetchPosts;
@@ -327,11 +329,11 @@ export default function JobDetailPage() {
     return () => clearInterval(interval);
   }, [job?.status, job?.job_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fetch posts when pagination changes
+  // Re-fetch posts when pagination or sort changes
   useEffect(() => {
     if (!job || job.job_type !== "post_discovery") return;
     fetchPosts();
-  }, [postsPage, postsPageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [postsPage, postsPageSize, postsSortBy, postsSortOrder]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch profiles when pagination changes
   useEffect(() => {
@@ -375,6 +377,7 @@ export default function JobDetailPage() {
                     current_stage: prev.error_details?.pipeline_state?.current_stage || "finalize",
                     last_after_cursor: contState.last_after_cursor,
                     last_cursor: contState.last_cursor,
+                    last_page_params: contState.last_page_params,
                   },
                 },
               };
@@ -514,6 +517,10 @@ export default function JobDetailPage() {
       ? (state?.last_after_cursor || state?.last_cursor) as string | undefined
       : state?.first_before_cursor as string | undefined;
     if (!cursor) return;
+
+    // Use full page_params if available (includes __paging_token + until)
+    const lastPageParams = state?.last_page_params as Record<string, string> | undefined;
+
     setContinuingDiscovery(true);
     try {
       const res = await jobsApi.create({
@@ -524,6 +531,7 @@ export default function JobDetailPage() {
         settings: {
           ...(job.settings || {}),
           start_from_cursor: cursor,
+          ...(direction === "older" && lastPageParams ? { start_from_page_params: lastPageParams } : {}),
         },
       });
       // Stay on current page — track the continuation job
@@ -1003,9 +1011,48 @@ export default function JobDetailPage() {
                     className="rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
                   />
                 </th>
-                {["Priority", "Message", "Author", "Created", "Comments", "Reactions", "Shares", "Type", "Actions"].map((h) => (
-                  <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3">
-                    {h}
+                {[
+                  { label: "Priority", sortKey: null },
+                  { label: "Message", sortKey: null },
+                  { label: "Author", sortKey: null },
+                  { label: "Created", sortKey: "created_time" },
+                  { label: "Comments", sortKey: "comment_count" },
+                  { label: "Reactions", sortKey: "reaction_count" },
+                  { label: "Shares", sortKey: "share_count" },
+                  { label: "Type", sortKey: null },
+                  { label: "Actions", sortKey: null },
+                ].map((col) => (
+                  <th
+                    key={col.label}
+                    onClick={col.sortKey ? () => {
+                      if (postsSortBy === col.sortKey) {
+                        setPostsSortOrder(postsSortOrder === "desc" ? "asc" : "desc");
+                      } else {
+                        setPostsSortBy(col.sortKey!);
+                        setPostsSortOrder("desc");
+                      }
+                      setPostsPage(1);
+                    } : undefined}
+                    className={`text-left text-xs font-medium text-white/40 uppercase px-4 py-3 ${
+                      col.sortKey ? "cursor-pointer hover:text-white/70 select-none" : ""
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {col.label}
+                      {col.sortKey && postsSortBy === col.sortKey && (
+                        <svg className="w-3 h-3 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          {postsSortOrder === "desc"
+                            ? <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                            : <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                          }
+                        </svg>
+                      )}
+                      {col.sortKey && postsSortBy !== col.sortKey && (
+                        <svg className="w-3 h-3 text-white/15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                        </svg>
+                      )}
+                    </span>
                   </th>
                 ))}
               </tr>
@@ -1069,43 +1116,79 @@ export default function JobDetailPage() {
           </table>
 
           {/* Pagination */}
-          {postsTotal > postsPageSize && (
-            <div className="p-4 border-t border-white/5 flex items-center justify-between">
-              <p className="text-xs text-white/40">
-                Showing {(postsPage - 1) * postsPageSize + 1}–{Math.min(postsPage * postsPageSize, postsTotal)} of {postsTotal}
-              </p>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPostsPage((p) => Math.max(1, p - 1))}
-                  disabled={postsPage <= 1}
-                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
-                >
-                  Prev
-                </button>
-                {Array.from({ length: Math.min(Math.ceil(postsTotal / postsPageSize), 7) }, (_, i) => i + 1).map((pg) => (
+          {postsTotal > postsPageSize && (() => {
+            const totalPages = Math.ceil(postsTotal / postsPageSize);
+            // Smart page numbers: show pages around current page
+            const getPageNumbers = () => {
+              const pages: (number | "...")[] = [];
+              if (totalPages <= 7) {
+                for (let i = 1; i <= totalPages; i++) pages.push(i);
+              } else {
+                pages.push(1);
+                if (postsPage > 3) pages.push("...");
+                const start = Math.max(2, postsPage - 1);
+                const end = Math.min(totalPages - 1, postsPage + 1);
+                for (let i = start; i <= end; i++) pages.push(i);
+                if (postsPage < totalPages - 2) pages.push("...");
+                pages.push(totalPages);
+              }
+              return pages;
+            };
+            return (
+              <div className="p-4 border-t border-white/5 flex items-center justify-between">
+                <p className="text-xs text-white/40">
+                  Showing {(postsPage - 1) * postsPageSize + 1}–{Math.min(postsPage * postsPageSize, postsTotal)} of {postsTotal}
+                </p>
+                <div className="flex items-center gap-1">
                   <button
-                    key={pg}
-                    onClick={() => setPostsPage(pg)}
-                    className={`px-3 py-1.5 text-xs rounded-lg transition ${
-                      postsPage === pg ? "bg-primary-500/20 text-primary-400 font-semibold" : "text-white/40 hover:bg-white/5"
-                    }`}
+                    onClick={() => setPostsPage(1)}
+                    disabled={postsPage <= 1}
+                    title="First page"
+                    className="px-2 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
                   >
-                    {pg}
+                    &laquo;
                   </button>
-                ))}
-                {Math.ceil(postsTotal / postsPageSize) > 7 && (
-                  <span className="text-xs text-white/30 px-1">...</span>
-                )}
-                <button
-                  onClick={() => setPostsPage((p) => Math.min(Math.ceil(postsTotal / postsPageSize), p + 1))}
-                  disabled={postsPage >= Math.ceil(postsTotal / postsPageSize)}
-                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
-                >
-                  Next
-                </button>
+                  <button
+                    onClick={() => setPostsPage((p) => Math.max(1, p - 1))}
+                    disabled={postsPage <= 1}
+                    className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                  >
+                    Prev
+                  </button>
+                  {getPageNumbers().map((pg, i) =>
+                    pg === "..." ? (
+                      <span key={`dots-${i}`} className="text-xs text-white/30 px-1">...</span>
+                    ) : (
+                      <button
+                        key={pg}
+                        onClick={() => setPostsPage(pg as number)}
+                        className={`px-3 py-1.5 text-xs rounded-lg transition ${
+                          postsPage === pg ? "bg-primary-500/20 text-primary-400 font-semibold" : "text-white/40 hover:bg-white/5"
+                        }`}
+                      >
+                        {pg}
+                      </button>
+                    )
+                  )}
+                  <button
+                    onClick={() => setPostsPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={postsPage >= totalPages}
+                    className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                  >
+                    Next
+                  </button>
+                  <button
+                    onClick={() => setPostsPage(totalPages)}
+                    disabled={postsPage >= totalPages}
+                    title="Last page"
+                    className="px-2 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                  >
+                    &raquo;
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -1191,43 +1274,78 @@ export default function JobDetailPage() {
           </div>
 
           {/* Pagination */}
-          {profilesTotal > profilesPageSize && (
-            <div className="p-4 border-t border-white/5 flex items-center justify-between">
-              <p className="text-xs text-white/40">
-                Showing {(profilesPage - 1) * profilesPageSize + 1}–{Math.min(profilesPage * profilesPageSize, profilesTotal)} of {profilesTotal}
-              </p>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setProfilesPage((p) => Math.max(1, p - 1))}
-                  disabled={profilesPage <= 1}
-                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
-                >
-                  Prev
-                </button>
-                {Array.from({ length: Math.min(Math.ceil(profilesTotal / profilesPageSize), 7) }, (_, i) => i + 1).map((pg) => (
+          {profilesTotal > profilesPageSize && (() => {
+            const totalPages = Math.ceil(profilesTotal / profilesPageSize);
+            const getPageNumbers = () => {
+              const pages: (number | "...")[] = [];
+              if (totalPages <= 7) {
+                for (let i = 1; i <= totalPages; i++) pages.push(i);
+              } else {
+                pages.push(1);
+                if (profilesPage > 3) pages.push("...");
+                const start = Math.max(2, profilesPage - 1);
+                const end = Math.min(totalPages - 1, profilesPage + 1);
+                for (let i = start; i <= end; i++) pages.push(i);
+                if (profilesPage < totalPages - 2) pages.push("...");
+                pages.push(totalPages);
+              }
+              return pages;
+            };
+            return (
+              <div className="p-4 border-t border-white/5 flex items-center justify-between">
+                <p className="text-xs text-white/40">
+                  Showing {(profilesPage - 1) * profilesPageSize + 1}–{Math.min(profilesPage * profilesPageSize, profilesTotal)} of {profilesTotal}
+                </p>
+                <div className="flex items-center gap-1">
                   <button
-                    key={pg}
-                    onClick={() => setProfilesPage(pg)}
-                    className={`px-3 py-1.5 text-xs rounded-lg transition ${
-                      profilesPage === pg ? "bg-primary-500/20 text-primary-400 font-semibold" : "text-white/40 hover:bg-white/5"
-                    }`}
+                    onClick={() => setProfilesPage(1)}
+                    disabled={profilesPage <= 1}
+                    title="First page"
+                    className="px-2 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
                   >
-                    {pg}
+                    &laquo;
                   </button>
-                ))}
-                {Math.ceil(profilesTotal / profilesPageSize) > 7 && (
-                  <span className="text-xs text-white/30 px-1">...</span>
-                )}
-                <button
-                  onClick={() => setProfilesPage((p) => Math.min(Math.ceil(profilesTotal / profilesPageSize), p + 1))}
-                  disabled={profilesPage >= Math.ceil(profilesTotal / profilesPageSize)}
-                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
-                >
-                  Next
-                </button>
+                  <button
+                    onClick={() => setProfilesPage((p) => Math.max(1, p - 1))}
+                    disabled={profilesPage <= 1}
+                    className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                  >
+                    Prev
+                  </button>
+                  {getPageNumbers().map((pg, i) =>
+                    pg === "..." ? (
+                      <span key={`dots-${i}`} className="text-xs text-white/30 px-1">...</span>
+                    ) : (
+                      <button
+                        key={pg}
+                        onClick={() => setProfilesPage(pg as number)}
+                        className={`px-3 py-1.5 text-xs rounded-lg transition ${
+                          profilesPage === pg ? "bg-primary-500/20 text-primary-400 font-semibold" : "text-white/40 hover:bg-white/5"
+                        }`}
+                      >
+                        {pg}
+                      </button>
+                    )
+                  )}
+                  <button
+                    onClick={() => setProfilesPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={profilesPage >= totalPages}
+                    className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                  >
+                    Next
+                  </button>
+                  <button
+                    onClick={() => setProfilesPage(totalPages)}
+                    disabled={profilesPage >= totalPages}
+                    title="Last page"
+                    className="px-2 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                  >
+                    &raquo;
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
