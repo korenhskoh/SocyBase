@@ -194,6 +194,33 @@ def _publish_progress(job: ScrapingJob, stage: str = "", stage_data: dict | None
     })
 
 
+async def _charge_credits(
+    db: AsyncSession, job: ScrapingJob, credits_used: int,
+    pages_fetched: int, total_posts_fetched: int,
+) -> None:
+    """Debit credits from tenant balance and record transaction."""
+    if credits_used <= 0:
+        return
+    balance_result = await db.execute(
+        select(CreditBalance).where(CreditBalance.tenant_id == job.tenant_id)
+    )
+    balance = balance_result.scalar_one_or_none()
+    if balance:
+        balance.balance -= credits_used
+        balance.lifetime_used += credits_used
+        tx = CreditTransaction(
+            tenant_id=job.tenant_id,
+            user_id=job.user_id,
+            type="usage",
+            amount=-credits_used,
+            balance_after=balance.balance,
+            description=f"Post discovery: {total_posts_fetched} posts from {pages_fetched} pages",
+            reference_type="scraping_job",
+            reference_id=job.id,
+        )
+        db.add(tx)
+
+
 # ── Celery entry point ──────────────────────────────────────────────
 
 
@@ -520,6 +547,10 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     current_status = await _check_job_status(db, job.id)
                     if current_status in ("paused", "cancelled"):
                         job.status = current_status
+                        # Charge credits for pages actually fetched
+                        credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
+                        job.credits_used = credits_used
+                        await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
                         await _save_pipeline_state(
                             db, job, "fetch_posts",
                             pages_fetched=pages_fetched,
@@ -528,7 +559,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         )
                         await _append_log(
                             db, job, "warn", "fetch_posts",
-                            f"Job {current_status} by user after {pages_fetched} pages ({total_posts_fetched} posts)",
+                            f"Job {current_status} by user after {pages_fetched} pages ({total_posts_fetched} posts, {credits_used} credits)",
                         )
                         _publish_progress(job, "fetch_posts")
                         return
@@ -561,8 +592,13 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 current_status = await _check_job_status(db, job.id)
                 if current_status in ("paused", "cancelled"):
                     job.status = current_status
+                    # Charge credits for pages actually fetched
+                    credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
+                    job.credits_used = credits_used
+                    await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
                     await _save_pipeline_state(db, job, "finalize")
-                    await _append_log(db, job, "warn", "finalize", f"Job {current_status} by user")
+                    await _append_log(db, job, "warn", "finalize",
+                        f"Job {current_status} by user ({credits_used} credits used)")
                     _publish_progress(job, "finalize")
                     return
 
@@ -577,28 +613,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 # Credits: charge for productive pages + 1 confirming empty page
                 credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
                 job.credits_used = credits_used
-
-                # Debit from CreditBalance and record transaction
-                balance_result = await db.execute(
-                    select(CreditBalance).where(CreditBalance.tenant_id == job.tenant_id)
-                )
-                balance = balance_result.scalar_one_or_none()
-
-                if balance:
-                    balance.balance -= credits_used
-                    balance.lifetime_used += credits_used
-
-                    tx = CreditTransaction(
-                        tenant_id=job.tenant_id,
-                        user_id=job.user_id,
-                        type="usage",
-                        amount=-credits_used,
-                        balance_after=balance.balance,
-                        description=f"Post discovery: {total_posts_fetched} posts from {pages_fetched} pages",
-                        reference_type="scraping_job",
-                        reference_id=job.id,
-                    )
-                    db.add(tx)
+                await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
 
                 await _save_pipeline_state(
                     db, job, "finalize",
@@ -653,6 +668,14 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     current_state = (job.error_details or {}).get("pipeline_state", {})
                     failed_stage = current_state.get("current_stage", "unknown")
                     await _save_error_details(db, job, failed_stage, e)
+                    # Charge credits for pages already fetched before failure
+                    try:
+                        if pages_fetched > 0 and (job.credits_used or 0) == 0:
+                            credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
+                            job.credits_used = credits_used
+                            await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
+                    except NameError:
+                        pass  # Variables not yet defined (error before fetch loop)
                     await _append_log(
                         db, job, "error", failed_stage,
                         f"Pipeline failed: {type(e).__name__}: {e}",
