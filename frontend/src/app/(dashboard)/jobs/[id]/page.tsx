@@ -381,7 +381,7 @@ export default function JobDetailPage() {
         <div className="glass-card p-6">
           {(() => {
             const stage = liveProgress?.current_stage || "";
-            const stageData = liveProgress?.stage_data || {};
+            const stageData: any = liveProgress?.stage_data || {};
             const pct = liveProgress?.progress_pct ?? job.progress_pct;
             const processed = liveProgress?.processed_items ?? job.processed_items;
             const total = liveProgress?.total_items ?? job.total_items;

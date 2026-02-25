@@ -539,14 +539,14 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                 logger.info(f"[Job {job_id}] Stage 4: Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
                 await _append_log(db, job, "info", "enrich_profiles", f"Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
+                already_done = len(skip_user_ids)
+                credits_used = new_pages if resume_from_job_id else page_count
                 job.progress_pct = _calc_stage_progress("enrich_profiles", done=already_done, total=len(user_ids))
                 publish_job_progress(str(job.id), _build_progress_event(
                     job, "enrich_profiles",
                     {"profiles_done": already_done, "profiles_total": len(user_ids),
                      "profiles_failed": 0},
                 ))
-                credits_used = new_pages if resume_from_job_id else page_count
-                already_done = len(skip_user_ids)
 
                 for i, uid in enumerate(user_ids_to_enrich):
                     try:
@@ -564,6 +564,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                         )
                         profile = profile_result.scalar_one_or_none()
                         if profile:
+                            profile.name = mapped["Name"]
                             profile.first_name = mapped["First Name"]
                             profile.last_name = mapped["Last Name"]
                             profile.gender = mapped["Gender"]
