@@ -37,6 +37,9 @@ export default function JobDetailPage() {
   const jobId = params.id as string;
   const [job, setJob] = useState<ScrapingJob | null>(null);
   const [profiles, setProfiles] = useState<ScrapedProfile[]>([]);
+  const [profilesTotal, setProfilesTotal] = useState(0);
+  const [profilesPage, setProfilesPage] = useState(1);
+  const [profilesPageSize, setProfilesPageSize] = useState(30);
   const [posts, setPosts] = useState<ScrapedPost[]>([]);
   const [postsTotal, setPostsTotal] = useState(0);
   const [postsPage, setPostsPage] = useState(1);
@@ -66,6 +69,22 @@ export default function JobDetailPage() {
   const [analyzingFans, setAnalyzingFans] = useState<Set<string>>(new Set());
   const [batchAnalyzing, setBatchAnalyzing] = useState(false);
   const [expandedFan, setExpandedFan] = useState<string | null>(null);
+
+  const fetchProfiles = useCallback(async (page?: number, pageSize?: number) => {
+    const pg = page ?? profilesPage;
+    const ps = pageSize ?? profilesPageSize;
+    try {
+      const res = await jobsApi.getResults(jobId, { page: pg, page_size: ps });
+      const data = res.data;
+      if (data.items) {
+        setProfiles(data.items);
+        setProfilesTotal(data.total);
+      } else {
+        // Backwards compat: if API returns array directly
+        setProfiles(Array.isArray(data) ? data : []);
+      }
+    } catch { /* ignore */ }
+  }, [jobId, profilesPage, profilesPageSize]);
 
   const fetchPosts = useCallback(async (page?: number, pageSize?: number) => {
     const pg = page ?? postsPage;
@@ -140,21 +159,14 @@ export default function JobDetailPage() {
       const res = await jobsApi.get(jobId);
       setJob(res.data);
 
+      const isActive = res.data.status === "running" || res.data.status === "queued";
       const loadResults = opts?.loadResults ||
         ["completed", "paused", "cancelled"].includes(res.data.status);
 
-      if (loadResults) {
-        if (res.data.job_type === "post_discovery") {
-          fetchPosts();
-        } else {
-          const profRes = await jobsApi.getResults(jobId, { page: 1, page_size: 50 });
-          setProfiles(profRes.data);
-        }
-      }
-
-      // Fetch posts for running/queued post_discovery jobs so users see them in real-time
-      if (res.data.job_type === "post_discovery" && (res.data.status === "running" || res.data.status === "queued")) {
-        fetchPosts();
+      if (res.data.job_type === "post_discovery") {
+        if (loadResults || isActive) fetchPosts();
+      } else {
+        if (loadResults || isActive) fetchProfiles();
       }
 
       // Fetch queue position for queued jobs
@@ -180,7 +192,7 @@ export default function JobDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [jobId, fetchPosts]);
+  }, [jobId, fetchPosts, fetchProfiles]);
 
   // SSE connection for real-time progress
   const sseInitialized = useRef(false);
@@ -287,11 +299,26 @@ export default function JobDetailPage() {
     return () => clearInterval(interval);
   }, [job?.status, job?.job_type, fetchPosts]);
 
+  // Auto-refresh profiles table while comment scraper is running (every 4s)
+  useEffect(() => {
+    if (!job || job.job_type === "post_discovery") return;
+    if (job.status !== "running") return;
+
+    const interval = setInterval(() => fetchProfiles(), 4000);
+    return () => clearInterval(interval);
+  }, [job?.status, job?.job_type, fetchProfiles]);
+
   // Re-fetch posts when pagination changes
   useEffect(() => {
     if (!job || job.job_type !== "post_discovery") return;
     fetchPosts();
   }, [postsPage, postsPageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch profiles when pagination changes
+  useEffect(() => {
+    if (!job || job.job_type === "post_discovery") return;
+    fetchProfiles();
+  }, [profilesPage, profilesPageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch fans when job is a completed comment scraper
   useEffect(() => {
@@ -1050,53 +1077,109 @@ export default function JobDetailPage() {
       )}
 
       {/* Profiles Results Table (non-post_discovery jobs) */}
-      {!isPostDiscovery && profiles.length > 0 && (
-        <div className="glass-card overflow-x-auto">
-          <div className="p-4 border-b border-white/5">
-            <h2 className="text-lg font-semibold text-white">Scraped Profiles ({profiles.length})</h2>
+      {!isPostDiscovery && (profiles.length > 0 || profilesTotal > 0) && (
+        <div className="glass-card overflow-hidden">
+          <div className="p-4 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-white">
+              Scraped Profiles ({profilesTotal || profiles.length})
+            </h2>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-white/40">Show:</span>
+              {[20, 30, 50, 100, 200].map((size) => (
+                <button
+                  key={size}
+                  onClick={() => { setProfilesPageSize(size); setProfilesPage(1); }}
+                  className={`text-xs px-2 py-1 rounded transition-all ${
+                    profilesPageSize === size
+                      ? "bg-primary-500/20 text-primary-400 font-semibold"
+                      : "text-white/40 hover:text-white/60 hover:bg-white/5"
+                  }`}
+                >
+                  {size}
+                </button>
+              ))}
+            </div>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/5">
-                {["Name", "Gender", "Phone", "Location", "Education", "Work", "Status"].map((h) => (
-                  <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {profiles.map((p) => (
-                <tr key={p.id} className="hover:bg-white/[0.02]">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      {p.picture_url ? (
-                        <img src={p.picture_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
-                      ) : (
+          <div className="overflow-auto max-h-[600px]">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-navy-900/95 backdrop-blur-sm z-10">
+                <tr className="border-b border-white/5">
+                  {["Name", "Gender", "Location", "Hometown", "Education", "Username"].map((h) => (
+                    <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {profiles.map((p) => (
+                  <tr key={p.id} className="hover:bg-white/[0.02]">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
                           <span className="text-xs text-white/40">{(p.name || "?")[0]}</span>
                         </div>
-                      )}
-                      <div className="min-w-0">
-                        <p className="text-white font-medium truncate">{p.name || "N/A"}</p>
-                        <p className="text-xs text-white/40 truncate">{p.username_link || p.platform_user_id}</p>
+                        <div className="min-w-0">
+                          <p className="text-white font-medium truncate">{p.name || "N/A"}</p>
+                          {p.username_link && p.username_link !== "NA" ? (
+                            <a href={p.username_link} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-400 hover:text-primary-300 truncate block">
+                              {p.username_link.replace("https://facebook.com/", "").replace("https://www.facebook.com/", "")}
+                            </a>
+                          ) : (
+                            <p className="text-xs text-white/40 truncate">{p.platform_user_id}</p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-white/60">{p.gender || "N/A"}</td>
-                  <td className="px-4 py-3 text-white/60">{p.phone && p.phone !== "NA" ? p.phone : "N/A"}</td>
-                  <td className="px-4 py-3 text-white/60">{p.location || "N/A"}</td>
-                  <td className="px-4 py-3 text-white/60 truncate max-w-[150px]">{p.education || "N/A"}</td>
-                  <td className="px-4 py-3 text-white/60 truncate max-w-[150px]">{p.work || "N/A"}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${getStatusColor(p.scrape_status)}`}>
-                      {p.scrape_status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </td>
+                    <td className="px-4 py-3 text-white/60">{p.gender && p.gender !== "NA" ? p.gender : "—"}</td>
+                    <td className="px-4 py-3 text-white/60">{p.location && p.location !== "NA" ? p.location : "—"}</td>
+                    <td className="px-4 py-3 text-white/60">{p.hometown && p.hometown !== "NA" ? p.hometown : "—"}</td>
+                    <td className="px-4 py-3 text-white/60 truncate max-w-[180px]">{p.education && p.education !== "NA" ? p.education : "—"}</td>
+                    <td className="px-4 py-3 text-white/60">{p.username && p.username !== "NA" ? p.username : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {profilesTotal > profilesPageSize && (
+            <div className="p-4 border-t border-white/5 flex items-center justify-between">
+              <p className="text-xs text-white/40">
+                Showing {(profilesPage - 1) * profilesPageSize + 1}–{Math.min(profilesPage * profilesPageSize, profilesTotal)} of {profilesTotal}
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setProfilesPage((p) => Math.max(1, p - 1))}
+                  disabled={profilesPage <= 1}
+                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                >
+                  Prev
+                </button>
+                {Array.from({ length: Math.min(Math.ceil(profilesTotal / profilesPageSize), 7) }, (_, i) => i + 1).map((pg) => (
+                  <button
+                    key={pg}
+                    onClick={() => setProfilesPage(pg)}
+                    className={`px-3 py-1.5 text-xs rounded-lg transition ${
+                      profilesPage === pg ? "bg-primary-500/20 text-primary-400 font-semibold" : "text-white/40 hover:bg-white/5"
+                    }`}
+                  >
+                    {pg}
+                  </button>
+                ))}
+                {Math.ceil(profilesTotal / profilesPageSize) > 7 && (
+                  <span className="text-xs text-white/30 px-1">...</span>
+                )}
+                <button
+                  onClick={() => setProfilesPage((p) => Math.min(Math.ceil(profilesTotal / profilesPageSize), p + 1))}
+                  disabled={profilesPage >= Math.ceil(profilesTotal / profilesPageSize)}
+                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

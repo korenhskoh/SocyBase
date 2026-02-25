@@ -673,7 +673,7 @@ async def get_job_author(
 # ── Results / Estimate / Report ──────────────────────────────────────
 
 
-@router.get("/{job_id}/results", response_model=list[ScrapedProfileResponse])
+@router.get("/{job_id}/results")
 async def get_job_results(
     job_id: UUID,
     user: User = Depends(get_current_user),
@@ -682,13 +682,23 @@ async def get_job_results(
     page_size: int = Query(50, ge=1, le=200),
 ):
     await _get_tenant_job(db, job_id, user.tenant_id)
+
+    # Count total successful profiles
+    total_result = await db.execute(
+        select(func.count(ScrapedProfile.id))
+        .where(ScrapedProfile.job_id == job_id, ScrapedProfile.scrape_status == "success")
+    )
+    total = total_result.scalar() or 0
+
     result = await db.execute(
         select(ScrapedProfile)
         .where(ScrapedProfile.job_id == job_id, ScrapedProfile.scrape_status == "success")
+        .order_by(ScrapedProfile.scraped_at.desc().nulls_last())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
-    return result.scalars().all()
+    profiles = result.scalars().all()
+    return {"items": profiles, "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("/estimate", response_model=EstimateResponse)
