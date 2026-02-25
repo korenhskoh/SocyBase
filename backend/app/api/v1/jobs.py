@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, distinct
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -556,18 +556,47 @@ async def get_job_posts(
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
+    include_related: bool = Query(True),
 ):
-    """Get discovered posts for a post_discovery job."""
-    await _get_tenant_job(db, job_id, user.tenant_id)
+    """Get discovered posts for a post_discovery job.
 
+    When include_related=True (default), aggregates posts from all
+    post_discovery jobs for the same page/input, deduplicating by post_id.
+    This allows "Discover Older Posts" continuations to accumulate.
+    """
+    job = await _get_tenant_job(db, job_id, user.tenant_id)
+
+    # Determine which job IDs to include
+    if include_related and job.job_type == "post_discovery":
+        related_result = await db.execute(
+            select(ScrapingJob.id).where(
+                ScrapingJob.tenant_id == user.tenant_id,
+                ScrapingJob.input_value == job.input_value,
+                ScrapingJob.job_type == "post_discovery",
+                ScrapingJob.status.in_(["completed", "running"]),
+            )
+        )
+        job_ids = [r[0] for r in related_result.all()]
+    else:
+        job_ids = [job_id]
+
+    # Count distinct posts across all related jobs
     total_result = await db.execute(
-        select(func.count(ScrapedPost.id)).where(ScrapedPost.job_id == job_id)
+        select(func.count(distinct(ScrapedPost.post_id)))
+        .where(ScrapedPost.job_id.in_(job_ids))
     )
     total = total_result.scalar() or 0
 
+    # Fetch deduplicated posts: pick one row per post_id (the first inserted)
+    dedup_subq = (
+        select(func.min(ScrapedPost.id).label("keep_id"))
+        .where(ScrapedPost.job_id.in_(job_ids))
+        .group_by(ScrapedPost.post_id)
+    ).subquery()
+
     result = await db.execute(
         select(ScrapedPost)
-        .where(ScrapedPost.job_id == job_id)
+        .where(ScrapedPost.id.in_(select(dedup_subq.c.keep_id)))
         .order_by(ScrapedPost.created_time.desc().nulls_last())
         .offset((page - 1) * page_size)
         .limit(page_size)

@@ -40,11 +40,13 @@ export default function JobDetailPage() {
   const [posts, setPosts] = useState<ScrapedPost[]>([]);
   const [postsTotal, setPostsTotal] = useState(0);
   const [postsPage, setPostsPage] = useState(1);
-  const [postsPageSize, setPostsPageSize] = useState(50);
+  const [postsPageSize, setPostsPageSize] = useState(30);
   const [author, setAuthor] = useState<PageAuthorProfile | null>(null);
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
   const [showOnlyHighPotential, setShowOnlyHighPotential] = useState(false);
   const [creatingJobs, setCreatingJobs] = useState(false);
+  const [continuationJobId, setContinuationJobId] = useState<string | null>(null);
+  const [continuationStatus, setContinuationStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [resuming, setResuming] = useState(false);
   const [pausing, setPausing] = useState(false);
@@ -298,6 +300,48 @@ export default function JobDetailPage() {
     fetchFans();
   }, [job?.status, job?.job_type, fansPage, fansSortBy, showBots]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll continuation job and refresh posts as it discovers more
+  useEffect(() => {
+    if (!continuationJobId) return;
+    if (continuationStatus !== "running" && continuationStatus !== "queued") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await jobsApi.get(continuationJobId);
+        const contJob = res.data;
+        setContinuationStatus(contJob.status);
+
+        // Refresh posts table (backend aggregates across related jobs)
+        fetchPosts();
+
+        if (["completed", "failed", "cancelled"].includes(contJob.status)) {
+          // Update pipeline state cursor from continuation job for further discovery
+          if (contJob.status === "completed" && contJob.error_details?.pipeline_state) {
+            const contState = contJob.error_details.pipeline_state;
+            setJob(prev => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                error_details: {
+                  ...prev.error_details,
+                  pipeline_state: {
+                    ...prev.error_details?.pipeline_state,
+                    current_stage: prev.error_details?.pipeline_state?.current_stage || "finalize",
+                    last_after_cursor: contState.last_after_cursor,
+                    last_cursor: contState.last_cursor,
+                  },
+                },
+              };
+            });
+          }
+          setContinuationJobId(null);
+        }
+      } catch { /* ignore */ }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [continuationJobId, continuationStatus, fetchPosts]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleExportCsv = async () => {
     const res = await exportApi.downloadCsv(jobId);
     const blob = new Blob([res.data], { type: "text/csv" });
@@ -436,7 +480,9 @@ export default function JobDetailPage() {
           start_from_cursor: cursor,
         },
       });
-      window.location.href = `/jobs/${res.data.id}`;
+      // Stay on current page — track the continuation job
+      setContinuationJobId(res.data.id);
+      setContinuationStatus("running");
     } catch (err: any) {
       alert(err?.response?.data?.detail || "Failed to create continuation job");
     } finally {
@@ -779,7 +825,12 @@ export default function JobDetailPage() {
               <button onClick={handleExportCsv} className="btn-glow text-center">
                 Export CSV
               </button>
-              {(pipelineState as Record<string, unknown> | undefined)?.last_after_cursor && (
+              {continuationJobId && (continuationStatus === "running" || continuationStatus === "queued") ? (
+                <div className="flex items-center gap-2 px-6 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <div className="h-4 w-4 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
+                  <span className="text-sm text-amber-400 font-medium">Discovering older posts...</span>
+                </div>
+              ) : (pipelineState as Record<string, unknown> | undefined)?.last_after_cursor && (
                 <button
                   onClick={() => handleContinueDiscovery("older")}
                   disabled={continuingDiscovery}

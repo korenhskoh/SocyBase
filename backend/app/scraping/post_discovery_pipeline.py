@@ -304,6 +304,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 pages_fetched = 0
                 total_posts_fetched = 0
                 duplicate_count = 0
+                empty_streak = 0
+                pages_with_posts = 0
                 first_before_cursor: str | None = None
                 seen_post_ids: set[str] = set()
 
@@ -342,6 +344,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         first_before_cursor = paging.get("cursors", {}).get("before")
 
                     # Process each post in this page (skip duplicates)
+                    new_posts_this_page = 0
                     for item in posts_data:
                         fields = _extract_post_fields(item)
                         pid = fields["post_id"]
@@ -369,6 +372,14 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         )
                         db.add(scraped_post)
                         total_posts_fetched += 1
+                        new_posts_this_page += 1
+
+                    # Track consecutive empty pages to stop early
+                    if new_posts_this_page > 0:
+                        empty_streak = 0
+                        pages_with_posts += 1
+                    else:
+                        empty_streak += 1
 
                     # Persist pipeline state after each page
                     job.processed_items = total_posts_fetched
@@ -416,6 +427,17 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         _publish_progress(job, "fetch_posts")
                         return
 
+                    # Stop early if too many consecutive empty pages
+                    if empty_streak >= 3:
+                        logger.info(
+                            f"[Job {job_id}] Stopping early: {empty_streak} consecutive empty pages"
+                        )
+                        await _append_log(
+                            db, job, "info", "fetch_posts",
+                            f"Stopped early: {empty_streak} consecutive pages with no new posts",
+                        )
+                        break
+
                     # Advance cursor
                     cursor = _next_cursor(paging)
                     if not cursor:
@@ -446,8 +468,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 job.result_row_count = total_posts_fetched
                 job.progress_pct = 100
 
-                # Credits: 1 credit per page fetched
-                credits_used = pages_fetched
+                # Credits: charge for productive pages + 1 confirming empty page
+                credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
                 job.credits_used = credits_used
 
                 # Debit from CreditBalance and record transaction
@@ -475,6 +497,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 await _save_pipeline_state(
                     db, job, "finalize",
                     pages_fetched=pages_fetched,
+                    pages_with_posts=pages_with_posts,
                     total_posts_fetched=total_posts_fetched,
                     first_before_cursor=first_before_cursor,
                     last_after_cursor=cursor,
