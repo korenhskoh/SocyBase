@@ -123,16 +123,29 @@ class FacebookGraphClient(AbstractSocialClient):
         """
         Fetch comments for a post with pagination.
 
-        Uses the direct /comments endpoint for all post types.
+        Groups use the direct /comments endpoint.
+        Pages/profiles use nested field expansion on the post object.
         """
-        url = f"{self.base_url}/{post_id}/comments"
-        params = {
-            "access_token": self.access_token,
-            "fields": "created_time,from,message,can_remove,like_count,message_tags,user_like,comments{created_time,from,message,can_remove,like_count,message_tags,user_like}",
-            "limit": limit,
-        }
-        if after:
-            params["after"] = after
+        comment_fields = "created_time,from,message,can_remove,like_count,message_tags,user_like"
+        reply_fields = f"comments{{{comment_fields}}}"
+
+        if is_group:
+            url = f"{self.base_url}/{post_id}/comments"
+            params = {
+                "access_token": self.access_token,
+                "fields": f"{comment_fields},{reply_fields}",
+                "limit": limit,
+            }
+            if after:
+                params["after"] = after
+        else:
+            url = f"{self.base_url}/{post_id}"
+            params = {
+                "access_token": self.access_token,
+                "fields": f"comments.limit({limit}){{{comment_fields},{reply_fields}}}",
+            }
+            if after:
+                params["fields"] = f"comments.limit({limit}).after({after}){{{comment_fields},{reply_fields}}}"
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()
