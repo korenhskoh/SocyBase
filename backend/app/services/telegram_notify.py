@@ -1,5 +1,6 @@
 """Lightweight Telegram notification sender using raw HTTP API."""
 
+import json
 import logging
 
 import httpx
@@ -12,25 +13,42 @@ logger = logging.getLogger(__name__)
 async def send_job_completion_notification(
     chat_id: str, job, bot_token: str | None = None
 ) -> None:
-    """Send a Telegram message about job completion/failure."""
+    """Send a Telegram message about job completion/failure with action buttons."""
     settings = get_settings()
     token = bot_token or settings.telegram_bot_token
     if not token:
         return
 
+    short_id = str(job.id)[:8]
+    jtype = "Discovery" if getattr(job, "job_type", None) == "post_discovery" else "Comments"
+
     if job.status == "completed":
         text = (
-            f"<b>Job completed!</b>\n\n"
-            f"Profiles extracted: <b>{job.result_row_count}</b>\n"
-            f"Credits used: <b>{job.credits_used}</b>\n\n"
-            f"View results in your dashboard."
+            f"\u2705 <b>Job Completed!</b>\n\n"
+            f"<b>Job:</b> <code>{short_id}...</code> ({jtype})\n"
+            f"<b>Profiles:</b> {job.result_row_count or 0:,}\n"
+            f"<b>Credits used:</b> {job.credits_used or 0:,}\n\n"
+            f"Your results are ready for download."
         )
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "\U0001F4CA View Details", "callback_data": f"job:{job.id}"}],
+                [{"text": "\U0001F4CB All Jobs", "callback_data": "back:jobs"}],
+            ]
+        }
     else:
         text = (
-            f"<b>Job failed</b>\n\n"
-            f"Error: {job.error_message or 'Unknown error'}\n\n"
-            f"Check your dashboard for details."
+            f"\u274C <b>Job Failed</b>\n\n"
+            f"<b>Job:</b> <code>{short_id}...</code> ({jtype})\n"
+            f"<b>Error:</b> {(job.error_message or 'Unknown error')[:200]}\n"
         )
+        # Add retry button if checkpoint available
+        pipeline_state = (getattr(job, "error_details", None) or {}).get("pipeline_state")
+        buttons = [[{"text": "\U0001F4CA View Details", "callback_data": f"job:{job.id}"}]]
+        if pipeline_state:
+            buttons.insert(0, [{"text": "\U0001F504 Retry Job", "callback_data": f"action:resume:{job.id}"}])
+        buttons.append([{"text": "\U0001F4CB All Jobs", "callback_data": "back:jobs"}])
+        reply_markup = {"inline_keyboard": buttons}
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
@@ -39,6 +57,7 @@ async def send_job_completion_notification(
                 "chat_id": chat_id,
                 "text": text,
                 "parse_mode": "HTML",
+                "reply_markup": json.dumps(reply_markup),
             })
     except Exception as e:
         logger.warning(f"Failed to send Telegram notification to {chat_id}: {e}")

@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { jobsApi, exportApi } from "@/lib/api-client";
 import { formatDate, getStatusColor } from "@/lib/utils";
-import type { ScrapingJob, ScrapedProfile, ScrapedPost } from "@/types";
+import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile } from "@/types";
 
 const STAGE_LABELS: Record<string, string> = {
   parse_input: "Parse Input",
@@ -24,10 +24,12 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<ScrapingJob | null>(null);
   const [profiles, setProfiles] = useState<ScrapedProfile[]>([]);
   const [posts, setPosts] = useState<ScrapedPost[]>([]);
+  const [author, setAuthor] = useState<PageAuthorProfile | null>(null);
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
   const [creatingJobs, setCreatingJobs] = useState(false);
   const [loading, setLoading] = useState(true);
   const [resuming, setResuming] = useState(false);
+  const [queueInfo, setQueueInfo] = useState<{ position: number; estimated_seconds: number; ahead: number } | null>(null);
 
   const fetchJob = useCallback(async () => {
     try {
@@ -48,6 +50,26 @@ export default function JobDetailPage() {
       if (res.data.job_type === "post_discovery" && (res.data.status === "running" || res.data.status === "queued")) {
         const postRes = await jobsApi.getPosts(jobId, { page: 1, page_size: 200 });
         setPosts(postRes.data);
+      }
+
+      // Fetch queue position for queued jobs
+      if (res.data.status === "queued") {
+        try {
+          const qRes = await jobsApi.getQueuePosition(jobId);
+          setQueueInfo(qRes.data);
+        } catch {
+          setQueueInfo(null);
+        }
+      } else {
+        setQueueInfo(null);
+      }
+
+      // Fetch author profile (non-blocking)
+      try {
+        const authorRes = await jobsApi.getAuthor(jobId);
+        setAuthor(authorRes.data);
+      } catch {
+        // Author may not exist for all jobs
       }
     } catch {
     } finally {
@@ -178,6 +200,80 @@ export default function JobDetailPage() {
           {job.status}
         </span>
       </div>
+
+      {/* Author Info Card */}
+      {author && (
+        <div className="glass-card p-5">
+          <div className="flex items-start gap-4">
+            {author.picture_url ? (
+              <img
+                src={author.picture_url}
+                alt={author.name || ""}
+                className="w-14 h-14 rounded-full object-cover flex-shrink-0 ring-2 ring-white/10"
+              />
+            ) : (
+              <div className="w-14 h-14 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
+                <span className="text-lg text-white/40">{(author.name || "?")[0]}</span>
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-semibold text-white truncate">{author.name || "Unknown Page"}</h3>
+                {author.category && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary-500/10 text-primary-400 font-medium shrink-0">
+                    {author.category}
+                  </span>
+                )}
+              </div>
+              {author.about && (
+                <p className="text-sm text-white/50 mt-1 line-clamp-2">{author.about}</p>
+              )}
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-white/40">
+                {author.location && <span>{author.location}</span>}
+                {author.phone && <span>{author.phone}</span>}
+                {author.website && (
+                  <a href={author.website} target="_blank" rel="noopener noreferrer" className="text-primary-400 hover:text-primary-300">
+                    {author.website}
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Queue Position Card */}
+      {job.status === "queued" && queueInfo && queueInfo.position > 0 && (
+        <div className="glass-card p-6 border border-yellow-500/20">
+          <div className="flex items-center gap-4">
+            <div className="h-14 w-14 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center shrink-0">
+              <span className="text-2xl font-bold text-yellow-400">#{queueInfo.position}</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white">In Queue</p>
+              <p className="text-xs text-white/50 mt-0.5">
+                {queueInfo.ahead === 0
+                  ? "Your job is next — it will start shortly"
+                  : `${queueInfo.ahead} job${queueInfo.ahead !== 1 ? "s" : ""} ahead of yours`}
+              </p>
+              {queueInfo.estimated_seconds > 0 && (
+                <p className="text-xs text-yellow-400/80 mt-1">
+                  Estimated wait: ~{queueInfo.estimated_seconds < 60
+                    ? `${queueInfo.estimated_seconds}s`
+                    : queueInfo.estimated_seconds < 3600
+                      ? `${Math.ceil(queueInfo.estimated_seconds / 60)} min`
+                      : `${Math.floor(queueInfo.estimated_seconds / 3600)}h ${Math.ceil((queueInfo.estimated_seconds % 3600) / 60)}m`}
+                </p>
+              )}
+            </div>
+            <div className="shrink-0">
+              <svg className="h-6 w-6 text-yellow-400/60 animate-spin" style={{ animationDuration: "3s" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M2.985 19.644l3.181-3.183" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Progress Card */}
       {(job.status === "running" || job.status === "queued") && (
@@ -462,7 +558,7 @@ export default function JobDetailPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/5">
-                {["Name", "Gender", "Location", "Education", "Work", "Status"].map((h) => (
+                {["Name", "Gender", "Phone", "Location", "Education", "Work", "Status"].map((h) => (
                   <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3">
                     {h}
                   </th>
@@ -473,12 +569,22 @@ export default function JobDetailPage() {
               {profiles.map((p) => (
                 <tr key={p.id} className="hover:bg-white/[0.02]">
                   <td className="px-4 py-3">
-                    <div>
-                      <p className="text-white font-medium">{p.name || "N/A"}</p>
-                      <p className="text-xs text-white/40">{p.username_link || p.platform_user_id}</p>
+                    <div className="flex items-center gap-2.5">
+                      {p.picture_url ? (
+                        <img src={p.picture_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
+                          <span className="text-xs text-white/40">{(p.name || "?")[0]}</span>
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-white font-medium truncate">{p.name || "N/A"}</p>
+                        <p className="text-xs text-white/40 truncate">{p.username_link || p.platform_user_id}</p>
+                      </div>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-white/60">{p.gender || "N/A"}</td>
+                  <td className="px-4 py-3 text-white/60">{p.phone && p.phone !== "NA" ? p.phone : "N/A"}</td>
                   <td className="px-4 py-3 text-white/60">{p.location || "N/A"}</td>
                   <td className="px-4 py-3 text-white/60 truncate max-w-[150px]">{p.education || "N/A"}</td>
                   <td className="px-4 py-3 text-white/60 truncate max-w-[150px]">{p.work || "N/A"}</td>

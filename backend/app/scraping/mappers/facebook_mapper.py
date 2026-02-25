@@ -17,20 +17,33 @@ class FacebookProfileMapper(AbstractProfileMapper):
         if not api_response:
             return result
 
+        # Unwrap AKNG response wrapper: {success, message, data: {actual fields}}
+        data = api_response
+        if "success" in api_response and isinstance(api_response.get("data"), dict):
+            data = api_response["data"]
+
         # Direct fields
-        result["ID"] = str(api_response.get("id", "NA"))
-        result["Name"] = api_response.get("name", "NA")
-        result["First Name"] = api_response.get("first_name", "NA")
-        result["Last Name"] = api_response.get("last_name", "NA")
-        result["Gender"] = api_response.get("gender", "NA")
-        result["Birthday"] = api_response.get("birthday", "NA")
-        result["About"] = api_response.get("about", "NA")
-        result["Relationship"] = api_response.get("relationship_status", "NA")
-        result["Username"] = api_response.get("username", "NA")
-        result["Website"] = api_response.get("website", "NA")
+        result["ID"] = str(data.get("id", "NA"))
+        result["Name"] = data.get("name", "NA")
+        result["First Name"] = data.get("first_name", "NA")
+        result["Last Name"] = data.get("last_name", "NA")
+        result["Gender"] = data.get("gender", "NA")
+        result["Birthday"] = data.get("birthday", "NA")
+        result["About"] = data.get("about", "NA")
+        result["Relationship"] = data.get("relationship_status", "NA")
+        result["Username"] = data.get("username", "NA")
+        result["Website"] = data.get("website", "NA")
+        result["Phone"] = data.get("phone", "NA")
+
+        # Profile picture: { data: { url, width, height } }
+        picture = data.get("picture", {})
+        if isinstance(picture, dict):
+            pic_data = picture.get("data", {})
+            if isinstance(pic_data, dict) and pic_data.get("url"):
+                result["Picture URL"] = pic_data["url"]
 
         # Education: array of { school: { name }, type, year: { name } }
-        education = api_response.get("education", [])
+        education = data.get("education", [])
         if education and isinstance(education, list):
             edu_names = []
             for e in education:
@@ -41,7 +54,7 @@ class FacebookProfileMapper(AbstractProfileMapper):
                 result["Education"] = "; ".join(edu_names)
 
         # Work: array of { employer: { name }, position: { name }, ... }
-        work = api_response.get("work", [])
+        work = data.get("work", [])
         if work and isinstance(work, list):
             latest = work[0]
             employer = latest.get("employer", {})
@@ -51,22 +64,33 @@ class FacebookProfileMapper(AbstractProfileMapper):
             if isinstance(position, dict):
                 result["Position"] = position.get("name", "NA")
 
-        # Location: { id, name }
-        location = api_response.get("location", {})
+        # Location: can be { name } (profile) or { city, country, street } (page/AKNG)
+        location = data.get("location", {})
         if isinstance(location, dict):
-            result["Location"] = location.get("name", "NA")
+            if location.get("name"):
+                result["Location"] = location["name"]
+            else:
+                # AKNG detailed format: { city, country, street, latitude, longitude }
+                parts = []
+                if location.get("street"):
+                    parts.append(location["street"])
+                if location.get("city"):
+                    parts.append(location["city"])
+                if location.get("country"):
+                    parts.append(location["country"])
+                result["Location"] = ", ".join(parts) if parts else "NA"
         elif isinstance(location, str):
             result["Location"] = location
 
         # Hometown: { id, name }
-        hometown = api_response.get("hometown", {})
+        hometown = data.get("hometown", {})
         if isinstance(hometown, dict):
             result["Hometown"] = hometown.get("name", "NA")
         elif isinstance(hometown, str):
             result["Hometown"] = hometown
 
         # Languages: array of { id, name }
-        languages = api_response.get("languages", [])
+        languages = data.get("languages", [])
         if languages and isinstance(languages, list):
             lang_names = [lang.get("name", "") for lang in languages if lang.get("name")]
             if lang_names:
@@ -75,6 +99,72 @@ class FacebookProfileMapper(AbstractProfileMapper):
         # UsernameLink
         if result["ID"] != "NA":
             result["UsernameLink"] = f"https://facebook.com/{result['ID']}"
+
+        return result
+
+    def map_object_to_author(self, api_response: dict) -> dict:
+        """
+        Map an AKNG get_object_details response to page/author fields.
+
+        Returns dict with: platform_object_id, name, about, category, description,
+        location, phone, website, picture_url, cover_url
+        """
+        result = {
+            "platform_object_id": "",
+            "name": None,
+            "about": None,
+            "category": None,
+            "description": None,
+            "location": None,
+            "phone": None,
+            "website": None,
+            "picture_url": None,
+            "cover_url": None,
+        }
+
+        if not api_response:
+            return result
+
+        # Unwrap AKNG response wrapper
+        data = api_response
+        if "success" in api_response and isinstance(api_response.get("data"), dict):
+            data = api_response["data"]
+
+        result["platform_object_id"] = str(data.get("id", ""))
+        result["name"] = data.get("name")
+        result["about"] = data.get("about")
+        result["category"] = data.get("category")
+        result["description"] = data.get("description")
+        result["phone"] = data.get("phone")
+        result["website"] = data.get("website")
+
+        # Location: can be { city, country, street } or string
+        location = data.get("location")
+        if isinstance(location, dict):
+            parts = []
+            if location.get("street"):
+                parts.append(location["street"])
+            if location.get("city"):
+                parts.append(location["city"])
+            if location.get("country"):
+                parts.append(location["country"])
+            result["location"] = ", ".join(parts) if parts else None
+        elif isinstance(location, str):
+            result["location"] = location
+
+        # Picture: { data: { url } } or { url }
+        picture = data.get("picture", {})
+        if isinstance(picture, dict):
+            pic_data = picture.get("data", {})
+            if isinstance(pic_data, dict) and pic_data.get("url"):
+                result["picture_url"] = pic_data["url"]
+            elif picture.get("url"):
+                result["picture_url"] = picture["url"]
+
+        # Cover: { source, cover_id } or { source }
+        cover = data.get("cover", {})
+        if isinstance(cover, dict) and cover.get("source"):
+            result["cover_url"] = cover["source"]
 
         return result
 

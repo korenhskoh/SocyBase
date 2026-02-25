@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 
-# Standard 18-field output format (from rapid_profile_scrape.py)
+# Standard 20-field output format
 STANDARD_FIELDNAMES = [
     "ID", "Name", "First Name", "Last Name",
-    "Gender", "Birthday", "Relationship", "Education", "Work",
+    "Gender", "Birthday", "Phone", "Relationship", "Education", "Work",
     "Position", "Hometown", "Location", "Website", "Languages",
-    "UsernameLink", "Username", "About", "Updated Time",
+    "UsernameLink", "Username", "About", "Picture URL", "Updated Time",
 ]
 
 

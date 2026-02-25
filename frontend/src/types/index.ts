@@ -82,6 +82,8 @@ export interface ScrapedProfile {
   username_link: string | null;
   username: string | null;
   about: string | null;
+  phone: string | null;
+  picture_url: string | null;
   scrape_status: string;
   scraped_at: string | null;
 }
@@ -101,6 +103,21 @@ export interface ScrapedPost {
   attachment_url: string | null;
   post_url: string | null;
   created_at: string;
+}
+
+export interface PageAuthorProfile {
+  id: string;
+  platform_object_id: string;
+  name: string | null;
+  about: string | null;
+  category: string | null;
+  description: string | null;
+  location: string | null;
+  phone: string | null;
+  website: string | null;
+  picture_url: string | null;
+  cover_url: string | null;
+  fetched_at: string | null;
 }
 
 export interface CreditBalance {

@@ -73,6 +73,7 @@ class ScrapingJob(Base):
     scraped_profiles = relationship("ScrapedProfile", back_populates="job", cascade="all, delete-orphan")
     extracted_comments = relationship("ExtractedComment", back_populates="job", cascade="all, delete-orphan")
     scraped_posts = relationship("ScrapedPost", back_populates="job", cascade="all, delete-orphan")
+    page_author_profile = relationship("PageAuthorProfile", back_populates="job", uselist=False, cascade="all, delete-orphan")
 
 
 class ScrapedProfile(Base):
@@ -107,6 +108,8 @@ class ScrapedProfile(Base):
     username_link: Mapped[str | None] = mapped_column(Text)
     username: Mapped[str | None] = mapped_column(String(255))
     about: Mapped[str | None] = mapped_column(Text)
+    phone: Mapped[str | None] = mapped_column(String(100))
+    picture_url: Mapped[str | None] = mapped_column(Text)
 
     scrape_status: Mapped[str] = mapped_column(String(20), default="pending")
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -186,3 +189,37 @@ class ScrapedPost(Base):
 
     # Relationships
     job = relationship("ScrapingJob", back_populates="scraped_posts")
+
+
+class PageAuthorProfile(Base):
+    __tablename__ = "page_author_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scraping_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+
+    platform_object_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(255))
+    about: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(String(500))
+    phone: Mapped[str | None] = mapped_column(String(100))
+    website: Mapped[str | None] = mapped_column(Text)
+    picture_url: Mapped[str | None] = mapped_column(Text)
+    cover_url: Mapped[str | None] = mapped_column(Text)
+    raw_data: Mapped[dict | None] = mapped_column(JSONB)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    job = relationship("ScrapingJob", back_populates="page_author_profile")

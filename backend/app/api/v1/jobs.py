@@ -8,7 +8,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.tenant import Tenant
-from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, ScrapedPost
+from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, ScrapedPost, PageAuthorProfile
 from app.models.platform import Platform
 from app.schemas.job import (
     CreateJobRequest,
@@ -18,6 +18,7 @@ from app.schemas.job import (
     EstimateRequest,
     EstimateResponse,
     ScrapedProfileResponse,
+    PageAuthorProfileResponse,
 )
 
 router = APIRouter()
@@ -309,7 +310,7 @@ async def resume_job(
 
 
 class BatchActionRequest(BaseModel):
-    action: str = Field(..., pattern="^(pause|stop|delete)$")
+    action: str = Field(..., pattern="^(pause|stop|delete|resume)$")
     job_ids: list[str] = Field(..., min_length=1, max_length=50)
 
 
@@ -363,6 +364,41 @@ async def batch_action(
                 continue
             await db.delete(job)
             success.append(jid_str)
+
+        elif data.action == "resume":
+            if job.status not in ("failed", "paused"):
+                failed.append({"id": jid_str, "reason": f"Cannot resume '{job.status}' job"})
+                continue
+            pipeline_state = (job.error_details or {}).get("pipeline_state")
+            if not pipeline_state:
+                failed.append({"id": jid_str, "reason": "No checkpoint data"})
+                continue
+            new_job = ScrapingJob(
+                tenant_id=job.tenant_id,
+                user_id=user.id,
+                platform_id=job.platform_id,
+                job_type=job.job_type,
+                input_type=job.input_type,
+                input_value=job.input_value,
+                input_metadata=job.input_metadata,
+                settings={
+                    **(job.settings or {}),
+                    "resume_from_job_id": str(job.id),
+                    "profile_retry_count": 2,
+                },
+                status="queued",
+            )
+            db.add(new_job)
+            await db.flush()
+            if job.job_type == "post_discovery":
+                from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
+                task = run_post_discovery_pipeline.delay(str(new_job.id))
+            else:
+                from app.scraping.tasks import run_scraping_pipeline
+                task = run_scraping_pipeline.delay(str(new_job.id))
+            new_job.celery_task_id = task.id
+            await db.flush()
+            success.append(str(new_job.id))
 
     await db.flush()
     return {"success": success, "failed": failed}
@@ -529,6 +565,26 @@ async def create_jobs_from_posts(
     return {"created": created_jobs, "count": len(created_jobs)}
 
 
+# ── Author Profile ────────────────────────────────────────────────────
+
+
+@router.get("/{job_id}/author", response_model=PageAuthorProfileResponse)
+async def get_job_author(
+    job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the page/author profile fetched during this job."""
+    await _get_tenant_job(db, job_id, user.tenant_id)
+    result = await db.execute(
+        select(PageAuthorProfile).where(PageAuthorProfile.job_id == job_id)
+    )
+    author = result.scalar_one_or_none()
+    if not author:
+        raise HTTPException(status_code=404, detail="Author profile not found for this job")
+    return author
+
+
 # ── Results / Estimate / Report ──────────────────────────────────────
 
 
@@ -561,6 +617,60 @@ async def estimate_job(
         estimated_credits=82,
         message="Estimates are approximate. Actual costs depend on the number of unique commenters.",
     )
+
+
+@router.get("/{job_id}/queue-position")
+async def get_queue_position(
+    job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get queue position and estimated wait time for a queued job."""
+    job = await _get_tenant_job(db, job_id, user.tenant_id)
+
+    if job.status not in ("queued", "running"):
+        return {"position": 0, "estimated_seconds": 0, "status": job.status}
+
+    if job.status == "running":
+        return {"position": 0, "estimated_seconds": 0, "status": "running"}
+
+    # Count how many jobs are ahead (queued or running, created before this one)
+    ahead_count = (await db.execute(
+        select(func.count(ScrapingJob.id)).where(
+            ScrapingJob.tenant_id == user.tenant_id,
+            ScrapingJob.status.in_(["queued", "running"]),
+            ScrapingJob.created_at < job.created_at,
+        )
+    )).scalar() or 0
+
+    position = ahead_count + 1  # 1-based position
+
+    # Estimate wait time based on average completed job duration (last 20 jobs)
+    avg_result = await db.execute(
+        select(func.avg(
+            func.extract("epoch", ScrapingJob.completed_at) -
+            func.extract("epoch", ScrapingJob.started_at)
+        )).where(
+            ScrapingJob.tenant_id == user.tenant_id,
+            ScrapingJob.status == "completed",
+            ScrapingJob.started_at.isnot(None),
+            ScrapingJob.completed_at.isnot(None),
+        ).limit(20)
+    )
+    avg_duration = avg_result.scalar()
+
+    if avg_duration and avg_duration > 0:
+        estimated_seconds = int(ahead_count * avg_duration)
+    else:
+        # Default estimate: ~2 minutes per job ahead
+        estimated_seconds = ahead_count * 120
+
+    return {
+        "position": position,
+        "estimated_seconds": estimated_seconds,
+        "ahead": ahead_count,
+        "status": "queued",
+    }
 
 
 @router.get("/{job_id}/report")

@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session
-from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment
+from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
@@ -100,7 +100,8 @@ async def _retry_profile_fetch(client, rate_limiter, uid: str, max_retries: int 
 _PROFILE_FIELDS = [
     "first_name", "last_name", "gender", "birthday", "relationship_status",
     "education", "work", "position", "hometown", "location", "website",
-    "languages", "username_link", "username", "about", "raw_data",
+    "languages", "username_link", "username", "about", "phone", "picture_url",
+    "raw_data",
 ]
 
 
@@ -190,6 +191,40 @@ async def _execute_pipeline(job_id: str, celery_task):
                 is_group = parsed["is_group"]
                 job.input_metadata = parsed
                 await _save_pipeline_state(db, job, "parse_input")
+
+                # ── STAGE 1.5: Fetch page/author profile ────────
+                page_id = parsed.get("page_id")
+                if page_id:
+                    try:
+                        logger.info(f"[Job {job_id}] Stage 1.5: Fetching author profile for {page_id}")
+                        await _append_log(db, job, "info", "fetch_author", f"Fetching author profile for {page_id}")
+                        await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+                        author_raw = await client.get_object_details(page_id)
+                        author_mapped = mapper.map_object_to_author(author_raw)
+                        author_profile = PageAuthorProfile(
+                            job_id=job.id,
+                            tenant_id=job.tenant_id,
+                            platform_object_id=author_mapped["platform_object_id"] or page_id,
+                            name=author_mapped["name"],
+                            about=author_mapped["about"],
+                            category=author_mapped["category"],
+                            description=author_mapped["description"],
+                            location=author_mapped["location"],
+                            phone=author_mapped["phone"],
+                            website=author_mapped["website"],
+                            picture_url=author_mapped["picture_url"],
+                            cover_url=author_mapped["cover_url"],
+                            raw_data=author_raw,
+                            fetched_at=datetime.now(timezone.utc),
+                        )
+                        db.add(author_profile)
+                        await db.commit()
+                        await _save_pipeline_state(db, job, "fetch_author")
+                        logger.info(f"[Job {job_id}] Author profile saved: {author_mapped.get('name')}")
+                        await _append_log(db, job, "info", "fetch_author", f"Author profile saved: {author_mapped.get('name')}")
+                    except Exception as author_err:
+                        logger.warning(f"[Job {job_id}] Failed to fetch author profile: {author_err}")
+                        await _append_log(db, job, "warn", "fetch_author", f"Failed to fetch author: {author_err}")
 
                 # ── STAGE 2: Fetch comments (paginated) ─────────
                 # Check status before starting stage
@@ -516,6 +551,8 @@ async def _execute_pipeline(job_id: str, celery_task):
                             profile.username_link = mapped["UsernameLink"]
                             profile.username = mapped["Username"]
                             profile.about = mapped["About"]
+                            profile.phone = mapped["Phone"]
+                            profile.picture_url = mapped["Picture URL"]
                             profile.raw_data = profile_data
                             profile.scrape_status = "success"
                             profile.scraped_at = datetime.now(timezone.utc)
@@ -770,7 +807,11 @@ async def _check_and_dispatch_scheduled():
             jobs = result.scalars().all()
             for job in jobs:
                 job.status = "queued"
-                task = run_scraping_pipeline.delay(str(job.id))
+                if job.job_type == "post_discovery":
+                    from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
+                    task = run_post_discovery_pipeline.delay(str(job.id))
+                else:
+                    task = run_scraping_pipeline.delay(str(job.id))
                 job.celery_task_id = task.id
             await db.commit()
 

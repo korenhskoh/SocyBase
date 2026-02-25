@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { jobsApi } from "@/lib/api-client";
+import { jobsApi, exportApi } from "@/lib/api-client";
 import { formatDate, getStatusColor } from "@/lib/utils";
 import type { ScrapingJob } from "@/types";
 import ConfirmModal from "@/components/ui/ConfirmModal";
@@ -91,6 +91,9 @@ export default function JobsPage() {
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [logJobId, setLogJobId] = useState<string | null>(null);
 
+  // Export dropdown
+  const [exportDropdownId, setExportDropdownId] = useState<string | null>(null);
+
   // Action feedback
   const [actionError, setActionError] = useState("");
 
@@ -114,6 +117,14 @@ export default function JobsPage() {
   useEffect(() => {
     setSelectedJobs(new Set());
   }, [statusFilter, typeFilter]);
+
+  // Close export dropdown on outside click
+  useEffect(() => {
+    if (!exportDropdownId) return;
+    const handler = () => setExportDropdownId(null);
+    const timer = setTimeout(() => document.addEventListener("click", handler), 0);
+    return () => { clearTimeout(timer); document.removeEventListener("click", handler); };
+  }, [exportDropdownId]);
 
   // Filter jobs by type (client-side since API doesn't support type filter yet)
   const filteredJobs = typeFilter ? jobs.filter((j) => j.job_type === typeFilter) : jobs;
@@ -208,6 +219,68 @@ export default function JobsPage() {
     }
   };
 
+  /* ── Single-job export ── */
+  const handleExport = async (jobId: string, format: "csv" | "xlsx" | "facebook-ads") => {
+    setExportDropdownId(null);
+    try {
+      let res;
+      if (format === "csv") res = await exportApi.downloadCsv(jobId);
+      else if (format === "xlsx") res = await exportApi.downloadXlsx(jobId);
+      else res = await exportApi.downloadFbAds(jobId);
+
+      const ext = format === "xlsx" ? "xlsx" : "csv";
+      const mime = format === "xlsx"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "text/csv";
+      const blob = new Blob([res.data], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `socybase_${format === "facebook-ads" ? "fb_ads_" : "export_"}${jobId.slice(0, 8)}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setActionError("Export failed");
+    }
+  };
+
+  /* ── Batch export ── */
+  const handleBatchExport = async () => {
+    const completedIds = selectedArr.filter((id) => {
+      const j = jobs.find((job) => job.id === id);
+      return j && j.status === "completed" && j.result_row_count > 0;
+    });
+    if (completedIds.length === 0) return;
+    try {
+      const res = await exportApi.batchExport({ job_ids: completedIds, format: "csv" });
+      const blob = new Blob([res.data], { type: "application/zip" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "socybase_batch_export.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setActionError("Batch export failed");
+    }
+  };
+
+  /* ── Batch resume ── */
+  const handleBatchResume = async () => {
+    const resumableIds = selectedArr.filter((id) => {
+      const j = jobs.find((job) => job.id === id);
+      return j && RESUMABLE_STATUSES.includes(j.status);
+    });
+    if (resumableIds.length === 0) return;
+    try {
+      await jobsApi.batchAction({ action: "resume", job_ids: resumableIds });
+      setSelectedJobs(new Set());
+      fetchJobs();
+    } catch (err: any) {
+      setActionError(err.response?.data?.detail || "Batch resume failed");
+    }
+  };
+
   /* ── Batch action helpers ── */
   const selectedArr = Array.from(selectedJobs);
   const canBatchPause = selectedArr.some((id) => {
@@ -218,6 +291,14 @@ export default function JobsPage() {
   const canBatchDelete = selectedArr.some((id) => {
     const j = jobs.find((job) => job.id === id);
     return j && TERMINAL_STATUSES.includes(j.status);
+  });
+  const canBatchResume = selectedArr.some((id) => {
+    const j = jobs.find((job) => job.id === id);
+    return j && RESUMABLE_STATUSES.includes(j.status);
+  });
+  const canBatchExport = selectedArr.some((id) => {
+    const j = jobs.find((job) => job.id === id);
+    return j && j.status === "completed" && j.result_row_count > 0;
   });
 
   const confirmConfig = getConfirmConfig();
@@ -351,6 +432,30 @@ export default function JobsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
               </svg>
               Delete
+            </button>
+          )}
+
+          {canBatchResume && (
+            <button
+              onClick={handleBatchResume}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 transition"
+            >
+              <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5.14v14l11-7-11-7z" />
+              </svg>
+              Resume
+            </button>
+          )}
+
+          {canBatchExport && (
+            <button
+              onClick={handleBatchExport}
+              className="flex items-center gap-1.5 rounded-lg bg-teal-500/10 border border-teal-500/20 px-3 py-1.5 text-xs font-medium text-teal-400 hover:bg-teal-500/20 transition"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+              Export ZIP
             </button>
           )}
 
@@ -529,6 +634,45 @@ export default function JobsPage() {
                                 <path d="M8 5.14v14l11-7-11-7z" />
                               </svg>
                             </button>
+                          )}
+
+                          {/* Export dropdown - completed jobs with results */}
+                          {job.status === "completed" && job.result_row_count > 0 && (
+                            <div className="relative">
+                              <button
+                                onClick={() => setExportDropdownId(exportDropdownId === job.id ? null : job.id)}
+                                title="Export"
+                                className="rounded-lg p-1.5 text-teal-400/60 hover:text-teal-400 hover:bg-teal-500/10 transition"
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                </svg>
+                              </button>
+                              {exportDropdownId === job.id && (
+                                <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-lg border border-white/10 bg-[#1a1a2e] shadow-xl py-1">
+                                  <button
+                                    onClick={() => handleExport(job.id, "csv")}
+                                    className="w-full text-left px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition"
+                                  >
+                                    Export CSV
+                                  </button>
+                                  <button
+                                    onClick={() => handleExport(job.id, "xlsx")}
+                                    className="w-full text-left px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition"
+                                  >
+                                    Export XLSX
+                                  </button>
+                                  {job.job_type !== "post_discovery" && (
+                                    <button
+                                      onClick={() => handleExport(job.id, "facebook-ads")}
+                                      className="w-full text-left px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition"
+                                    >
+                                      Export FB Ads
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           )}
 
                           {/* Logs - any job */}

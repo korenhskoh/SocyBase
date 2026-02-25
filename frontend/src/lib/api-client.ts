@@ -109,6 +109,8 @@ export const jobsApi = {
     api.get(`/jobs/${id}/posts`, { params }),
   createFromPosts: (data: { post_ids: string[]; settings?: Record<string, unknown> }) =>
     api.post("/jobs/create-from-posts", data),
+  getAuthor: (id: string) => api.get(`/jobs/${id}/author`),
+  getQueuePosition: (id: string) => api.get(`/jobs/${id}/queue-position`),
 };
 
 // Credits API
@@ -140,6 +142,8 @@ export const exportApi = {
     api.get(`/export/${jobId}/facebook-ads`, { responseType: "blob" }),
   downloadXlsx: (jobId: string) =>
     api.get(`/export/${jobId}/xlsx`, { responseType: "blob" }),
+  batchExport: (data: { job_ids: string[]; format?: string }) =>
+    api.post("/export/batch", data, { responseType: "blob" }),
 };
 
 // Platforms API

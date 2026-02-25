@@ -17,10 +17,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session
-from app.models.job import ScrapingJob, ScrapedPost
+from app.models.job import ScrapingJob, ScrapedPost, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
+from app.scraping.mappers.facebook_mapper import FacebookProfileMapper
 from app.scraping.rate_limiter import RateLimiter
 from app.celery_app import celery_app
 from app.services.progress_publisher import publish_job_progress
@@ -190,6 +191,7 @@ def run_post_discovery_pipeline(self, job_id: str):
 async def _execute_post_discovery(job_id: str, celery_task):
     """Execute the 3-stage post-discovery pipeline."""
     client = FacebookGraphClient()
+    mapper = FacebookProfileMapper()
     rate_limiter = RateLimiter()
 
     try:
@@ -234,6 +236,39 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                 logger.info(f"[Job {job_id}] Parsed: page_id={page_id}, is_group={is_group}")
                 await _append_log(db, job, "info", "parse_input", f"Parsed: page_id={page_id}, is_group={is_group}")
+
+                # ── STAGE 1.5: Fetch page/author profile ────────
+                if page_id:
+                    try:
+                        logger.info(f"[Job {job_id}] Stage 1.5: Fetching author profile for {page_id}")
+                        await _append_log(db, job, "info", "fetch_author", f"Fetching author profile for {page_id}")
+                        await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+                        author_raw = await client.get_object_details(page_id)
+                        author_mapped = mapper.map_object_to_author(author_raw)
+                        author_profile = PageAuthorProfile(
+                            job_id=job.id,
+                            tenant_id=job.tenant_id,
+                            platform_object_id=author_mapped["platform_object_id"] or page_id,
+                            name=author_mapped["name"],
+                            about=author_mapped["about"],
+                            category=author_mapped["category"],
+                            description=author_mapped["description"],
+                            location=author_mapped["location"],
+                            phone=author_mapped["phone"],
+                            website=author_mapped["website"],
+                            picture_url=author_mapped["picture_url"],
+                            cover_url=author_mapped["cover_url"],
+                            raw_data=author_raw,
+                            fetched_at=datetime.now(timezone.utc),
+                        )
+                        db.add(author_profile)
+                        await db.commit()
+                        await _save_pipeline_state(db, job, "fetch_author")
+                        logger.info(f"[Job {job_id}] Author profile saved: {author_mapped.get('name')}")
+                        await _append_log(db, job, "info", "fetch_author", f"Author profile saved: {author_mapped.get('name')}")
+                    except Exception as author_err:
+                        logger.warning(f"[Job {job_id}] Failed to fetch author profile: {author_err}")
+                        await _append_log(db, job, "warn", "fetch_author", f"Failed to fetch author: {author_err}")
 
                 # ── STAGE 2: Fetch Posts (paginated) ────────────
                 current_status = await _check_job_status(db, job.id)

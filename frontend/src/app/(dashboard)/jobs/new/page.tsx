@@ -4,13 +4,97 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { jobsApi } from "@/lib/api-client";
 import type { CursorHistoryItem } from "@/types";
-import * as Tabs from "@radix-ui/react-tabs";
+
+// ── Platform & scrape type definitions ────────────────────────────────
+
+interface PlatformDef {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  enabled: boolean;
+  scrapeTypes: ScrapeTypeDef[];
+}
+
+interface ScrapeTypeDef {
+  id: string;
+  label: string;
+  desc: string;
+  icon: React.ReactNode;
+  steps: { title: string; desc: string }[];
+}
+
+const COMMENT_ICON = (
+  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+  </svg>
+);
+
+const DISCOVER_ICON = (
+  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+  </svg>
+);
+
+const PLATFORMS: PlatformDef[] = [
+  {
+    id: "facebook",
+    name: "Facebook",
+    icon: "F",
+    color: "from-[#1877F2] to-[#0d5bbd]",
+    enabled: true,
+    scrapeTypes: [
+      {
+        id: "comment_scraper",
+        label: "Comment Profile Scraper",
+        desc: "Extract commenter profiles from any post",
+        icon: COMMENT_ICON,
+        steps: [
+          { title: "Paste URL", desc: "Enter a Facebook post URL or ID" },
+          { title: "Extract Comments", desc: "We fetch all commenters from the post" },
+          { title: "Get Profiles", desc: "Each commenter's profile is enriched" },
+        ],
+      },
+      {
+        id: "post_discovery",
+        label: "Page Post Discovery",
+        desc: "Discover all posts from a page, group, or profile",
+        icon: DISCOVER_ICON,
+        steps: [
+          { title: "Enter Page", desc: "Provide a Page ID, username, or URL" },
+          { title: "Discover Posts", desc: "We fetch all posts with engagement data" },
+          { title: "Select & Scrape", desc: "Pick posts to extract commenter profiles" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "tiktok",
+    name: "TikTok",
+    icon: "T",
+    color: "from-[#00F2EA] to-[#FF0050]",
+    enabled: false,
+    scrapeTypes: [],
+  },
+  {
+    id: "instagram",
+    name: "Instagram",
+    icon: "I",
+    color: "from-[#F58529] to-[#DD2A7B]",
+    enabled: false,
+    scrapeTypes: [],
+  },
+];
 
 export default function NewJobPage() {
   const router = useRouter();
 
-  // ── Shared state ──────────────────────────────────────────────
-  const [platform, setPlatform] = useState("facebook");
+  // ── Step state ──────────────────────────────────────────────────
+  const [step, setStep] = useState(1); // 1=platform, 2=scrapeType, 3=configure
+  const [selectedPlatform, setSelectedPlatform] = useState<PlatformDef | null>(null);
+  const [selectedScrapeType, setSelectedScrapeType] = useState<ScrapeTypeDef | null>(null);
+
+  // ── Shared state ────────────────────────────────────────────────
   const [schedule, setSchedule] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,7 +102,7 @@ export default function NewJobPage() {
 
   // Concurrent job limit warning
   const [activeJobCount, setActiveJobCount] = useState(0);
-  const [concurrencyLimit, setConcurrencyLimit] = useState<number | null>(null);
+  const [concurrencyLimit] = useState<number | null>(null);
 
   useEffect(() => {
     jobsApi.list({ page: 1, page_size: 50, status: "running" }).then((r) => {
@@ -30,7 +114,7 @@ export default function NewJobPage() {
     }).catch(() => {});
   }, []);
 
-  // ── Comment Scraper state ─────────────────────────────────────
+  // ── Comment Scraper state ───────────────────────────────────────
   const [inputValue, setInputValue] = useState("");
   const [ignoreDuplicates, setIgnoreDuplicates] = useState(false);
   const [useCustomCursor, setUseCustomCursor] = useState(false);
@@ -38,11 +122,11 @@ export default function NewJobPage() {
   const [cursorHistory, setCursorHistory] = useState<CursorHistoryItem[]>([]);
   const [loadingCursors, setLoadingCursors] = useState(false);
 
-  // ── Post Discovery state ──────────────────────────────────────
+  // ── Post Discovery state ────────────────────────────────────────
   const [pageInput, setPageInput] = useState("");
   const [tokenType, setTokenType] = useState("EAAAAU");
 
-  // ── Comment Scraper helpers ───────────────────────────────────
+  // ── Helpers ─────────────────────────────────────────────────────
   const loadCursorHistory = async () => {
     if (!inputValue.trim()) return;
     setLoadingCursors(true);
@@ -59,9 +143,7 @@ export default function NewJobPage() {
   const handleCursorToggle = (checked: boolean) => {
     setUseCustomCursor(checked);
     setSelectedCursor("");
-    if (checked) {
-      loadCursorHistory();
-    }
+    if (checked) loadCursorHistory();
   };
 
   const formatTimeAgo = (dateStr: string) => {
@@ -70,31 +152,82 @@ export default function NewJobPage() {
     if (mins < 60) return `${mins}m ago`;
     const hours = Math.floor(mins / 60);
     if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
+    return `${Math.floor(hours / 24)}d ago`;
   };
 
-  // ── Submit: Comment Scraper ───────────────────────────────────
+  const selectPlatform = (p: PlatformDef) => {
+    if (!p.enabled) return;
+    setSelectedPlatform(p);
+    setSelectedScrapeType(null);
+    setError("");
+    // If only one scrape type, auto-select it
+    if (p.scrapeTypes.length === 1) {
+      setSelectedScrapeType(p.scrapeTypes[0]);
+      setStep(3);
+    } else {
+      setStep(2);
+    }
+  };
+
+  const selectScrapeType = (st: ScrapeTypeDef) => {
+    setSelectedScrapeType(st);
+    setError("");
+    setStep(3);
+  };
+
+  const goBack = () => {
+    setError("");
+    if (step === 3) {
+      if (selectedPlatform && selectedPlatform.scrapeTypes.length === 1) {
+        setSelectedPlatform(null);
+        setSelectedScrapeType(null);
+        setStep(1);
+      } else {
+        setSelectedScrapeType(null);
+        setStep(2);
+      }
+    } else if (step === 2) {
+      setSelectedPlatform(null);
+      setStep(1);
+    }
+  };
+
+  // ── Submit ──────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedPlatform || !selectedScrapeType) return;
     setError("");
     setLoading(true);
 
     try {
-      const retryCount = Number(localStorage.getItem("socybase_scraping_retry_count") || "2");
-      const res = await jobsApi.create({
-        platform,
-        input_type: "post_url",
-        input_value: inputValue,
-        scheduled_at: schedule && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
-        settings: {
-          include_replies: true,
-          profile_retry_count: retryCount,
-          ...(ignoreDuplicates && { ignore_duplicate_users: true }),
-          ...(useCustomCursor && selectedCursor && { start_from_cursor: selectedCursor }),
-        },
-      });
-      router.push(`/jobs/${res.data.id}`);
+      if (selectedScrapeType.id === "comment_scraper") {
+        const retryCount = Number(localStorage.getItem("socybase_scraping_retry_count") || "2");
+        const res = await jobsApi.create({
+          platform: selectedPlatform.id,
+          input_type: "post_url",
+          input_value: inputValue,
+          scheduled_at: schedule && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
+          settings: {
+            include_replies: true,
+            profile_retry_count: retryCount,
+            ...(ignoreDuplicates && { ignore_duplicate_users: true }),
+            ...(useCustomCursor && selectedCursor && { start_from_cursor: selectedCursor }),
+          },
+        });
+        router.push(`/jobs/${res.data.id}`);
+      } else if (selectedScrapeType.id === "post_discovery") {
+        const res = await jobsApi.create({
+          platform: selectedPlatform.id,
+          job_type: "post_discovery",
+          input_type: "page_id",
+          input_value: pageInput,
+          scheduled_at: schedule && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
+          settings: {
+            token_type: tokenType,
+          },
+        });
+        router.push(`/jobs/${res.data.id}`);
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to create job");
     } finally {
@@ -102,97 +235,67 @@ export default function NewJobPage() {
     }
   };
 
-  // ── Submit: Post Discovery ────────────────────────────────────
-  const handlePostDiscoverySubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    try {
-      const res = await jobsApi.create({
-        platform,
-        job_type: "post_discovery",
-        input_type: "page_id",
-        input_value: pageInput,
-        scheduled_at: schedule && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
-        settings: {
-          token_type: tokenType,
-        },
-      });
-      router.push(`/jobs/${res.data.id}`);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to create job");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // ── Stepper indicator ───────────────────────────────────────────
+  const stepLabels = ["Platform", "Scrape Type", "Configure"];
 
-  // ── Shared UI fragments ───────────────────────────────────────
-  const platformSelector = (
-    <div className="glass-card p-6 space-y-4">
-      <label className="block text-sm font-medium text-white/80">Platform</label>
-      <div className="flex gap-3">
-        {[
-          { id: "facebook", name: "Facebook", color: "from-[#1877F2] to-[#0d5bbd]", enabled: true },
-          { id: "tiktok", name: "TikTok", color: "from-[#00F2EA] to-[#FF0050]", enabled: false },
-        ].map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            disabled={!p.enabled}
-            onClick={() => setPlatform(p.id)}
-            className={`flex-1 rounded-xl border-2 p-4 text-center transition-all ${
-              platform === p.id
-                ? "border-primary-500 bg-primary-500/10"
-                : "border-white/10 bg-white/[0.02] hover:border-white/20"
-            } ${!p.enabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
-          >
-            <div className={`mx-auto h-10 w-10 rounded-lg bg-gradient-to-br ${p.color} flex items-center justify-center mb-2`}>
-              <span className="text-white font-bold text-lg">{p.name[0]}</span>
-            </div>
-            <p className="text-sm font-medium text-white">{p.name}</p>
-            {!p.enabled && <p className="text-xs text-white/30 mt-1">Coming soon</p>}
-          </button>
-        ))}
-      </div>
+  const Stepper = () => (
+    <div className="flex items-center gap-2 mb-8">
+      {stepLabels.map((label, i) => {
+        const stepNum = i + 1;
+        const isActive = step === stepNum;
+        const isDone = step > stepNum;
+        return (
+          <div key={label} className="flex items-center gap-2 flex-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (isDone) {
+                  if (stepNum === 1) { setSelectedPlatform(null); setSelectedScrapeType(null); setStep(1); }
+                  else if (stepNum === 2) { setSelectedScrapeType(null); setStep(2); }
+                }
+              }}
+              className={`flex items-center gap-2 transition-all ${isDone ? "cursor-pointer" : "cursor-default"}`}
+            >
+              <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-all ${
+                isActive
+                  ? "bg-gradient-to-br from-primary-500 to-accent-purple text-white shadow-lg shadow-primary-500/25"
+                  : isDone
+                    ? "bg-primary-500/20 text-primary-400 border border-primary-500/30"
+                    : "bg-white/5 text-white/30 border border-white/10"
+              }`}>
+                {isDone ? (
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                ) : stepNum}
+              </div>
+              <span className={`text-sm font-medium hidden sm:inline ${
+                isActive ? "text-white" : isDone ? "text-primary-400" : "text-white/30"
+              }`}>{label}</span>
+            </button>
+            {i < stepLabels.length - 1 && (
+              <div className={`flex-1 h-px ${isDone ? "bg-primary-500/30" : "bg-white/10"}`} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 
-  const scheduleSection = (
-    <div className="glass-card p-6 space-y-4">
-      <div className="flex items-center gap-3">
-        <input
-          type="checkbox"
-          id="schedule"
-          checked={schedule}
-          onChange={(e) => setSchedule(e.target.checked)}
-          className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
-        />
-        <label htmlFor="schedule" className="text-sm font-medium text-white/80">
-          Schedule for later
-        </label>
-      </div>
-      {schedule && (
-        <input
-          type="datetime-local"
-          value={scheduledAt}
-          onChange={(e) => setScheduledAt(e.target.value)}
-          className="input-glass"
-          required={schedule}
-        />
-      )}
-    </div>
-  );
-
-  // ── Render ────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
+    <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl md:text-3xl font-bold text-white">New Scraping Job</h1>
-        <p className="text-white/50 mt-1">Choose a scraping type and configure your job</p>
+        <p className="text-white/50 mt-1">
+          {step === 1 && "Select a social media platform to scrape"}
+          {step === 2 && `Choose a scrape type for ${selectedPlatform?.name}`}
+          {step === 3 && "Configure your job and start scraping"}
+        </p>
       </div>
 
-      {/* Concurrent job limit warning */}
+      {/* Concurrent job warning */}
       {activeJobCount > 0 && (
         <div className={`rounded-lg border px-4 py-3 text-sm flex items-center gap-2 ${
           concurrencyLimit && activeJobCount >= concurrencyLimit
@@ -219,54 +322,123 @@ export default function NewJobPage() {
         </div>
       )}
 
-      {/* Tab picker */}
-      <Tabs.Root defaultValue="comment_scraper">
-        {/* Tab triggers */}
-        <div className="glass-card p-2 mb-6">
-          <Tabs.List className="flex gap-2">
-            <Tabs.Trigger
-              value="comment_scraper"
-              className="flex-1 flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all
-                data-[state=inactive]:bg-white/5 data-[state=inactive]:text-white/50 data-[state=inactive]:hover:bg-white/10 data-[state=inactive]:hover:text-white/70
-                data-[state=active]:bg-gradient-to-r data-[state=active]:from-primary-500 data-[state=active]:to-accent-purple data-[state=active]:text-white data-[state=active]:shadow-lg"
-            >
-              {/* Chat bubble icon */}
-              <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
-              </svg>
-              Comment Scraper
-            </Tabs.Trigger>
-            <Tabs.Trigger
-              value="post_discovery"
-              className="flex-1 flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all
-                data-[state=inactive]:bg-white/5 data-[state=inactive]:text-white/50 data-[state=inactive]:hover:bg-white/10 data-[state=inactive]:hover:text-white/70
-                data-[state=active]:bg-gradient-to-r data-[state=active]:from-primary-500 data-[state=active]:to-accent-purple data-[state=active]:text-white data-[state=active]:shadow-lg"
-            >
-              {/* Grid / search icon */}
-              <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-              </svg>
-              Post Discovery
-            </Tabs.Trigger>
-          </Tabs.List>
-        </div>
+      {/* Stepper */}
+      <Stepper />
 
-        {/* ────────────────────────────────────────────────────── */}
-        {/* Tab 1: Comment Profile Scraper                        */}
-        {/* ────────────────────────────────────────────────────── */}
-        <Tabs.Content value="comment_scraper" className="space-y-6 outline-none">
-          {/* Steps */}
+      {/* ── STEP 1: Choose Platform ─────────────────────────────── */}
+      {step === 1 && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            {PLATFORMS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={!p.enabled}
+                onClick={() => selectPlatform(p)}
+                className={`group relative rounded-2xl border-2 p-6 text-center transition-all ${
+                  p.enabled
+                    ? "border-white/10 bg-white/[0.02] hover:border-primary-500/50 hover:bg-primary-500/5 cursor-pointer"
+                    : "border-white/5 bg-white/[0.01] opacity-50 cursor-not-allowed"
+                }`}
+              >
+                <div className={`mx-auto h-14 w-14 rounded-xl bg-gradient-to-br ${p.color} flex items-center justify-center mb-3 transition-transform group-hover:scale-110`}>
+                  <span className="text-white font-bold text-2xl">{p.icon}</span>
+                </div>
+                <p className="text-sm font-semibold text-white">{p.name}</p>
+                {p.enabled ? (
+                  <p className="text-xs text-white/40 mt-1">{p.scrapeTypes.length} scrape type{p.scrapeTypes.length !== 1 ? "s" : ""}</p>
+                ) : (
+                  <p className="text-xs text-white/30 mt-1">Coming soon</p>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP 2: Choose Scrape Type ──────────────────────────── */}
+      {step === 2 && selectedPlatform && (
+        <div className="space-y-4">
+          {/* Back button */}
+          <button type="button" onClick={goBack} className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 transition-colors">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+            Back to platforms
+          </button>
+
+          <div className="space-y-3">
+            {selectedPlatform.scrapeTypes.map((st) => (
+              <button
+                key={st.id}
+                type="button"
+                onClick={() => selectScrapeType(st)}
+                className="w-full group rounded-2xl border-2 border-white/10 bg-white/[0.02] hover:border-primary-500/50 hover:bg-primary-500/5 p-6 text-left transition-all cursor-pointer"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary-500/20 to-accent-purple/20 border border-primary-500/20 flex items-center justify-center text-primary-400 shrink-0 transition-colors group-hover:border-primary-500/40">
+                    {st.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-semibold text-white">{st.label}</p>
+                    <p className="text-sm text-white/40 mt-0.5">{st.desc}</p>
+                    {/* Mini steps */}
+                    <div className="flex items-center gap-3 mt-3">
+                      {st.steps.map((s, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <div className="h-5 w-5 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+                            <span className="text-[10px] font-bold text-white/40">{i + 1}</span>
+                          </div>
+                          <span className="text-xs text-white/30">{s.title}</span>
+                          {i < st.steps.length - 1 && (
+                            <svg className="h-3 w-3 text-white/15 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                            </svg>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <svg className="h-5 w-5 text-white/20 group-hover:text-primary-400 transition-colors shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP 3: Configure ───────────────────────────────────── */}
+      {step === 3 && selectedPlatform && selectedScrapeType && (
+        <div className="space-y-6">
+          {/* Back button */}
+          <button type="button" onClick={goBack} className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 transition-colors">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+            Back
+          </button>
+
+          {/* Selection summary */}
+          <div className="glass-card p-4 flex items-center gap-4">
+            <div className={`h-10 w-10 rounded-lg bg-gradient-to-br ${selectedPlatform.color} flex items-center justify-center shrink-0`}>
+              <span className="text-white font-bold text-lg">{selectedPlatform.icon}</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white">{selectedPlatform.name}</p>
+              <p className="text-xs text-white/40">{selectedScrapeType.label}</p>
+            </div>
+          </div>
+
+          {/* How it works */}
           <div className="glass-card p-6 space-y-2">
             <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">How it works</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
-              {[
-                { step: "1", title: "Paste URL", desc: "Enter a Facebook post URL or ID" },
-                { step: "2", title: "Extract Comments", desc: "We fetch all commenters from the post" },
-                { step: "3", title: "Get Profiles", desc: "Each commenter's profile is enriched" },
-              ].map((s) => (
-                <div key={s.step} className="flex gap-3 items-start">
+              {selectedScrapeType.steps.map((s, i) => (
+                <div key={i} className="flex gap-3 items-start">
                   <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center shrink-0">
-                    <span className="text-white text-sm font-bold">{s.step}</span>
+                    <span className="text-white text-sm font-bold">{i + 1}</span>
                   </div>
                   <div>
                     <p className="text-sm font-medium text-white">{s.title}</p>
@@ -279,229 +451,217 @@ export default function NewJobPage() {
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Platform */}
-            {platformSelector}
-
-            {/* Post URL/ID */}
-            <div className="glass-card p-6 space-y-4">
-              <label className="block text-sm font-medium text-white/80">Post URL or ID</label>
-              <textarea
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                className="input-glass min-h-[100px] resize-none"
-                placeholder={"https://www.facebook.com/page/posts/123456789\nor paste a post ID like pfbid0zzVHSdSfx5a4..."}
-                required
-              />
-              <p className="text-xs text-white/30">
-                Supported: Page posts, group posts, video posts, photo posts, reels
-              </p>
-            </div>
-
-            {/* Advanced Options */}
-            <div className="glass-card p-6 space-y-5">
-              <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">Advanced Options</h3>
-
-              {/* Ignore duplicate users */}
-              <div className="space-y-1">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    id="ignoreDuplicates"
-                    checked={ignoreDuplicates}
-                    onChange={(e) => setIgnoreDuplicates(e.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
+            {/* ── Comment Scraper form fields ── */}
+            {selectedScrapeType.id === "comment_scraper" && (
+              <>
+                {/* Post URL/ID */}
+                <div className="glass-card p-6 space-y-4">
+                  <label className="block text-sm font-medium text-white/80">Post URL or ID</label>
+                  <textarea
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    className="input-glass min-h-[100px] resize-none"
+                    placeholder={"https://www.facebook.com/page/posts/123456789\nor paste a post ID like pfbid0zzVHSdSfx5a4..."}
+                    required
                   />
-                  <label htmlFor="ignoreDuplicates" className="text-sm font-medium text-white/80">
-                    Ignore duplicate comment users
-                  </label>
-                </div>
-                <p className="text-xs text-white/30 ml-7">
-                  Skip users already scraped in previous jobs for the same post. Saves credits.
-                </p>
-              </div>
-
-              {/* Start from previous cursor */}
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id="useCustomCursor"
-                      checked={useCustomCursor}
-                      onChange={(e) => handleCursorToggle(e.target.checked)}
-                      className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
-                    />
-                    <label htmlFor="useCustomCursor" className="text-sm font-medium text-white/80">
-                      Start from previous cursor
-                    </label>
-                  </div>
-                  <p className="text-xs text-white/30 ml-7">
-                    Resume comment fetching from where a previous job stopped
+                  <p className="text-xs text-white/30">
+                    Supported: Page posts, group posts, video posts, photo posts, reels
                   </p>
                 </div>
 
-                {/* Expandable cursor history */}
-                {useCustomCursor && (
-                  <div className="ml-7 rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3">
-                    {loadingCursors ? (
-                      <div className="flex items-center gap-2 text-white/40 text-sm">
-                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Loading cursor history...
+                {/* Advanced Options */}
+                <div className="glass-card p-6 space-y-5">
+                  <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">Advanced Options</h3>
+
+                  {/* Ignore duplicate users */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="ignoreDuplicates"
+                        checked={ignoreDuplicates}
+                        onChange={(e) => setIgnoreDuplicates(e.target.checked)}
+                        className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
+                      />
+                      <label htmlFor="ignoreDuplicates" className="text-sm font-medium text-white/80">
+                        Ignore duplicate comment users
+                      </label>
+                    </div>
+                    <p className="text-xs text-white/30 ml-7">
+                      Skip users already scraped in previous jobs for the same post. Saves credits.
+                    </p>
+                  </div>
+
+                  {/* Start from previous cursor */}
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          id="useCustomCursor"
+                          checked={useCustomCursor}
+                          onChange={(e) => handleCursorToggle(e.target.checked)}
+                          className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
+                        />
+                        <label htmlFor="useCustomCursor" className="text-sm font-medium text-white/80">
+                          Start from previous cursor
+                        </label>
                       </div>
-                    ) : !inputValue.trim() ? (
-                      <p className="text-xs text-white/30">Enter a post URL first to see available cursors</p>
-                    ) : cursorHistory.length === 0 ? (
-                      <p className="text-xs text-white/30">No cursor history available for this post</p>
-                    ) : (
-                      <>
-                        <p className="text-xs text-white/40 font-medium">Select a checkpoint to resume from:</p>
-                        <div className="space-y-2">
-                          {cursorHistory.map((item) => (
-                            <label
-                              key={item.job_id}
-                              className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-all ${
-                                selectedCursor === item.last_cursor
-                                  ? "border-primary-500/50 bg-primary-500/10"
-                                  : "border-white/5 bg-white/[0.01] hover:border-white/15"
-                              }`}
-                            >
-                              <input
-                                type="radio"
-                                name="cursorSelect"
-                                value={item.last_cursor}
-                                checked={selectedCursor === item.last_cursor}
-                                onChange={() => setSelectedCursor(item.last_cursor)}
-                                className="mt-0.5 h-4 w-4 border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm text-white/80 font-medium">
-                                    {formatTimeAgo(item.created_at)}
-                                  </span>
-                                  <span className={`text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded ${
-                                    item.status === "cancelled"
-                                      ? "bg-yellow-500/10 text-yellow-400"
-                                      : "bg-red-500/10 text-red-400"
-                                  }`}>
-                                    {item.status}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-white/40 mt-0.5">
-                                  {item.comment_pages_fetched} pages fetched &middot; {item.total_comments_fetched} comments collected
-                                </p>
-                              </div>
-                            </label>
-                          ))}
-                        </div>
-                      </>
+                      <p className="text-xs text-white/30 ml-7">
+                        Resume comment fetching from where a previous job stopped
+                      </p>
+                    </div>
+
+                    {useCustomCursor && (
+                      <div className="ml-7 rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                        {loadingCursors ? (
+                          <div className="flex items-center gap-2 text-white/40 text-sm">
+                            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            Loading cursor history...
+                          </div>
+                        ) : !inputValue.trim() ? (
+                          <p className="text-xs text-white/30">Enter a post URL first to see available cursors</p>
+                        ) : cursorHistory.length === 0 ? (
+                          <p className="text-xs text-white/30">No cursor history available for this post</p>
+                        ) : (
+                          <>
+                            <p className="text-xs text-white/40 font-medium">Select a checkpoint to resume from:</p>
+                            <div className="space-y-2">
+                              {cursorHistory.map((item) => (
+                                <label
+                                  key={item.job_id}
+                                  className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-all ${
+                                    selectedCursor === item.last_cursor
+                                      ? "border-primary-500/50 bg-primary-500/10"
+                                      : "border-white/5 bg-white/[0.01] hover:border-white/15"
+                                  }`}
+                                >
+                                  <input
+                                    type="radio"
+                                    name="cursorSelect"
+                                    value={item.last_cursor}
+                                    checked={selectedCursor === item.last_cursor}
+                                    onChange={() => setSelectedCursor(item.last_cursor)}
+                                    className="mt-0.5 h-4 w-4 border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm text-white/80 font-medium">
+                                        {formatTimeAgo(item.created_at)}
+                                      </span>
+                                      <span className={`text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded ${
+                                        item.status === "cancelled"
+                                          ? "bg-yellow-500/10 text-yellow-400"
+                                          : "bg-red-500/10 text-red-400"
+                                      }`}>
+                                        {item.status}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-white/40 mt-0.5">
+                                      {item.comment_pages_fetched} pages fetched &middot; {item.total_comments_fetched} comments collected
+                                    </p>
+                                  </div>
+                                </label>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
+              </>
+            )}
 
-            {/* Schedule */}
-            {scheduleSection}
+            {/* ── Post Discovery form fields ── */}
+            {selectedScrapeType.id === "post_discovery" && (
+              <>
+                {/* Page Input */}
+                <div className="glass-card p-6 space-y-4">
+                  <label className="block text-sm font-medium text-white/80">Page / Group / Profile</label>
+                  <textarea
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value)}
+                    className="input-glass min-h-[100px] resize-none"
+                    placeholder={"Enter a Page ID, username, or URL\ne.g., mtpfan, 123456789, https://facebook.com/pagename"}
+                    required
+                  />
+                  <p className="text-xs text-white/30">
+                    Supported: Page IDs, usernames, @handles, group URLs, profile URLs
+                  </p>
+                </div>
 
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={loading || !inputValue.trim()}
-              className="btn-glow w-full text-lg py-4 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Creating Job..." : schedule ? "Schedule Job" : "Start Scraping"}
-            </button>
-          </form>
-        </Tabs.Content>
-
-        {/* ────────────────────────────────────────────────────── */}
-        {/* Tab 2: Page Post Discovery                            */}
-        {/* ────────────────────────────────────────────────────── */}
-        <Tabs.Content value="post_discovery" className="space-y-6 outline-none">
-          {/* Steps */}
-          <div className="glass-card p-6 space-y-2">
-            <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">How it works</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
-              {[
-                { step: "1", title: "Enter Page", desc: "Provide a Page ID, username, or Facebook URL" },
-                { step: "2", title: "Discover Posts", desc: "We fetch all posts with engagement data" },
-                { step: "3", title: "Select & Scrape", desc: "Pick posts to extract commenter profiles" },
-              ].map((s) => (
-                <div key={s.step} className="flex gap-3 items-start">
-                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center shrink-0">
-                    <span className="text-white text-sm font-bold">{s.step}</span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-white">{s.title}</p>
-                    <p className="text-xs text-white/40">{s.desc}</p>
+                {/* Token Type */}
+                <div className="glass-card p-6 space-y-4">
+                  <label className="block text-sm font-medium text-white/80">Token Type</label>
+                  <div className="flex gap-3">
+                    {[
+                      { id: "EAAAAU", name: "EAAAAU", subtitle: "Pages & Profiles" },
+                      { id: "EAAGNO", name: "EAAGNO", subtitle: "Groups" },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setTokenType(t.id)}
+                        className={`flex-1 rounded-xl border-2 p-4 text-center transition-all cursor-pointer ${
+                          tokenType === t.id
+                            ? "border-primary-500 bg-primary-500/10"
+                            : "border-white/10 bg-white/[0.02] hover:border-white/20"
+                        }`}
+                      >
+                        <p className="text-sm font-bold text-white">{t.name}</p>
+                        <p className="text-xs text-white/40 mt-1">{t.subtitle}</p>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={handlePostDiscoverySubmit} className="space-y-6">
-            {/* Platform */}
-            {platformSelector}
-
-            {/* Page Input */}
-            <div className="glass-card p-6 space-y-4">
-              <label className="block text-sm font-medium text-white/80">Page / Group / Profile</label>
-              <textarea
-                value={pageInput}
-                onChange={(e) => setPageInput(e.target.value)}
-                className="input-glass min-h-[100px] resize-none"
-                placeholder={"Enter a Page ID, username, or URL\ne.g., mtpfan, 123456789, https://facebook.com/pagename"}
-                required
-              />
-              <p className="text-xs text-white/30">
-                Supported: Page IDs, usernames, @handles, group URLs, profile URLs
-              </p>
-            </div>
-
-            {/* Token Type */}
-            <div className="glass-card p-6 space-y-4">
-              <label className="block text-sm font-medium text-white/80">Token Type</label>
-              <div className="flex gap-3">
-                {[
-                  { id: "EAAAAU", name: "EAAAAU", subtitle: "Pages & Profiles" },
-                  { id: "EAAGNO", name: "EAAGNO", subtitle: "Groups" },
-                ].map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setTokenType(t.id)}
-                    className={`flex-1 rounded-xl border-2 p-4 text-center transition-all cursor-pointer ${
-                      tokenType === t.id
-                        ? "border-primary-500 bg-primary-500/10"
-                        : "border-white/10 bg-white/[0.02] hover:border-white/20"
-                    }`}
-                  >
-                    <p className="text-sm font-bold text-white">{t.name}</p>
-                    <p className="text-xs text-white/40 mt-1">{t.subtitle}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
+              </>
+            )}
 
             {/* Schedule */}
-            {scheduleSection}
+            <div className="glass-card p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="schedule"
+                  checked={schedule}
+                  onChange={(e) => setSchedule(e.target.checked)}
+                  className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
+                />
+                <label htmlFor="schedule" className="text-sm font-medium text-white/80">
+                  Schedule for later
+                </label>
+              </div>
+              {schedule && (
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="input-glass"
+                  required={schedule}
+                />
+              )}
+            </div>
 
             {/* Submit */}
             <button
               type="submit"
-              disabled={loading || !pageInput.trim()}
+              disabled={loading || (selectedScrapeType.id === "comment_scraper" ? !inputValue.trim() : !pageInput.trim())}
               className="btn-glow w-full text-lg py-4 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Creating Job..." : schedule ? "Schedule Discovery" : "Discover Posts"}
+              {loading
+                ? "Creating Job..."
+                : schedule
+                  ? selectedScrapeType.id === "post_discovery" ? "Schedule Discovery" : "Schedule Job"
+                  : selectedScrapeType.id === "post_discovery" ? "Discover Posts" : "Start Scraping"
+              }
             </button>
           </form>
-        </Tabs.Content>
-      </Tabs.Root>
+        </div>
+      )}
     </div>
   );
 }

@@ -90,7 +90,26 @@ class ScrapedProfileResponse(BaseModel):
     username_link: str | None
     username: str | None
     about: str | None
+    phone: str | None
+    picture_url: str | None
     scrape_status: str
     scraped_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class PageAuthorProfileResponse(BaseModel):
+    id: UUID
+    platform_object_id: str
+    name: str | None = None
+    about: str | None = None
+    category: str | None = None
+    description: str | None = None
+    location: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    picture_url: str | None = None
+    cover_url: str | None = None
+    fetched_at: datetime | None = None
 
     model_config = {"from_attributes": True}

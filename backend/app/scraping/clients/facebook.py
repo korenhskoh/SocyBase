@@ -33,7 +33,7 @@ class FacebookGraphClient(AbstractSocialClient):
         - https://www.facebook.com/watch/?v={id}
         - Direct post ID (pfbid...)
         """
-        result = {"post_id": url, "is_group": False, "group_id": None, "original_url": url}
+        result = {"post_id": url, "is_group": False, "group_id": None, "page_id": None, "original_url": url}
 
         # Direct post ID (not a URL)
         if not url.startswith("http"):
@@ -42,14 +42,17 @@ class FacebookGraphClient(AbstractSocialClient):
             parts = url.split("_")
             if len(parts) == 2 and all(p.isdigit() for p in parts):
                 result["post_id"] = parts[1]  # pageId_postId → postId
+                result["page_id"] = parts[0]
             elif len(parts) == 3 and all(p.isdigit() for p in parts):
                 result["post_id"] = parts[1]  # pageId_postId_commentId → postId
+                result["page_id"] = parts[0]
             return result
 
         # Group post
         group_match = re.search(r"groups/(\d+)/(?:posts|permalink)/(\d+)", url)
         if group_match:
             result["group_id"] = group_match.group(1)
+            result["page_id"] = group_match.group(1)
             result["post_id"] = group_match.group(2)
             result["is_group"] = True
             return result
@@ -58,18 +61,30 @@ class FacebookGraphClient(AbstractSocialClient):
         post_match = re.search(r"/posts/(pfbid\w+|\w+)", url)
         if post_match:
             result["post_id"] = post_match.group(1)
+            # Extract page name from URL: facebook.com/{page}/posts/...
+            page_match = re.search(r"facebook\.com/([^/]+)/posts/", url)
+            if page_match:
+                result["page_id"] = page_match.group(1)
             return result
 
         # Video post - /{page}/videos/{id}
         video_match = re.search(r"/videos/(\d+)", url)
         if video_match:
             result["post_id"] = video_match.group(1)
+            # Extract page name from URL: facebook.com/{page}/videos/...
+            page_match = re.search(r"facebook\.com/([^/]+)/videos/", url)
+            if page_match:
+                result["page_id"] = page_match.group(1)
             return result
 
         # permalink.php?story_fbid=...
         story_match = re.search(r"story_fbid=(\d+)", url)
         if story_match:
             result["post_id"] = story_match.group(1)
+            # Extract page ID from &id= parameter
+            id_match = re.search(r"[?&]id=(\d+)", url)
+            if id_match:
+                result["page_id"] = id_match.group(1)
             return result
 
         # pfbid format in URL
@@ -144,7 +159,7 @@ class FacebookGraphClient(AbstractSocialClient):
         fields = (
             "id,name,first_name,last_name,about,birthday,gender,"
             "hometown,location,education,work,website,languages,"
-            "link,relationship_status,username,"
+            "link,relationship_status,username,phone,"
             "picture.type(large)"
         )
         params = {
