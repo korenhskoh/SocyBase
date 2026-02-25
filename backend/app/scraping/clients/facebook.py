@@ -37,6 +37,13 @@ class FacebookGraphClient(AbstractSocialClient):
 
         # Direct post ID (not a URL)
         if not url.startswith("http"):
+            # Handle compound IDs from feed: "pageId_postId" or "pageId_postId_commentId"
+            # Extract the actual post ID (second part for 2-part, middle for 3-part)
+            parts = url.split("_")
+            if len(parts) == 2 and all(p.isdigit() for p in parts):
+                result["post_id"] = parts[1]  # pageId_postId → postId
+            elif len(parts) == 3 and all(p.isdigit() for p in parts):
+                result["post_id"] = parts[1]  # pageId_postId_commentId → postId
             return result
 
         # Group post
