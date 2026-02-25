@@ -614,16 +614,22 @@ async def get_job_posts(
     )
     total = total_result.scalar() or 0
 
-    # Fetch deduplicated posts: pick one row per post_id (the first inserted)
+    # Fetch deduplicated posts: use row_number() window to pick one row per post_id
     dedup_subq = (
-        select(func.min(ScrapedPost.id).label("keep_id"))
+        select(
+            ScrapedPost.id,
+            func.row_number().over(
+                partition_by=ScrapedPost.post_id,
+                order_by=ScrapedPost.created_time.desc().nulls_last()
+            ).label("rn")
+        )
         .where(ScrapedPost.job_id.in_(job_ids))
-        .group_by(ScrapedPost.post_id)
     ).subquery()
 
     result = await db.execute(
         select(ScrapedPost)
-        .where(ScrapedPost.id.in_(select(dedup_subq.c.keep_id)))
+        .join(dedup_subq, ScrapedPost.id == dedup_subq.c.id)
+        .where(dedup_subq.c.rn == 1)
         .order_by(ScrapedPost.created_time.desc().nulls_last())
         .offset((page - 1) * page_size)
         .limit(page_size)
