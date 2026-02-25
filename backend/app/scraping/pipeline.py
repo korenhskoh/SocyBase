@@ -449,7 +449,12 @@ async def _execute_pipeline(job_id: str, celery_task):
                     if ff and not ff.value.get("enabled", True):
                         dedup_enabled = False
                 except Exception:
-                    pass  # If check fails, default to enabled
+                    # Rollback to clear any invalid transaction state
+                    # (e.g. if system_settings table doesn't exist)
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
                 if dedup_enabled and job_settings.get("ignore_duplicate_users"):
                     prev_profiles = await db.execute(
                         select(ScrapedProfile.platform_user_id)
@@ -485,11 +490,12 @@ async def _execute_pipeline(job_id: str, celery_task):
                 await _append_log(db, job, "info", "deduplicate", f"Found {len(user_ids)} unique users from {len(all_comments)} comments")
 
                 # Check credit balance
-                logger.info(f"[Job {job_id}] Checking credit balance for tenant {job.tenant_id}")
+                logger.info(f"[Job {job_id}] Step: checking credit balance for tenant {job.tenant_id}")
                 balance_result = await db.execute(
                     select(CreditBalance).where(CreditBalance.tenant_id == job.tenant_id)
                 )
                 balance = balance_result.scalar_one_or_none()
+                logger.info(f"[Job {job_id}] Step: credit balance = {balance.balance if balance else 'NO_ROW'}")
 
                 # For resumed jobs, only estimate cost for new work
                 skip_user_ids = set()
@@ -510,6 +516,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                 else:
                     new_pages = page_count
                 estimated_cost = (len(user_ids) - len(skip_user_ids)) + new_pages
+                logger.info(f"[Job {job_id}] Step: estimated_cost={estimated_cost} (users={len(user_ids)}, pages={new_pages})")
 
                 job.credits_estimated = estimated_cost
 
@@ -521,8 +528,8 @@ async def _execute_pipeline(job_id: str, celery_task):
                     publish_job_progress(str(job.id), _build_progress_event(job, "deduplicate"))
                     return
 
+                logger.info(f"[Job {job_id}] Step: credit check passed, creating {len(unique_users)} ScrapedProfile rows")
                 # Create ScrapedProfile rows for ALL unique users
-                logger.info(f"[Job {job_id}] Creating {len(unique_users)} ScrapedProfile rows")
                 for uid, uname in unique_users.items():
                     profile = ScrapedProfile(
                         job_id=job.id,
@@ -533,7 +540,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     )
                     db.add(profile)
                 await db.commit()
-                logger.info(f"[Job {job_id}] ScrapedProfile rows created and committed")
+                logger.info(f"[Job {job_id}] Step: ScrapedProfile rows committed OK")
 
                 # Copy enriched data from original job for profiles we're skipping
                 if skip_user_ids:
@@ -563,10 +570,13 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                 # Build list of profiles to actually fetch
                 user_ids_to_enrich = [uid for uid in user_ids if uid not in skip_user_ids]
+                logger.info(f"[Job {job_id}] Step: {len(user_ids_to_enrich)} users to enrich")
 
                 # ── STAGE 4: Enrich profiles ─────────────────────
                 # Check status before starting stage
+                logger.info(f"[Job {job_id}] Step: checking job status before enrich")
                 current_status = await _check_job_status(db, job.id)
+                logger.info(f"[Job {job_id}] Step: job status = {current_status}")
                 if current_status in ("paused", "cancelled"):
                     job.status = current_status
                     await _save_pipeline_state(db, job, "enrich_profiles")
@@ -587,9 +597,11 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                 for i, uid in enumerate(user_ids_to_enrich):
                     try:
+                        logger.info(f"[Job {job_id}] Enriching profile {i+1}/{len(user_ids_to_enrich)}: {uid}")
                         profile_data = await _retry_profile_fetch(
                             client, rate_limiter, uid, max_retries=profile_retry_count
                         )
+                        logger.info(f"[Job {job_id}] Profile {uid}: got {len(profile_data) if profile_data else 0} fields")
                         mapped = mapper.map_to_standard(profile_data)
 
                         # Update ScrapedProfile
