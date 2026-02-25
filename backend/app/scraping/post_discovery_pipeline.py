@@ -295,6 +295,14 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 cursor: str | None = None
                 pages_fetched = 0
                 total_posts_fetched = 0
+                first_before_cursor: str | None = None
+
+                # Allow continuing from a previous job's cursor
+                start_cursor = job_settings.get("start_from_cursor")
+                if start_cursor:
+                    cursor = start_cursor
+                    logger.info(f"[Job {job_id}] Starting from user-selected cursor")
+                    await _append_log(db, job, "info", "fetch_posts", "Continuing from previous cursor")
 
                 while pages_fetched < max_pages:
                     # Rate limit before each API call
@@ -318,6 +326,10 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                     posts_data, paging = _unwrap_response(raw_response)
                     pages_fetched += 1
+
+                    # Capture the "before" cursor from the first page (for backward/newer pagination)
+                    if pages_fetched == 1:
+                        first_before_cursor = paging.get("cursors", {}).get("before")
 
                     # Process each post in this page
                     for item in posts_data:
@@ -441,7 +453,13 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     )
                     db.add(tx)
 
-                await _save_pipeline_state(db, job, "finalize")
+                await _save_pipeline_state(
+                    db, job, "finalize",
+                    pages_fetched=pages_fetched,
+                    total_posts_fetched=total_posts_fetched,
+                    first_before_cursor=first_before_cursor,
+                    last_after_cursor=cursor,
+                )
 
                 await _append_log(
                     db, job, "info", "finalize",

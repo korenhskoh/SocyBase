@@ -111,6 +111,8 @@ export const jobsApi = {
     api.post("/jobs/create-from-posts", data),
   getAuthor: (id: string) => api.get(`/jobs/${id}/author`),
   getQueuePosition: (id: string) => api.get(`/jobs/${id}/queue-position`),
+  getPostDiscoveryCursors: (inputValue: string) =>
+    api.get("/jobs/post-discovery-cursors", { params: { input_value: inputValue } }),
 };
 
 // Credits API

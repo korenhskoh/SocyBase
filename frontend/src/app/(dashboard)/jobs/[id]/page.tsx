@@ -273,6 +273,35 @@ export default function JobDetailPage() {
   const canResume =
     (job?.status === "failed" || job?.status === "paused") && job?.error_details?.pipeline_state != null;
 
+  const [continuingDiscovery, setContinuingDiscovery] = useState(false);
+
+  const handleContinueDiscovery = async (direction: "older" | "newer") => {
+    if (!job) return;
+    const state = job.error_details?.pipeline_state as Record<string, unknown> | undefined;
+    const cursor = direction === "older"
+      ? (state?.last_after_cursor || state?.last_cursor) as string | undefined
+      : state?.first_before_cursor as string | undefined;
+    if (!cursor) return;
+    setContinuingDiscovery(true);
+    try {
+      const res = await jobsApi.create({
+        platform: "facebook",
+        job_type: "post_discovery",
+        input_type: "page_id",
+        input_value: job.input_value,
+        settings: {
+          ...(job.settings || {}),
+          start_from_cursor: cursor,
+        },
+      });
+      window.location.href = `/jobs/${res.data.id}`;
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "Failed to create continuation job");
+    } finally {
+      setContinuingDiscovery(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -577,6 +606,15 @@ export default function JobDetailPage() {
               <button onClick={handleExportCsv} className="btn-glow text-center">
                 Export CSV
               </button>
+              {(pipelineState as Record<string, unknown> | undefined)?.last_after_cursor && (
+                <button
+                  onClick={() => handleContinueDiscovery("older")}
+                  disabled={continuingDiscovery}
+                  className="relative overflow-hidden rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 text-center"
+                >
+                  {continuingDiscovery ? "Creating..." : "Discover Older Posts"}
+                </button>
+              )}
             </>
           ) : (
             <>

@@ -175,6 +175,45 @@ async def get_cursor_history(
     return history
 
 
+@router.get("/post-discovery-cursors")
+async def get_post_discovery_cursors(
+    input_value: str = Query(..., min_length=1),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return continuation cursors from previous post discovery jobs for the same page."""
+    result = await db.execute(
+        select(ScrapingJob)
+        .where(
+            ScrapingJob.tenant_id == user.tenant_id,
+            ScrapingJob.input_value == input_value,
+            ScrapingJob.job_type == "post_discovery",
+            ScrapingJob.status.in_(["completed", "failed", "paused"]),
+        )
+        .order_by(ScrapingJob.created_at.desc())
+        .limit(10)
+    )
+    jobs = result.scalars().all()
+
+    history = []
+    for j in jobs:
+        state = (j.error_details or {}).get("pipeline_state", {})
+        last_after = state.get("last_after_cursor") or state.get("last_cursor")
+        first_before = state.get("first_before_cursor")
+        if last_after or first_before:
+            history.append({
+                "job_id": str(j.id),
+                "status": j.status,
+                "created_at": j.created_at.isoformat(),
+                "last_after_cursor": last_after,
+                "first_before_cursor": first_before,
+                "pages_fetched": state.get("pages_fetched", 0),
+                "total_posts_fetched": state.get("total_posts_fetched", 0),
+            })
+
+    return history
+
+
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(
     job_id: UUID,
