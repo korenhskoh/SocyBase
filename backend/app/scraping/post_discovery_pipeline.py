@@ -128,7 +128,22 @@ def _unwrap_response(raw: dict) -> tuple[list[dict], dict]:
 
 
 def _next_cursor(paging: dict) -> str | None:
-    """Extract the 'after' cursor from the paging object."""
+    """
+    Extract the pagination cursor from the AKNG paging object.
+
+    AKNG returns paging.next as a URL containing __paging_token param.
+    Falls back to standard Facebook cursors.after format.
+    """
+    # AKNG format: extract __paging_token from the "next" URL
+    next_url = paging.get("next")
+    if next_url:
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(next_url).query)
+        token = qs.get("__paging_token", [None])[0]
+        if token:
+            return token
+
+    # Fallback: standard Facebook cursors format
     cursors = paging.get("cursors", {})
     return cursors.get("after")
 
