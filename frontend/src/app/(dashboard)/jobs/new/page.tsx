@@ -125,6 +125,7 @@ export default function NewJobPage() {
   // ── Post Discovery state ────────────────────────────────────────
   const [pageInput, setPageInput] = useState("");
   const [tokenType, setTokenType] = useState("EAAAAU");
+  const [maxPages, setMaxPages] = useState(50);
   const [useDiscoveryCursor, setUseDiscoveryCursor] = useState(false);
   const [selectedDiscoveryCursor, setSelectedDiscoveryCursor] = useState("");
   const [discoveryCursorHistory, setDiscoveryCursorHistory] = useState<
@@ -249,6 +250,7 @@ export default function NewJobPage() {
           scheduled_at: schedule && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
           settings: {
             token_type: tokenType,
+            max_pages: maxPages,
             ...(useDiscoveryCursor && selectedDiscoveryCursor && { start_from_cursor: selectedDiscoveryCursor }),
           },
         });
@@ -643,6 +645,33 @@ export default function NewJobPage() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Max Pages (scrape limit) */}
+                <div className="glass-card p-6 space-y-4">
+                  <label className="block text-sm font-medium text-white/80">Max Pages to Fetch</label>
+                  <div className="flex items-center gap-4">
+                    <input
+                      type="range"
+                      min={5}
+                      max={200}
+                      step={5}
+                      value={maxPages}
+                      onChange={(e) => setMaxPages(Number(e.target.value))}
+                      className="flex-1 accent-primary-500"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={maxPages}
+                      onChange={(e) => setMaxPages(Math.max(1, Math.min(500, Number(e.target.value) || 1)))}
+                      className="w-20 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white text-center focus:outline-none focus:border-primary-500"
+                    />
+                  </div>
+                  <p className="text-xs text-white/30">
+                    ~{maxPages * 10} posts estimated ({maxPages} pages x ~10 posts/page). Uses {maxPages} credits.
+                  </p>
                 </div>
 
                 {/* Continue from previous cursor */}

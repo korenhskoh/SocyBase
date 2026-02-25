@@ -286,7 +286,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                 # Settings
                 token_type = job_settings.get("token_type", "EAAAAU")
-                max_pages = int(job_settings.get("max_pages", 100))
+                max_pages = int(job_settings.get("max_pages", 50))
 
                 # Groups require a different token type
                 if is_group:
@@ -295,7 +295,9 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 cursor: str | None = None
                 pages_fetched = 0
                 total_posts_fetched = 0
+                duplicate_count = 0
                 first_before_cursor: str | None = None
+                seen_post_ids: set[str] = set()
 
                 # Allow continuing from a previous job's cursor
                 start_cursor = job_settings.get("start_from_cursor")
@@ -331,13 +333,19 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     if pages_fetched == 1:
                         first_before_cursor = paging.get("cursors", {}).get("before")
 
-                    # Process each post in this page
+                    # Process each post in this page (skip duplicates)
                     for item in posts_data:
                         fields = _extract_post_fields(item)
+                        pid = fields["post_id"]
+                        if pid in seen_post_ids:
+                            duplicate_count += 1
+                            continue
+                        seen_post_ids.add(pid)
+
                         scraped_post = ScrapedPost(
                             job_id=job.id,
                             tenant_id=job.tenant_id,
-                            post_id=fields["post_id"],
+                            post_id=pid,
                             message=fields["message"],
                             created_time=fields["created_time"],
                             updated_time=fields["updated_time"],
@@ -357,6 +365,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     # Persist pipeline state after each page
                     job.processed_items = total_posts_fetched
                     job.total_items = total_posts_fetched  # grows as we discover
+                    job.result_row_count = total_posts_fetched
                     job.progress_pct = round(pages_fetched / max_pages * 100, 2)
                     await _save_pipeline_state(
                         db, job, "fetch_posts",
@@ -377,7 +386,9 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                     _publish_progress(job, "fetch_posts", {
                         "pages_fetched": pages_fetched,
+                        "max_pages": max_pages,
                         "total_posts": total_posts_fetched,
+                        "duplicates_skipped": duplicate_count,
                     })
 
                     # Check for pause/cancel after each page

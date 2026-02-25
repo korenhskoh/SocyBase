@@ -42,6 +42,8 @@ export default function JobDetailPage() {
   const [creatingJobs, setCreatingJobs] = useState(false);
   const [loading, setLoading] = useState(true);
   const [resuming, setResuming] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [queueInfo, setQueueInfo] = useState<{ position: number; estimated_seconds: number; ahead: number } | null>(null);
   const [liveProgress, setLiveProgress] = useState<ProgressEvent | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -191,6 +193,21 @@ export default function JobDetailPage() {
     return () => clearInterval(interval);
   }, [fetchJob, job?.status]);
 
+  // Auto-refresh posts table while post_discovery is running (every 4s)
+  useEffect(() => {
+    if (!job || job.job_type !== "post_discovery") return;
+    if (job.status !== "running") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const postRes = await jobsApi.getPosts(jobId, { page: 1, page_size: 200 });
+        setPosts(postRes.data);
+      } catch { /* ignore */ }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [job?.status, job?.job_type, jobId]);
+
   const handleExportCsv = async () => {
     const res = await exportApi.downloadCsv(jobId);
     const blob = new Blob([res.data], { type: "text/csv" });
@@ -234,6 +251,32 @@ export default function JobDetailPage() {
       alert(err?.response?.data?.detail || "Failed to resume job");
     } finally {
       setResuming(false);
+    }
+  };
+
+  const handlePause = async () => {
+    if (!job) return;
+    setPausing(true);
+    try {
+      await jobsApi.pause(jobId);
+      setTimeout(() => fetchJob({ loadResults: true }), 1500);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "Failed to pause job");
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!job) return;
+    setCancelling(true);
+    try {
+      await jobsApi.cancel(jobId);
+      setTimeout(() => fetchJob({ loadResults: true }), 1500);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "Failed to cancel job");
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -420,7 +463,11 @@ export default function JobDetailPage() {
             let detailText = "";
             if (isPostDiscovery) {
               stageText = "Discovering posts";
-              detailText = `${posts.length} posts found`;
+              const postsFound = stageData.total_posts || liveProgress?.result_row_count || posts.length || 0;
+              const pagesDone = stageData.pages_fetched || 0;
+              const maxPg = stageData.max_pages || 0;
+              detailText = `${formatNumber(postsFound)} posts found`;
+              if (pagesDone > 0) detailText += ` (page ${pagesDone}${maxPg ? `/${maxPg}` : ""})`;
             } else if (stage === "parse_input" || stage === "start") {
               stageText = "Starting pipeline";
               detailText = "Parsing input URL...";
@@ -473,6 +520,24 @@ export default function JobDetailPage() {
                     </p>
                   )}
                 </div>
+                {job.status === "running" && (
+                  <div className="flex gap-2 mt-4">
+                    <button
+                      onClick={handlePause}
+                      disabled={pausing}
+                      className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-400 font-medium transition-all hover:bg-yellow-500/20 disabled:opacity-50"
+                    >
+                      {pausing ? "Pausing..." : "Pause"}
+                    </button>
+                    <button
+                      onClick={handleCancel}
+                      disabled={cancelling}
+                      className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400 font-medium transition-all hover:bg-red-500/20 disabled:opacity-50"
+                    >
+                      {cancelling ? "Stopping..." : "Stop"}
+                    </button>
+                  </div>
+                )}
               </>
             );
           })()}
@@ -481,15 +546,24 @@ export default function JobDetailPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          {
-            label: isPostDiscovery ? "Total Posts" : "Total Profiles",
-            value: isPostDiscovery ? formatNumber(posts.length) : formatNumber(job.result_row_count),
-          },
-          { label: "Credits Used", value: formatNumber(job.credits_used) },
-          { label: "Failed", value: formatNumber(job.failed_items) },
-          { label: "Created", value: formatDate(job.created_at) },
-        ].map((stat) => (
+        {(() => {
+          const isRunning = job.status === "running" || job.status === "queued";
+          const liveTotal = isPostDiscovery
+            ? (liveProgress?.result_row_count ?? (isRunning ? job.result_row_count : 0)) || posts.length
+            : job.result_row_count;
+          const liveCredits = isRunning
+            ? (liveProgress?.stage_data as any)?.pages_fetched || job.credits_used
+            : job.credits_used;
+          return [
+            {
+              label: isPostDiscovery ? "Total Posts" : "Total Profiles",
+              value: formatNumber(liveTotal),
+            },
+            { label: "Credits Used", value: formatNumber(liveCredits) },
+            { label: "Failed", value: formatNumber(liveProgress?.failed_items ?? job.failed_items) },
+            { label: "Created", value: formatDate(job.created_at) },
+          ];
+        })().map((stat) => (
           <div key={stat.label} className="glass-card p-4">
             <p className="text-xs text-white/40">{stat.label}</p>
             <p className="text-lg font-semibold text-white mt-1">{stat.value}</p>
@@ -518,19 +592,19 @@ export default function JobDetailPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               {isPostDiscovery ? (
                 <>
-                  {pipelineState.comment_pages_fetched != null && (
+                  {pipelineState.pages_fetched != null && (
                     <div className="bg-white/5 rounded-lg p-3">
                       <p className="text-white/40">Pages Fetched</p>
                       <p className="text-white/70 font-semibold text-base mt-0.5">
-                        {pipelineState.comment_pages_fetched}
+                        {pipelineState.pages_fetched}
                       </p>
                     </div>
                   )}
-                  {pipelineState.total_comments_fetched != null && (
+                  {pipelineState.total_posts_fetched != null && (
                     <div className="bg-white/5 rounded-lg p-3">
                       <p className="text-white/40">Total Posts Fetched</p>
                       <p className="text-white/70 font-semibold text-base mt-0.5">
-                        {pipelineState.total_comments_fetched}
+                        {pipelineState.total_posts_fetched}
                       </p>
                     </div>
                   )}
