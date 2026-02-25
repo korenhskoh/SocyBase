@@ -13,6 +13,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+import httpx
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -253,7 +255,24 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         logger.info(f"[Job {job_id}] Stage 1.5: Fetching author profile for {page_id}")
                         await _append_log(db, job, "info", "fetch_author", f"Fetching author profile for {page_id}")
                         await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
-                        author_raw = await client.get_object_details(page_id)
+                        # Try multiple token types on 401
+                        author_raw = None
+                        _author_tokens = ["EAAAAU", "EAAGNO", "EAAD6V"]
+                        for _at in _author_tokens:
+                            try:
+                                author_raw = await client.get_object_details(page_id, token_type=_at)
+                                break
+                            except httpx.HTTPStatusError as _ae:
+                                if _ae.response.status_code == 401:
+                                    logger.warning(f"[Job {job_id}] Author fetch 401 with {_at}, trying next...")
+                                    continue
+                                raise
+                        if author_raw is None:
+                            raise httpx.HTTPStatusError(
+                                "All token types returned 401 for author fetch",
+                                request=httpx.Request("GET", f"/{page_id}"),
+                                response=httpx.Response(401),
+                            )
                         author_mapped = mapper.map_object_to_author(author_raw)
                         author_profile = PageAuthorProfile(
                             job_id=job.id,
@@ -300,6 +319,9 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 if is_group:
                     token_type = "EAAGNO"
 
+                # Token types to try on 401 (fallback order)
+                _TOKEN_FALLBACKS = ["EAAAAU", "EAAGNO", "EAAD6V"]
+
                 cursor: str | None = None
                 pages_fetched = 0
                 total_posts_fetched = 0
@@ -323,13 +345,34 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         max_requests=settings_rate_limit(),
                     )
 
-                    raw_response = await client.get_page_feed(
-                        page_id,
-                        token_type=token_type,
-                        limit=10,
-                        after=cursor,
-                        order="reverse_chronological",
-                    )
+                    # Try current token_type first; on 401, cycle through fallbacks
+                    raw_response = None
+                    tried_types = [token_type] + [t for t in _TOKEN_FALLBACKS if t != token_type]
+                    last_err = None
+                    for try_token in tried_types:
+                        try:
+                            raw_response = await client.get_page_feed(
+                                page_id,
+                                token_type=try_token,
+                                limit=10,
+                                after=cursor,
+                                order="reverse_chronological",
+                            )
+                            if try_token != token_type:
+                                logger.info(f"[Job {job_id}] Token type {token_type} failed, switched to {try_token}")
+                                await _append_log(db, job, "info", "fetch_posts",
+                                    f"Switched token type from {token_type} to {try_token}")
+                                token_type = try_token
+                            last_err = None
+                            break
+                        except httpx.HTTPStatusError as e:
+                            if e.response.status_code == 401:
+                                last_err = e
+                                logger.warning(f"[Job {job_id}] 401 with token_type={try_token}, trying next...")
+                                continue
+                            raise  # Non-401 errors should propagate immediately
+                    if last_err is not None:
+                        raise last_err  # All token types failed with 401
 
                     logger.info(
                         "[Job %s] Raw API response keys: %s, first 500 chars: %s",

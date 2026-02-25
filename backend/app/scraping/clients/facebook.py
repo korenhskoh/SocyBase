@@ -171,13 +171,15 @@ class FacebookGraphClient(AbstractSocialClient):
         response.raise_for_status()
         return response.json()
 
-    async def get_object_details(self, object_id: str, fields: str | None = None) -> dict:
+    async def get_object_details(self, object_id: str, fields: str | None = None, token_type: str | None = None) -> dict:
         """
         Get details about any Facebook object (page, post, video, etc.)
         GET /graph/{version}/{object_id}
         """
         url = f"{self.base_url}/{self.api_version}/{object_id}"
         params = {"access_token": self.access_token}
+        if token_type:
+            params["token_type"] = token_type
         if fields:
             params["fields"] = fields
         else:
