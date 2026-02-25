@@ -150,6 +150,7 @@ async def stream_job_progress(
                 }
                 return
 
+            tick_count = 0
             while True:
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True, timeout=1.0,
@@ -162,9 +163,41 @@ async def stream_job_progress(
                     if data.get("status") in ("completed", "failed", "cancelled"):
                         yield {"event": "done", "data": json.dumps(data)}
                         break
+                    tick_count = 0
                 else:
                     # Keepalive so proxies / browsers don't time out.
                     yield {"event": "ping", "data": ""}
+                    tick_count += 1
+
+                # Defensive: every ~20 ticks (~30s) with no progress event,
+                # check the DB directly in case the pipeline exited without
+                # publishing an SSE event.
+                if tick_count >= 20:
+                    tick_count = 0
+                    try:
+                        check_result = await db.execute(
+                            select(ScrapingJob.status, ScrapingJob.progress_pct,
+                                   ScrapingJob.processed_items, ScrapingJob.total_items,
+                                   ScrapingJob.failed_items, ScrapingJob.result_row_count)
+                            .where(ScrapingJob.id == job_id)
+                        )
+                        row = check_result.one_or_none()
+                        if row and row[0] in ("completed", "failed", "cancelled"):
+                            done_data = {
+                                "status": row[0],
+                                "progress_pct": float(row[1] or 0),
+                                "processed_items": row[2] or 0,
+                                "total_items": row[3] or 0,
+                                "failed_items": row[4] or 0,
+                                "result_row_count": row[5] or 0,
+                                "current_stage": "finalize" if row[0] == "completed" else "error",
+                                "stage_data": {},
+                            }
+                            yield {"event": "progress", "data": json.dumps(done_data)}
+                            yield {"event": "done", "data": json.dumps(done_data)}
+                            break
+                    except Exception:
+                        logger.debug("SSE DB status check failed for job %s", job_id, exc_info=True)
 
                 await asyncio.sleep(0.5)
         finally:

@@ -518,6 +518,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     job.error_message = f"Insufficient credits. Need {estimated_cost}, have {balance.balance if balance else 0}"
                     await _append_log(db, job, "error", "deduplicate", f"Insufficient credits: need {estimated_cost}, have {balance.balance if balance else 0}")
                     await db.commit()
+                    publish_job_progress(str(job.id), _build_progress_event(job, "deduplicate"))
                     return
 
                 # Create ScrapedProfile rows for ALL unique users
