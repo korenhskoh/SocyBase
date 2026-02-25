@@ -90,14 +90,18 @@ class FacebookProfileMapper(AbstractProfileMapper):
         elif isinstance(location, str):
             result["Location"] = location
 
-        # Hometown: { id, name } — fallback to location if not provided
+        # Hometown: { id, name }
         hometown = data.get("hometown", {})
         if isinstance(hometown, dict) and hometown.get("name"):
             result["Hometown"] = hometown["name"]
         elif isinstance(hometown, str) and hometown:
             result["Hometown"] = hometown
-        elif result["Location"] != "NA":
+
+        # Cross-fill: hometown ↔ location (if one is missing, use the other)
+        if result["Hometown"] == "NA" and result["Location"] != "NA":
             result["Hometown"] = result["Location"]
+        elif result["Location"] == "NA" and result["Hometown"] != "NA":
+            result["Location"] = result["Hometown"]
 
         # UsernameLink: prefer the 'link' field from API
         link = data.get("link")

@@ -154,13 +154,11 @@ class FacebookGraphClient(AbstractSocialClient):
     async def get_user_profile(self, user_id: str) -> dict:
         """
         Fetch user profile details.
-        GET /graph/{version}/{user_id}?fields=...
+        GET /graph/v1.0/{user_id} (no fields param — returns all available fields)
         """
-        url = f"{self.base_url}/{self.api_version}/{user_id}"
-        fields = "id,name,first_name,last_name,gender,birthday,about,education,work,location,hometown,link,username,relationship_status,website,phone,languages,picture.type(large),updated_time"
+        url = f"{self.base_url}/v1.0/{user_id}"
         params = {
             "access_token": self.access_token,
-            "fields": fields,
         }
 
         response = await self.client.get(url, params=params)
