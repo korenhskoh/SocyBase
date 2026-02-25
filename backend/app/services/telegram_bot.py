@@ -10,7 +10,14 @@ Mirrors the webapp flow:
 import logging
 from datetime import datetime, timezone
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    BotCommand,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -30,6 +37,16 @@ from app.models.platform import Platform
 from app.utils.security import decode_token
 
 logger = logging.getLogger(__name__)
+
+# Persistent reply keyboard shown to linked users
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        [KeyboardButton("\U0001F680 New Job"), KeyboardButton("\U0001F4CB My Jobs")],
+        [KeyboardButton("\U0001F4B3 Credits"), KeyboardButton("\u2753 Help")],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
 
 STATUS_ICONS = {
     "completed": "\u2705",
@@ -191,12 +208,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user:
         await update.message.reply_text(
             f"\u2705 Linked to <b>{user.email}</b>\n\n"
-            "\U0001F4CB <b>Commands:</b>\n"
-            "/newjob — Create a new scraping job\n"
-            "/jobs — List your recent jobs\n"
-            "/credits — Check credit balance\n"
-            "/help — Show all commands",
+            "Use the buttons below or type a command to get started.",
             parse_mode="HTML",
+            reply_markup=MAIN_KEYBOARD,
         )
         return
 
@@ -216,13 +230,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await db.commit()
                     await update.message.reply_text(
                         f"\u2705 Account linked to <b>{user.email}</b>!\n\n"
-                        "You can now manage scraping jobs directly from Telegram.\n\n"
-                        "\U0001F4CB <b>Commands:</b>\n"
-                        "/newjob — Create a new scraping job\n"
-                        "/jobs — List your recent jobs\n"
-                        "/credits — Check credit balance\n"
-                        "/help — Show all commands",
+                        "You can now manage scraping jobs directly from Telegram.\n"
+                        "Use the buttons below to get started!",
                         parse_mode="HTML",
+                        reply_markup=MAIN_KEYBOARD,
                     )
                     return
         await update.message.reply_text(
@@ -760,11 +771,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text messages — used for URL input during /newjob flow."""
+    """Handle text messages — keyboard buttons and URL input during /newjob flow."""
+    text = (update.message.text or "").strip()
+
+    # ── Handle persistent keyboard button presses ────────────────
+    if text == "\U0001F680 New Job":
+        return await newjob_command(update, context)
+    elif text == "\U0001F4CB My Jobs":
+        return await jobs_command(update, context)
+    elif text == "\U0001F4B3 Credits":
+        return await credits_command(update, context)
+    elif text == "\u2753 Help":
+        return await help_command(update, context)
+
+    # ── URL/input during job creation flow ────────────────────────
     if not context.user_data.get("new_job_awaiting_input"):
         await update.message.reply_text(
-            "Use /newjob to create a scraping job, or /jobs to see your recent ones.\n"
-            "Type /help for all commands.",
+            "Use the buttons below or type /help for commands.",
+            reply_markup=MAIN_KEYBOARD,
         )
         return
 
@@ -858,13 +882,30 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Bot Application Builder ──────────────────────────────────────────────
 
 
+async def _post_init(app: Application) -> None:
+    """Set bot commands menu after startup."""
+    await app.bot.set_my_commands([
+        BotCommand("newjob", "Create a new scraping job"),
+        BotCommand("jobs", "List your recent jobs"),
+        BotCommand("credits", "Check credit balance"),
+        BotCommand("status", "Check a specific job status"),
+        BotCommand("help", "Show all commands"),
+        BotCommand("cancel", "Cancel current operation"),
+    ])
+
+
 def create_bot_app() -> Application:
     """Build and configure the Telegram bot application."""
     settings = get_settings()
     if not settings.telegram_bot_token:
         raise ValueError("TELEGRAM_BOT_TOKEN is not set")
 
-    app = Application.builder().token(settings.telegram_bot_token).build()
+    app = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        .post_init(_post_init)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
