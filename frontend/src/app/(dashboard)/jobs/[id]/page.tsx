@@ -509,6 +509,7 @@ export default function JobDetailPage() {
     (job?.status === "failed" || job?.status === "paused") && job?.error_details?.pipeline_state != null;
 
   const [continuingDiscovery, setContinuingDiscovery] = useState(false);
+  const [continuationMaxPages, setContinuationMaxPages] = useState<number | "">("");
 
   const handleContinueDiscovery = async (direction: "older" | "newer") => {
     if (!job) return;
@@ -523,6 +524,8 @@ export default function JobDetailPage() {
 
     setContinuingDiscovery(true);
     try {
+      const originalMaxPages = (job.settings as Record<string, unknown> | undefined)?.max_pages;
+      const effectiveMaxPages = continuationMaxPages || originalMaxPages || 50;
       const res = await jobsApi.create({
         platform: "facebook",
         job_type: "post_discovery",
@@ -530,6 +533,7 @@ export default function JobDetailPage() {
         input_value: job.input_value,
         settings: {
           ...(job.settings || {}),
+          max_pages: effectiveMaxPages,
           start_from_cursor: cursor,
           ...(direction === "older" && lastPageParams ? { start_from_page_params: lastPageParams } : {}),
         },
@@ -889,13 +893,25 @@ export default function JobDetailPage() {
                   <span className="text-sm text-amber-400 font-medium">Discovering older posts...</span>
                 </div>
               ) : (pipelineState as Record<string, unknown> | undefined)?.last_after_cursor && (
-                <button
-                  onClick={() => handleContinueDiscovery("older")}
-                  disabled={continuingDiscovery}
-                  className="relative overflow-hidden rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 text-center"
-                >
-                  {continuingDiscovery ? "Creating..." : "Discover Older Posts"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={continuationMaxPages}
+                    onChange={(e) => setContinuationMaxPages(e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value) || 1))}
+                    placeholder={String((job?.settings as Record<string, unknown> | undefined)?.max_pages || 50)}
+                    className="w-20 px-2 py-2.5 rounded-lg bg-dark-700 border border-white/10 text-white text-sm text-center placeholder:text-white/30 focus:border-amber-500/50 focus:outline-none"
+                    title="Max pages to fetch (optional)"
+                  />
+                  <button
+                    onClick={() => handleContinueDiscovery("older")}
+                    disabled={continuingDiscovery}
+                    className="relative overflow-hidden rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 text-center"
+                  >
+                    {continuingDiscovery ? "Creating..." : "Discover Older Posts"}
+                  </button>
+                </div>
               )}
             </>
           ) : (
