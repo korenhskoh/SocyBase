@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -288,7 +288,13 @@ async def hard_delete_job(
             detail=f"Cannot delete job in '{job.status}' status. Stop or wait for it to finish first.",
         )
 
-    await db.delete(job)
+    # Delete related records explicitly, then the job itself.
+    # (ORM cascade + async lazy-load can fail in async sessions.)
+    await db.execute(delete(ScrapedProfile).where(ScrapedProfile.job_id == job.id))
+    await db.execute(delete(ExtractedComment).where(ExtractedComment.job_id == job.id))
+    await db.execute(delete(ScrapedPost).where(ScrapedPost.job_id == job.id))
+    await db.execute(delete(PageAuthorProfile).where(PageAuthorProfile.job_id == job.id))
+    await db.execute(delete(ScrapingJob).where(ScrapingJob.id == job.id))
     await db.flush()
 
 
@@ -401,7 +407,11 @@ async def batch_action(
             if job.status not in ("completed", "failed", "cancelled", "paused"):
                 failed.append({"id": jid_str, "reason": f"Cannot delete '{job.status}' job"})
                 continue
-            await db.delete(job)
+            await db.execute(delete(ScrapedProfile).where(ScrapedProfile.job_id == job.id))
+            await db.execute(delete(ExtractedComment).where(ExtractedComment.job_id == job.id))
+            await db.execute(delete(ScrapedPost).where(ScrapedPost.job_id == job.id))
+            await db.execute(delete(PageAuthorProfile).where(PageAuthorProfile.job_id == job.id))
+            await db.execute(delete(ScrapingJob).where(ScrapingJob.id == job.id))
             success.append(jid_str)
 
         elif data.action == "resume":
