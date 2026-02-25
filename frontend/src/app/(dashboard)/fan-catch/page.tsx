@@ -31,7 +31,7 @@ export default function FanCatchPage() {
     (async () => {
       try {
         // Fetch all completed jobs, then filter client-side for comment scrapers
-        const res = await jobsApi.list({ page_size: 200, status: "completed" });
+        const res = await jobsApi.list({ page_size: 100, status: "completed" });
         const allJobs: ScrapingJob[] = res.data.items || res.data || [];
         const commentJobs = allJobs.filter(
           (j) => j.job_type !== "post_discovery" && j.result_row_count > 0
