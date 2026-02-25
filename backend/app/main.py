@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.api.v1.router import api_router
 from app.database import engine, Base, async_session
 import app.models  # noqa: F401 — ensure all models are registered
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -89,6 +89,22 @@ async def lifespan(app: FastAPI):
     # Startup: create database tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # Add columns that were added to models after the table was first created.
+        # create_all only creates NEW tables; it won't alter existing ones.
+        missing_columns = [
+            ("scraped_profiles", "birthday", "VARCHAR(100)"),
+            ("scraped_profiles", "relationship", "VARCHAR(255)"),
+            ("scraped_profiles", "website", "TEXT"),
+            ("scraped_profiles", "languages", "TEXT"),
+            ("scraped_profiles", "phone", "VARCHAR(100)"),
+            ("scraped_profiles", "picture_url", "TEXT"),
+        ]
+        for tbl, col, col_type in missing_columns:
+            await conn.execute(text(
+                f'ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS "{col}" {col_type}'
+            ))
+
     logger.info("Database tables created/verified")
 
     # Auto-seed on first run
