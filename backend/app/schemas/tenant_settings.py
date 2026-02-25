@@ -1,4 +1,14 @@
 from pydantic import BaseModel, Field
+from typing import List
+
+
+class BusinessProfileSettings(BaseModel):
+    business_name: str = ""
+    business_type: str = ""
+    industry: str = ""
+    facebook_page_url: str = ""
+    product_service_links: List[str] = Field(default_factory=list)
+    target_audience_description: str = ""
 
 
 class EmailSettingsRequest(BaseModel):
@@ -30,8 +40,10 @@ class TelegramSettingsResponse(BaseModel):
 class TenantSettingsResponse(BaseModel):
     email: EmailSettingsResponse | None = None
     telegram: TelegramSettingsResponse | None = None
+    business: BusinessProfileSettings | None = None
 
 
 class UpdateTenantSettingsRequest(BaseModel):
     email: EmailSettingsRequest | None = None
     telegram: TelegramSettingsRequest | None = None
+    business: BusinessProfileSettings | None = None

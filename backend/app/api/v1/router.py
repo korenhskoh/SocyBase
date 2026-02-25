@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, jobs, credits, payments, admin, export, platforms, uploads, telegram, tenant_settings, sse, tenant_dashboard
+from app.api.v1 import auth, jobs, credits, payments, admin, export, platforms, uploads, telegram, tenant_settings, sse, tenant_dashboard, fan_analysis, business_profile
 
 api_router = APIRouter()
 
@@ -15,3 +15,5 @@ api_router.include_router(telegram.router, prefix="/telegram", tags=["Telegram"]
 api_router.include_router(tenant_settings.router, prefix="/tenant/settings", tags=["Tenant Settings"])
 api_router.include_router(sse.router, prefix="/sse", tags=["SSE"])
 api_router.include_router(tenant_dashboard.router, prefix="/tenant/dashboard", tags=["Tenant Dashboard"])
+api_router.include_router(fan_analysis.router, prefix="/fan-analysis", tags=["Fan Analysis"])
+api_router.include_router(business_profile.router, prefix="/business-profile", tags=["Business Profile"])

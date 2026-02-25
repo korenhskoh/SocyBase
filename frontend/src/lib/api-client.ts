@@ -240,7 +240,36 @@ export const tenantSettingsApi = {
       bot_token: string;
       notification_chat_id: string;
     };
+    business?: {
+      business_name: string;
+      business_type: string;
+      industry: string;
+      facebook_page_url: string;
+      product_service_links: string[];
+      target_audience_description: string;
+    };
   }) => api.put("/tenant/settings", data),
+};
+
+// Fan Analysis API
+export const fanAnalysisApi = {
+  getFans: (jobId: string, params?: {
+    page?: number;
+    page_size?: number;
+    sort_by?: string;
+    show_bots?: boolean;
+  }) => api.get(`/fan-analysis/jobs/${jobId}`, { params }),
+  analyzeFan: (data: { job_id: string; commenter_user_ids: string[] }) =>
+    api.post("/fan-analysis/ai-analyze", data),
+  batchAnalyze: (jobId: string, params?: { min_comments?: number; limit?: number }) =>
+    api.post(`/fan-analysis/ai-batch/${jobId}`, null, { params }),
+  exportFans: (jobId: string, format: string = "csv") =>
+    api.get(`/fan-analysis/export/${jobId}`, { params: { format }, responseType: "blob" }),
+};
+
+// Business Profile API
+export const businessProfileApi = {
+  getSuggestions: () => api.post("/business-profile/suggest-pages"),
 };
 
 export default api;

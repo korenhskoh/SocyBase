@@ -231,7 +231,62 @@ export interface TelegramOrgSettings {
   notification_chat_id: string;
 }
 
+export interface BusinessProfileSettings {
+  business_name: string;
+  business_type: string;
+  industry: string;
+  facebook_page_url: string;
+  product_service_links: string[];
+  target_audience_description: string;
+}
+
 export interface TenantSettings {
   email: EmailSettings | null;
   telegram: TelegramOrgSettings | null;
+  business: BusinessProfileSettings | null;
+}
+
+export interface FanEngagementMetrics {
+  commenter_user_id: string;
+  commenter_name: string | null;
+  total_comments: number;
+  unique_posts_commented: number;
+  avg_comment_length: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  engagement_score: number;
+  profile: {
+    name: string | null;
+    phone: string | null;
+    location: string | null;
+    picture_url: string | null;
+    gender: string | null;
+  } | null;
+  ai_analysis: AIAnalysisResult | null;
+  bot_score: number;
+  is_bot: boolean;
+  bot_indicators: Record<string, boolean> | null;
+  bot_details: Record<string, number> | null;
+}
+
+export interface AIAnalysisResult {
+  buying_intent_score: number;
+  interests: string[];
+  sentiment: "positive" | "neutral" | "negative";
+  persona_type: string;
+  summary: string;
+  key_phrases: string[];
+}
+
+export interface CompetitorSuggestion {
+  name: string;
+  facebook_url: string;
+  reason: string;
+}
+
+export interface AIPageSuggestions {
+  business_fit_analysis: string;
+  suggested_pages: CompetitorSuggestion[];
+  audience_insights: string[];
+  targeting_recommendations: string[];
 }

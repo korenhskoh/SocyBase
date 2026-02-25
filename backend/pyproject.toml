@@ -36,6 +36,8 @@ dependencies = [
     "sse-starlette>=1.6.0",
     # Excel export
     "openpyxl>=3.1.0",
+    # AI / LLM
+    "openai>=1.0.0",
     # Utilities
     "python-dotenv>=1.0.0",
     # Monitoring

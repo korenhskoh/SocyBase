@@ -6,6 +6,7 @@ from app.models.platform import Platform
 from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment
 from app.models.audit import AuditLog
 from app.models.system import SystemSetting, NotificationTemplate
+from app.models.fan_analysis import FanAnalysisCache
 
 __all__ = [
     "Tenant",
@@ -21,4 +22,5 @@ __all__ = [
     "AuditLog",
     "SystemSetting",
     "NotificationTemplate",
+    "FanAnalysisCache",
 ]

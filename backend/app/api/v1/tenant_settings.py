@@ -11,6 +11,7 @@ from app.schemas.tenant_settings import (
     UpdateTenantSettingsRequest,
     EmailSettingsResponse,
     TelegramSettingsResponse,
+    BusinessProfileSettings,
 )
 
 router = APIRouter()
@@ -40,7 +41,11 @@ def _mask_settings(settings: dict) -> TenantSettingsResponse:
             notification_chat_id=telegram_data.get("notification_chat_id", ""),
         )
 
-    return TenantSettingsResponse(email=masked_email, telegram=masked_telegram)
+    # Business profile — no masking needed
+    business_data = settings.get("business")
+    business = BusinessProfileSettings(**business_data) if business_data else None
+
+    return TenantSettingsResponse(email=masked_email, telegram=masked_telegram, business=business)
 
 
 @router.get("", response_model=TenantSettingsResponse)
@@ -90,6 +95,9 @@ async def update_tenant_settings(
         if telegram_dict.get("bot_token") == MASKED and existing_telegram.get("bot_token"):
             telegram_dict["bot_token"] = existing_telegram["bot_token"]
         current["telegram"] = telegram_dict
+
+    if data.business is not None:
+        current["business"] = data.business.model_dump()
 
     tenant.settings = current
     await db.flush()

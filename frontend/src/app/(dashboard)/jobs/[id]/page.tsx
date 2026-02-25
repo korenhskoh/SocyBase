@@ -3,9 +3,9 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { jobsApi, exportApi } from "@/lib/api-client";
+import { jobsApi, exportApi, fanAnalysisApi } from "@/lib/api-client";
 import { formatDate, getStatusColor } from "@/lib/utils";
-import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile } from "@/types";
+import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile, FanEngagementMetrics } from "@/types";
 
 const STAGE_LABELS: Record<string, string> = {
   start: "Starting",
@@ -16,6 +16,7 @@ const STAGE_LABELS: Record<string, string> = {
   deduplicate: "Finding Unique Users",
   enrich_profiles: "Enriching Profiles",
   finalize: "Finalizing",
+  ai_fan_analysis: "Analyzing Fans (AI)",
 };
 
 const formatNumber = (n: number) => n.toLocaleString();
@@ -52,6 +53,18 @@ export default function JobDetailPage() {
   const [liveProgress, setLiveProgress] = useState<ProgressEvent | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // Fan analysis state
+  const [fans, setFans] = useState<FanEngagementMetrics[]>([]);
+  const [fansTotal, setFansTotal] = useState(0);
+  const [fansPage, setFansPage] = useState(1);
+  const [fansSortBy, setFansSortBy] = useState("engagement_score");
+  const [showBots, setShowBots] = useState(true);
+  const [fansBotCount, setFansBotCount] = useState(0);
+  const [fansHighIntent, setFansHighIntent] = useState(0);
+  const [analyzingFans, setAnalyzingFans] = useState<Set<string>>(new Set());
+  const [batchAnalyzing, setBatchAnalyzing] = useState(false);
+  const [expandedFan, setExpandedFan] = useState<string | null>(null);
+
   const fetchPosts = useCallback(async (page?: number, pageSize?: number) => {
     const pg = page ?? postsPage;
     const ps = pageSize ?? postsPageSize;
@@ -67,6 +80,58 @@ export default function JobDetailPage() {
       }
     } catch { /* ignore */ }
   }, [jobId, postsPage, postsPageSize]);
+
+  const fetchFans = useCallback(async () => {
+    try {
+      const res = await fanAnalysisApi.getFans(jobId, {
+        page: fansPage,
+        page_size: 50,
+        sort_by: fansSortBy,
+        show_bots: showBots,
+      });
+      setFans(res.data.items || []);
+      setFansTotal(res.data.total || 0);
+      setFansBotCount(res.data.bot_count || 0);
+      setFansHighIntent(res.data.high_intent_count || 0);
+    } catch { /* ignore */ }
+  }, [jobId, fansPage, fansSortBy, showBots]);
+
+  const handleAnalyzeFan = async (uid: string) => {
+    setAnalyzingFans(prev => new Set(prev).add(uid));
+    try {
+      await fanAnalysisApi.analyzeFan({ job_id: jobId, commenter_user_ids: [uid] });
+      await fetchFans();
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "AI analysis failed");
+    } finally {
+      setAnalyzingFans(prev => { const n = new Set(prev); n.delete(uid); return n; });
+    }
+  };
+
+  const handleBatchAnalyze = async () => {
+    setBatchAnalyzing(true);
+    try {
+      await fanAnalysisApi.batchAnalyze(jobId, { min_comments: 3, limit: 50 });
+      alert("Batch analysis started. Results will appear shortly.");
+      setTimeout(() => fetchFans(), 5000);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "Batch analysis failed");
+    } finally {
+      setBatchAnalyzing(false);
+    }
+  };
+
+  const handleExportFans = async () => {
+    try {
+      const res = await fanAnalysisApi.exportFans(jobId, "csv");
+      const blob = new Blob([res.data], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fan_analysis_${jobId}.csv`;
+      a.click();
+    } catch { /* ignore */ }
+  };
 
   const fetchJob = useCallback(async (opts?: { loadResults?: boolean }) => {
     try {
@@ -225,6 +290,13 @@ export default function JobDetailPage() {
     if (!job || job.job_type !== "post_discovery") return;
     fetchPosts();
   }, [postsPage, postsPageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch fans when job is a completed comment scraper
+  useEffect(() => {
+    if (!job || job.job_type === "post_discovery") return;
+    if (!["completed", "paused", "failed"].includes(job.status)) return;
+    fetchFans();
+  }, [job?.status, job?.job_type, fansPage, fansSortBy, showBots]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleExportCsv = async () => {
     const res = await exportApi.downloadCsv(jobId);
@@ -974,6 +1046,243 @@ export default function JobDetailPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* AI Fan Catch — for comment scraper jobs */}
+      {!isPostDiscovery && fans.length > 0 && (
+        <div className="glass-card overflow-x-auto">
+          <div className="p-4 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold text-white">
+                AI Fan Catch ({fansTotal})
+              </h2>
+              {fansBotCount > 0 && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20">
+                  {fansBotCount} bots
+                </span>
+              )}
+              {fansHighIntent > 0 && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  {fansHighIntent} high intent
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="flex items-center gap-1.5 text-xs text-white/50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!showBots}
+                  onChange={() => setShowBots(!showBots)}
+                  className="rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500 w-3.5 h-3.5"
+                />
+                Hide Bots
+              </label>
+              <select
+                value={fansSortBy}
+                onChange={(e) => setFansSortBy(e.target.value)}
+                className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white/70 focus:outline-none focus:border-primary-500/50"
+              >
+                <option value="engagement_score">Sort: Engagement</option>
+                <option value="total_comments">Sort: Comments</option>
+                <option value="buying_intent">Sort: Buying Intent</option>
+              </select>
+              <button
+                onClick={handleBatchAnalyze}
+                disabled={batchAnalyzing}
+                className="text-xs px-3 py-1.5 rounded-lg bg-purple-500/15 text-purple-400 border border-purple-500/25 hover:bg-purple-500/25 transition disabled:opacity-50"
+              >
+                {batchAnalyzing ? "Analyzing..." : "Batch AI Analyze"}
+              </button>
+              <button
+                onClick={handleExportFans}
+                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 hover:bg-emerald-500/25 transition"
+              >
+                Export Fans
+              </button>
+            </div>
+          </div>
+
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/5">
+                {["Fan", "Comments", "Posts", "Avg Len", "Engagement", "Buying Intent", "Sentiment", "Actions"].map((h) => (
+                  <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {fans.map((fan) => (
+                <>
+                  <tr
+                    key={fan.commenter_user_id}
+                    className={`hover:bg-white/[0.02] cursor-pointer ${fan.is_bot ? "bg-red-500/[0.02]" : ""}`}
+                    onClick={() => setExpandedFan(expandedFan === fan.commenter_user_id ? null : fan.commenter_user_id)}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        {fan.profile?.picture_url ? (
+                          <img src={fan.profile.picture_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                        ) : (
+                          <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
+                            <span className="text-[10px] text-white/40">{(fan.commenter_name || "?")[0]}</span>
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-white font-medium text-xs truncate">{fan.commenter_name || "Unknown"}</p>
+                          {fan.is_bot && (
+                            <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0 rounded-full bg-red-500/15 text-red-400 border border-red-500/25 font-semibold">
+                              BOT {(fan.bot_score * 100).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-white/60">{fan.total_comments}</td>
+                    <td className="px-4 py-3 text-white/60">{fan.unique_posts_commented}</td>
+                    <td className="px-4 py-3 text-white/60">{fan.avg_comment_length.toFixed(0)}</td>
+                    <td className="px-4 py-3">
+                      <span className="text-amber-400 font-semibold">{fan.engagement_score.toFixed(0)}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {fan.ai_analysis ? (
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-12 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${
+                                fan.ai_analysis.buying_intent_score >= 0.7 ? "bg-emerald-500" :
+                                fan.ai_analysis.buying_intent_score >= 0.4 ? "bg-amber-500" : "bg-white/30"
+                              }`}
+                              style={{ width: `${fan.ai_analysis.buying_intent_score * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-white/50">{(fan.ai_analysis.buying_intent_score * 100).toFixed(0)}%</span>
+                        </div>
+                      ) : (
+                        <span className="text-white/20 text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {fan.ai_analysis?.sentiment ? (
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          fan.ai_analysis.sentiment === "positive" ? "bg-emerald-500/15 text-emerald-400" :
+                          fan.ai_analysis.sentiment === "negative" ? "bg-red-500/15 text-red-400" :
+                          "bg-white/10 text-white/50"
+                        }`}>
+                          {fan.ai_analysis.sentiment}
+                        </span>
+                      ) : (
+                        <span className="text-white/20 text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {!fan.ai_analysis ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleAnalyzeFan(fan.commenter_user_id); }}
+                          disabled={analyzingFans.has(fan.commenter_user_id)}
+                          className="text-xs px-2.5 py-1 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition disabled:opacity-50"
+                        >
+                          {analyzingFans.has(fan.commenter_user_id) ? "..." : "Analyze"}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-white/30">{fan.ai_analysis.persona_type}</span>
+                      )}
+                    </td>
+                  </tr>
+                  {/* Expanded row */}
+                  {expandedFan === fan.commenter_user_id && (
+                    <tr key={`${fan.commenter_user_id}-detail`}>
+                      <td colSpan={8} className="px-4 py-3 bg-white/[0.01]">
+                        <div className="flex flex-col gap-2 text-xs">
+                          <div className="flex items-center gap-4 text-white/40">
+                            <span>First seen: {fan.first_seen ? formatDate(fan.first_seen) : "N/A"}</span>
+                            <span>Last seen: {fan.last_seen ? formatDate(fan.last_seen) : "N/A"}</span>
+                            {fan.profile?.phone && <span>Phone: {fan.profile.phone}</span>}
+                            {fan.profile?.location && <span>Location: {fan.profile.location}</span>}
+                          </div>
+                          {fan.is_bot && fan.bot_indicators && (
+                            <div className="flex flex-wrap gap-1.5">
+                              <span className="text-red-400/70 font-medium">Bot indicators:</span>
+                              {fan.bot_indicators.excessive_same_post && (
+                                <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400/80">
+                                  {fan.bot_details?.max_comments_same_post}x same post
+                                </span>
+                              )}
+                              {fan.bot_indicators.short_comments && (
+                                <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400/80">
+                                  avg {fan.bot_details?.avg_comment_length?.toFixed(0)} chars
+                                </span>
+                              )}
+                              {fan.bot_indicators.duplicate_comments && (
+                                <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400/80">
+                                  {fan.bot_details?.duplicate_percentage?.toFixed(0)}% duplicates
+                                </span>
+                              )}
+                              {fan.bot_indicators.fast_posting && (
+                                <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400/80">
+                                  rapid posting
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {fan.ai_analysis && (
+                            <div className="space-y-1.5 mt-1">
+                              <p className="text-white/60">{fan.ai_analysis.summary}</p>
+                              {fan.ai_analysis.interests.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {fan.ai_analysis.interests.map((interest, i) => (
+                                    <span key={i} className="px-2 py-0.5 rounded-full bg-primary-500/10 text-primary-400 text-[10px]">
+                                      {interest}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {fan.ai_analysis.key_phrases.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {fan.ai_analysis.key_phrases.map((phrase, i) => (
+                                    <span key={i} className="px-2 py-0.5 rounded bg-white/5 text-white/40 text-[10px] italic">
+                                      &quot;{phrase}&quot;
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+            </tbody>
+          </table>
+
+          {/* Fan Pagination */}
+          {fansTotal > 50 && (
+            <div className="p-4 border-t border-white/5 flex items-center justify-between">
+              <p className="text-xs text-white/40">
+                Page {fansPage} of {Math.ceil(fansTotal / 50)}
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setFansPage(p => Math.max(1, p - 1))}
+                  disabled={fansPage <= 1}
+                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 transition"
+                >
+                  Prev
+                </button>
+                <button
+                  onClick={() => setFansPage(p => p + 1)}
+                  disabled={fansPage >= Math.ceil(fansTotal / 50)}
+                  className="px-3 py-1.5 text-xs rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-30 transition"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

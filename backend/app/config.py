@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # Telegram Bot
     telegram_bot_token: str = ""
 
+    # OpenAI
+    openai_api_key: str = ""
+
     # Stripe
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
