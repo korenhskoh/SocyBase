@@ -22,27 +22,17 @@ class FacebookProfileMapper(AbstractProfileMapper):
         if "success" in api_response and isinstance(api_response.get("data"), dict):
             data = api_response["data"]
 
-        # Direct fields
+        # Direct fields from API: id, name, first_name, last_name, gender, about,
+        # education, location, hometown, link, username
         result["ID"] = str(data.get("id", "NA"))
         result["Name"] = data.get("name", "NA")
         result["First Name"] = data.get("first_name", "NA")
         result["Last Name"] = data.get("last_name", "NA")
         result["Gender"] = data.get("gender", "NA")
-        result["Birthday"] = data.get("birthday", "NA")
         result["About"] = data.get("about", "NA")
-        result["Relationship"] = data.get("relationship_status", "NA")
         result["Username"] = data.get("username", "NA")
-        result["Website"] = data.get("website", "NA")
-        result["Phone"] = data.get("phone", "NA")
 
-        # Profile picture: { data: { url, width, height } }
-        picture = data.get("picture", {})
-        if isinstance(picture, dict):
-            pic_data = picture.get("data", {})
-            if isinstance(pic_data, dict) and pic_data.get("url"):
-                result["Picture URL"] = pic_data["url"]
-
-        # Education: array of { school: { name }, type, year: { name } }
+        # Education: array of { school: { name }, type, id }
         education = data.get("education", [])
         if education and isinstance(education, list):
             edu_names = []
@@ -53,51 +43,28 @@ class FacebookProfileMapper(AbstractProfileMapper):
             if edu_names:
                 result["Education"] = "; ".join(edu_names)
 
-        # Work: array of { employer: { name }, position: { name }, ... }
-        work = data.get("work", [])
-        if work and isinstance(work, list):
-            latest = work[0]
-            employer = latest.get("employer", {})
-            if isinstance(employer, dict):
-                result["Work"] = employer.get("name", "NA")
-            position = latest.get("position", {})
-            if isinstance(position, dict):
-                result["Position"] = position.get("name", "NA")
-
-        # Location: can be { name } (profile) or { city, country, street } (page/AKNG)
+        # Location: { id, name }
         location = data.get("location", {})
         if isinstance(location, dict):
             if location.get("name"):
                 result["Location"] = location["name"]
-            else:
-                # AKNG detailed format: { city, country, street, latitude, longitude }
-                parts = []
-                if location.get("street"):
-                    parts.append(location["street"])
-                if location.get("city"):
-                    parts.append(location["city"])
-                if location.get("country"):
-                    parts.append(location["country"])
-                result["Location"] = ", ".join(parts) if parts else "NA"
         elif isinstance(location, str):
             result["Location"] = location
 
-        # Hometown: { id, name }
+        # Hometown: { id, name } — fallback to location if not provided
         hometown = data.get("hometown", {})
-        if isinstance(hometown, dict):
-            result["Hometown"] = hometown.get("name", "NA")
-        elif isinstance(hometown, str):
+        if isinstance(hometown, dict) and hometown.get("name"):
+            result["Hometown"] = hometown["name"]
+        elif isinstance(hometown, str) and hometown:
             result["Hometown"] = hometown
+        elif result["Location"] != "NA":
+            result["Hometown"] = result["Location"]
 
-        # Languages: array of { id, name }
-        languages = data.get("languages", [])
-        if languages and isinstance(languages, list):
-            lang_names = [lang.get("name", "") for lang in languages if lang.get("name")]
-            if lang_names:
-                result["Languages"] = ", ".join(lang_names)
-
-        # UsernameLink
-        if result["ID"] != "NA":
+        # UsernameLink: prefer the 'link' field from API
+        link = data.get("link")
+        if link:
+            result["UsernameLink"] = link
+        elif result["ID"] != "NA":
             result["UsernameLink"] = f"https://facebook.com/{result['ID']}"
 
         return result

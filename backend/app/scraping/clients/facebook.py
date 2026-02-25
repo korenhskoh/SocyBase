@@ -157,12 +157,7 @@ class FacebookGraphClient(AbstractSocialClient):
         GET /graph/{version}/{user_id}?fields=...
         """
         url = f"{self.base_url}/{self.api_version}/{user_id}"
-        fields = (
-            "id,name,first_name,last_name,about,birthday,gender,"
-            "hometown,location,education,work,website,languages,"
-            "link,relationship_status,username,phone,"
-            "picture.type(large)"
-        )
+        fields = "id,name,first_name,last_name,gender,about,education,location,hometown,link,username"
         params = {
             "access_token": self.access_token,
             "fields": fields,
@@ -184,7 +179,7 @@ class FacebookGraphClient(AbstractSocialClient):
         if fields:
             params["fields"] = fields
         else:
-            params["fields"] = "id,name,about,category,description,location,phone,website,picture.type(large),cover"
+            params["fields"] = "id,name,about,description,location,phone,website,picture.type(large),cover"
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()
