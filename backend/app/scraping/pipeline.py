@@ -744,20 +744,32 @@ def check_scheduled_jobs():
 
 
 async def _check_and_dispatch_scheduled():
-    async with async_session() as db:
-        now = datetime.now(timezone.utc)
-        result = await db.execute(
-            select(ScrapingJob).where(
-                ScrapingJob.status == "scheduled",
-                ScrapingJob.scheduled_at <= now,
-            )
-        )
-        jobs = result.scalars().all()
-        for job in jobs:
-            job.status = "queued"
-            task = run_scraping_pipeline.delay(str(job.id))
-            job.celery_task_id = task.id
-        await db.commit()
+    # Create a fresh engine per invocation to avoid stale event loop issues
+    # with Celery prefork workers (each task gets a new event loop)
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+    from app.config import get_settings
 
-        if jobs:
-            logger.info(f"Dispatched {len(jobs)} scheduled jobs")
+    settings = get_settings()
+    local_engine = create_async_engine(settings.async_database_url, pool_pre_ping=True)
+    local_session = async_sessionmaker(local_engine, class_=AsyncSession, expire_on_commit=False)
+
+    try:
+        async with local_session() as db:
+            now = datetime.now(timezone.utc)
+            result = await db.execute(
+                select(ScrapingJob).where(
+                    ScrapingJob.status == "scheduled",
+                    ScrapingJob.scheduled_at <= now,
+                )
+            )
+            jobs = result.scalars().all()
+            for job in jobs:
+                job.status = "queued"
+                task = run_scraping_pipeline.delay(str(job.id))
+                job.celery_task_id = task.id
+            await db.commit()
+
+            if jobs:
+                logger.info(f"Dispatched {len(jobs)} scheduled jobs")
+    finally:
+        await local_engine.dispose()
