@@ -464,8 +464,10 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     job.total_items = total_posts_fetched  # grows as we discover
                     job.result_row_count = total_posts_fetched
                     job.progress_pct = round(pages_fetched / max_pages * 100, 2)
-                    # Extract the last __paging_token for state saving / continuation
-                    last_cursor = (page_params or {}).get("__paging_token")
+                    # Extract cursor for state saving / continuation
+                    # Try __paging_token first, then after (AKNG uses cursors.after)
+                    _pp = page_params or {}
+                    last_cursor = _pp.get("__paging_token") or _pp.get("after")
 
                     await _save_pipeline_state(
                         db, job, "fetch_posts",
@@ -581,7 +583,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     pages_with_posts=pages_with_posts,
                     total_posts_fetched=total_posts_fetched,
                     first_before_cursor=first_before_cursor,
-                    last_after_cursor=(page_params or {}).get("__paging_token"),
+                    last_after_cursor=(page_params or {}).get("__paging_token") or (page_params or {}).get("after"),
                 )
 
                 await _append_log(

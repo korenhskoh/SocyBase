@@ -102,7 +102,9 @@ export default function JobDetailPage() {
         // Backwards compat: if API returns array directly
         setPosts(Array.isArray(data) ? data : []);
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn("[fetchPosts] Failed:", err);
+    }
   }, [jobId, postsPage, postsPageSize]);
 
   // Keep refs current so SSE handler always uses latest fetch functions
@@ -245,9 +247,9 @@ export default function JobDetailPage() {
           result_row_count: data.result_row_count,
         } : prev);
 
-        // Refresh posts/profiles table when new data arrives (debounced to 3s)
+        // Refresh posts/profiles table when new data arrives (debounced to 2s)
         const now = Date.now();
-        if (now - lastPostsFetchRef.current > 3000 && data.result_row_count > 0) {
+        if (now - lastPostsFetchRef.current > 2000 && data.result_row_count > 0) {
           lastPostsFetchRef.current = now;
           fetchPostsRef.current();
           fetchProfilesRef.current();
@@ -305,21 +307,23 @@ export default function JobDetailPage() {
     return () => clearInterval(interval);
   }, [fetchJob, job?.status]);
 
-  // Auto-refresh posts table while post_discovery is running (every 4s)
+  // Auto-refresh posts table while post_discovery is running (every 2s)
   useEffect(() => {
     if (!job || job.job_type !== "post_discovery") return;
     if (job.status !== "running") return;
 
-    const interval = setInterval(() => fetchPostsRef.current(), 4000);
+    // Fetch immediately once, then every 2s
+    fetchPostsRef.current();
+    const interval = setInterval(() => fetchPostsRef.current(), 2000);
     return () => clearInterval(interval);
   }, [job?.status, job?.job_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh profiles table while comment scraper is running (every 4s)
+  // Auto-refresh profiles table while comment scraper is running (every 3s)
   useEffect(() => {
     if (!job || job.job_type === "post_discovery") return;
     if (job.status !== "running") return;
 
-    const interval = setInterval(() => fetchProfilesRef.current(), 4000);
+    const interval = setInterval(() => fetchProfilesRef.current(), 3000);
     return () => clearInterval(interval);
   }, [job?.status, job?.job_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -911,6 +915,16 @@ export default function JobDetailPage() {
               </Link>
             </>
           )}
+        </div>
+      )}
+
+      {/* Posts Table — loading placeholder while running with no posts yet */}
+      {isPostDiscovery && posts.length === 0 && postsTotal === 0 && (job.status === "running" || job.status === "queued") && (
+        <div className="glass-card p-8 text-center">
+          <div className="flex items-center justify-center gap-3 text-white/50">
+            <div className="h-5 w-5 border-2 border-primary-400/30 border-t-primary-400 rounded-full animate-spin" />
+            <span className="text-sm">Loading discovered posts...</span>
+          </div>
         </div>
       )}
 
