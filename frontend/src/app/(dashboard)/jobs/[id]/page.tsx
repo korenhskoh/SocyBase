@@ -57,6 +57,9 @@ export default function JobDetailPage() {
   const [queueInfo, setQueueInfo] = useState<{ position: number; estimated_seconds: number; ahead: number } | null>(null);
   const [liveProgress, setLiveProgress] = useState<ProgressEvent | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const lastPostsFetchRef = useRef<number>(0);
+  const fetchPostsRef = useRef<() => void>(() => {});
+  const fetchProfilesRef = useRef<() => void>(() => {});
 
   // Fan analysis state
   const [fans, setFans] = useState<FanEngagementMetrics[]>([]);
@@ -101,6 +104,10 @@ export default function JobDetailPage() {
       }
     } catch { /* ignore */ }
   }, [jobId, postsPage, postsPageSize]);
+
+  // Keep refs current so SSE handler always uses latest fetch functions
+  fetchPostsRef.current = fetchPosts;
+  fetchProfilesRef.current = fetchProfiles;
 
   const fetchFans = useCallback(async () => {
     try {
@@ -237,6 +244,14 @@ export default function JobDetailPage() {
           failed_items: data.failed_items,
           result_row_count: data.result_row_count,
         } : prev);
+
+        // Refresh posts/profiles table when new data arrives (debounced to 3s)
+        const now = Date.now();
+        if (now - lastPostsFetchRef.current > 3000 && data.result_row_count > 0) {
+          lastPostsFetchRef.current = now;
+          fetchPostsRef.current();
+          fetchProfilesRef.current();
+        }
       } catch { /* ignore parse errors */ }
     });
 
@@ -295,18 +310,18 @@ export default function JobDetailPage() {
     if (!job || job.job_type !== "post_discovery") return;
     if (job.status !== "running") return;
 
-    const interval = setInterval(() => fetchPosts(), 4000);
+    const interval = setInterval(() => fetchPostsRef.current(), 4000);
     return () => clearInterval(interval);
-  }, [job?.status, job?.job_type, fetchPosts]);
+  }, [job?.status, job?.job_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh profiles table while comment scraper is running (every 4s)
   useEffect(() => {
     if (!job || job.job_type === "post_discovery") return;
     if (job.status !== "running") return;
 
-    const interval = setInterval(() => fetchProfiles(), 4000);
+    const interval = setInterval(() => fetchProfilesRef.current(), 4000);
     return () => clearInterval(interval);
-  }, [job?.status, job?.job_type, fetchProfiles]);
+  }, [job?.status, job?.job_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch posts when pagination changes
   useEffect(() => {
