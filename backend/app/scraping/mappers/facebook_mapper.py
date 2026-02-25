@@ -22,8 +22,7 @@ class FacebookProfileMapper(AbstractProfileMapper):
         if "success" in api_response and isinstance(api_response.get("data"), dict):
             data = api_response["data"]
 
-        # Direct fields from API: id, name, first_name, last_name, gender, about,
-        # education, location, hometown, link, username
+        # Direct scalar fields
         result["ID"] = str(data.get("id", "NA"))
         result["Name"] = data.get("name", "NA")
         result["First Name"] = data.get("first_name", "NA")
@@ -31,6 +30,22 @@ class FacebookProfileMapper(AbstractProfileMapper):
         result["Gender"] = data.get("gender", "NA")
         result["About"] = data.get("about", "NA")
         result["Username"] = data.get("username", "NA")
+        result["Birthday"] = data.get("birthday", "NA")
+        result["Relationship"] = data.get("relationship_status", "NA")
+        result["Phone"] = data.get("phone", "NA")
+        result["Website"] = data.get("website", "NA")
+
+        # Updated Time: prefer API value, fall back to current time
+        updated_time = data.get("updated_time")
+        if updated_time:
+            result["Updated Time"] = updated_time
+
+        # Languages: array of { id, name }
+        languages = data.get("languages", [])
+        if languages and isinstance(languages, list):
+            lang_names = [l.get("name", "") for l in languages if isinstance(l, dict) and l.get("name")]
+            if lang_names:
+                result["Languages"] = "; ".join(lang_names)
 
         # Education: array of { school: { name }, type, id }
         education = data.get("education", [])
@@ -42,6 +57,30 @@ class FacebookProfileMapper(AbstractProfileMapper):
                     edu_names.append(school["name"])
             if edu_names:
                 result["Education"] = "; ".join(edu_names)
+
+        # Work: array of { employer: { name }, position: { name }, location: { name } }
+        work = data.get("work", [])
+        if work and isinstance(work, list):
+            work_entries = []
+            latest_position = None
+            for w in work:
+                employer = w.get("employer", {})
+                position = w.get("position", {})
+                emp_name = employer.get("name", "") if isinstance(employer, dict) else ""
+                pos_name = position.get("name", "") if isinstance(position, dict) else ""
+                if emp_name and pos_name:
+                    work_entries.append(f"{pos_name} at {emp_name}")
+                elif emp_name:
+                    work_entries.append(emp_name)
+                elif pos_name:
+                    work_entries.append(pos_name)
+                # First work entry's position is the latest
+                if latest_position is None and pos_name:
+                    latest_position = pos_name
+            if work_entries:
+                result["Work"] = "; ".join(work_entries)
+            if latest_position:
+                result["Position"] = latest_position
 
         # Location: { id, name }
         location = data.get("location", {})
@@ -66,6 +105,15 @@ class FacebookProfileMapper(AbstractProfileMapper):
             result["UsernameLink"] = link
         elif result["ID"] != "NA":
             result["UsernameLink"] = f"https://facebook.com/{result['ID']}"
+
+        # Picture URL: { data: { url } }
+        picture = data.get("picture", {})
+        if isinstance(picture, dict):
+            pic_data = picture.get("data", {})
+            if isinstance(pic_data, dict) and pic_data.get("url"):
+                result["Picture URL"] = pic_data["url"]
+            elif picture.get("url"):
+                result["Picture URL"] = picture["url"]
 
         return result
 

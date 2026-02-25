@@ -157,7 +157,7 @@ class FacebookGraphClient(AbstractSocialClient):
         GET /graph/{version}/{user_id}?fields=...
         """
         url = f"{self.base_url}/{self.api_version}/{user_id}"
-        fields = "id,name,first_name,last_name,gender,about,education,location,hometown,link,username"
+        fields = "id,name,first_name,last_name,gender,birthday,about,education,work,location,hometown,link,username,relationship_status,website,phone,languages,picture.type(large),updated_time"
         params = {
             "access_token": self.access_token,
             "fields": fields,
