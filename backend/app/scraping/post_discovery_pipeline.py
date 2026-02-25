@@ -113,14 +113,24 @@ def _unwrap_response(raw: dict) -> tuple[list[dict], dict]:
         {"success": true, "data": {"data": [...], "paging": {...}}}
     Shape B (direct):
         {"data": [...], "paging": {...}}
+    Shape C (wrapped error):
+        {"success": true, "data": {"error": {"code": 1, "message": "..."}}}
 
     Returns (posts_list, paging_dict).
+    Raises RuntimeError on nested API errors.
     """
     inner = raw
 
     # Unwrap Shape A: the outer "data" key contains the real payload
     if "success" in raw and isinstance(raw.get("data"), dict):
         inner = raw["data"]
+
+    # Detect nested error (Shape C) — API returns success:true but data has error
+    if "error" in inner and isinstance(inner["error"], dict):
+        err = inner["error"]
+        raise RuntimeError(
+            f"AKNG API error (code {err.get('code')}): {err.get('message')}"
+        )
 
     posts = inner.get("data", [])
     paging = inner.get("paging", {})
@@ -259,8 +269,9 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     raw_response = await client.get_page_feed(
                         page_id,
                         token_type=token_type,
-                        limit=25,
+                        limit=10,
                         after=cursor,
+                        order="reverse_chronological",
                     )
 
                     logger.info(

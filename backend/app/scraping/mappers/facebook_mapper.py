@@ -82,6 +82,8 @@ class FacebookProfileMapper(AbstractProfileMapper):
         """
         Extract comments and pagination info from API response.
 
+        Handles AKNG wrapper: {success, data: {comments: {data: [...]}}}
+
         Returns:
             {
                 "comments": [{ "user_id", "user_name", "comment_id", "message", "created_time" }],
@@ -93,13 +95,18 @@ class FacebookProfileMapper(AbstractProfileMapper):
         next_cursor = None
         has_next = False
 
+        # Unwrap AKNG response wrapper if present
+        inner = api_response
+        if "success" in api_response and isinstance(api_response.get("data"), dict):
+            inner = api_response["data"]
+
         if is_group:
             # Group comments: response is { data: [...], paging: { cursors: { after }, next } }
-            data = api_response.get("data", [])
-            paging = api_response.get("paging", {})
+            data = inner.get("data", [])
+            paging = inner.get("paging", {})
         else:
             # Page/profile comments: response is { comments: { data: [...], paging: {...} } }
-            comments_obj = api_response.get("comments", {})
+            comments_obj = inner.get("comments", {})
             data = comments_obj.get("data", [])
             paging = comments_obj.get("paging", {})
 
