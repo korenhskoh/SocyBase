@@ -2,12 +2,13 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { jobsApi, fanAnalysisApi } from "@/lib/api-client";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatNumber } from "@/lib/utils";
 import type { ScrapingJob, FanEngagementMetrics } from "@/types";
 
 export default function FanCatchPage() {
   // Job selector
   const [jobs, setJobs] = useState<ScrapingJob[]>([]);
+  const [jobAuthors, setJobAuthors] = useState<Record<string, string>>({});
   const [selectedJobId, setSelectedJobId] = useState<string>("");
   const [loadingJobs, setLoadingJobs] = useState(true);
 
@@ -40,6 +41,17 @@ export default function FanCatchPage() {
         if (commentJobs.length > 0) {
           setSelectedJobId(commentJobs[0].id);
         }
+        // Fetch author names for all jobs (non-blocking)
+        const authorMap: Record<string, string> = {};
+        await Promise.allSettled(
+          commentJobs.map(async (j) => {
+            try {
+              const res = await jobsApi.getAuthor(j.id);
+              if (res.data?.name) authorMap[j.id] = res.data.name;
+            } catch { /* ignore */ }
+          })
+        );
+        setJobAuthors(authorMap);
       } catch {
         /* ignore */
       } finally {
@@ -135,6 +147,11 @@ export default function FanCatchPage() {
   const selectedJob = jobs.find((j) => j.id === selectedJobId);
   const totalPages = Math.ceil(fansTotal / 50);
 
+  const getJobComments = (j: ScrapingJob) => {
+    const ps = j.error_details?.pipeline_state;
+    return ps?.total_comments_fetched ?? 0;
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -164,19 +181,29 @@ export default function FanCatchPage() {
               onChange={(e) => setSelectedJobId(e.target.value)}
               className="input-glass text-sm flex-1 max-w-lg [&>option]:bg-[#1a1a2e] [&>option]:text-white"
             >
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.input_value} — {j.result_row_count} profiles — {formatDate(j.completed_at || j.started_at || "")}
-                </option>
-              ))}
+              {jobs.map((j) => {
+                const pageName = jobAuthors[j.id];
+                const comments = getJobComments(j);
+                return (
+                  <option key={j.id} value={j.id}>
+                    {pageName ? `${pageName} — ` : ""}{formatNumber(j.result_row_count)} profiles{comments > 0 ? ` · ${formatNumber(comments)} comments` : ""} — {formatDate(j.completed_at || j.started_at || "")}
+                  </option>
+                );
+              })}
             </select>
           )}
         </div>
         {selectedJob && (
           <div className="flex flex-wrap gap-4 mt-3 text-xs text-white/40">
             <span>Job ID: <span className="font-mono text-white/50">{selectedJob.id.slice(0, 8)}...</span></span>
-            <span>Credits: {selectedJob.credits_used}</span>
-            <span>Type: {selectedJob.job_type || "comment_scraper"}</span>
+            {jobAuthors[selectedJob.id] && (
+              <span>Page: <span className="text-white/50">{jobAuthors[selectedJob.id]}</span></span>
+            )}
+            <span>Profiles: {formatNumber(selectedJob.result_row_count)}</span>
+            {getJobComments(selectedJob) > 0 && (
+              <span>Comments: {formatNumber(getJobComments(selectedJob))}</span>
+            )}
+            <span>Credits: {formatNumber(selectedJob.credits_used)}</span>
           </div>
         )}
       </div>

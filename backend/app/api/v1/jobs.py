@@ -600,7 +600,7 @@ async def get_job_posts(
                 ScrapingJob.tenant_id == user.tenant_id,
                 ScrapingJob.input_value == job.input_value,
                 ScrapingJob.job_type == "post_discovery",
-                ScrapingJob.status.in_(["completed", "running"]),
+                ScrapingJob.status.in_(["completed", "running", "cancelled", "paused", "failed"]),
             )
         )
         job_ids = [r[0] for r in related_result.all()]

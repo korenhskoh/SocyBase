@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { jobsApi, exportApi, fanAnalysisApi } from "@/lib/api-client";
-import { formatDate, getStatusColor } from "@/lib/utils";
+import { formatDate, formatNumber, getStatusColor } from "@/lib/utils";
 import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile, FanEngagementMetrics } from "@/types";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -18,8 +18,6 @@ const STAGE_LABELS: Record<string, string> = {
   finalize: "Finalizing",
   ai_fan_analysis: "Analyzing Fans (AI)",
 };
-
-const formatNumber = (n: number) => n.toLocaleString();
 
 interface ProgressEvent {
   status: string;
@@ -641,7 +639,11 @@ export default function JobDetailPage() {
 
       {/* Progress Card */}
       {(job.status === "running" || job.status === "queued") && (
-        <div className="glass-card p-6">
+        <div className="glass-card p-6 relative overflow-hidden">
+          {/* Animated background shimmer */}
+          <div className="absolute inset-0 opacity-[0.03]">
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary-400 to-transparent animate-[shimmer_3s_ease-in-out_infinite]" style={{ backgroundSize: "200% 100%" }} />
+          </div>
           {(() => {
             const stage = liveProgress?.current_stage || "";
             const stageData: any = liveProgress?.stage_data || {};
@@ -649,10 +651,14 @@ export default function JobDetailPage() {
             const processed = liveProgress?.processed_items ?? job.processed_items;
             const total = liveProgress?.total_items ?? job.total_items;
 
-            // Stage-aware status text
+            // Stage icon + color mapping
+            let stageIcon = "";
+            let stageColor = "#00AAFF";
             let stageText = "";
             let detailText = "";
             if (isPostDiscovery) {
+              stageIcon = "M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z";
+              stageColor = "#7C5CFF";
               stageText = "Discovering posts";
               const postsFound = stageData.total_posts || liveProgress?.result_row_count || postsTotal || posts.length || 0;
               const pagesDone = stageData.pages_fetched || 0;
@@ -660,63 +666,147 @@ export default function JobDetailPage() {
               detailText = `${formatNumber(postsFound)} posts found`;
               if (pagesDone > 0) detailText += ` (page ${pagesDone}${maxPg ? `/${maxPg}` : ""})`;
             } else if (stage === "parse_input" || stage === "start") {
+              stageIcon = "M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z";
+              stageColor = "#FFAA00";
               stageText = "Starting pipeline";
               detailText = "Parsing input URL...";
             } else if (stage === "fetch_author") {
+              stageIcon = "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z";
+              stageColor = "#00AAFF";
               stageText = "Fetching page info";
               detailText = stageData.name ? `Page: ${stageData.name}` : "Loading page details...";
             } else if (stage === "fetch_comments") {
+              stageIcon = "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z";
+              stageColor = "#00AAFF";
               stageText = "Fetching comments";
               const pages = stageData.pages_fetched || 0;
               const topLevel = stageData.top_level_comments || 0;
               const replies = stageData.reply_comments || 0;
-              const total = stageData.total_comments || 0;
-              detailText = total > 0
+              const totalComments = stageData.total_comments || 0;
+              detailText = totalComments > 0
                 ? `${formatNumber(topLevel as number)} comments + ${formatNumber(replies as number)} replies from ${pages} page${pages !== 1 ? "s" : ""}`
                 : `Fetching from page ${pages}...`;
             } else if (stage === "deduplicate") {
+              stageIcon = "M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z";
+              stageColor = "#7C5CFF";
               stageText = "Finding unique users";
               const users = stageData.unique_users || total;
               detailText = users > 0 ? `${formatNumber(users)} unique users found` : "Deduplicating...";
             } else if (stage === "enrich_profiles") {
+              stageIcon = "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z";
+              stageColor = "#FF3366";
               stageText = "Enriching profiles";
               detailText = `${formatNumber(processed)} / ${formatNumber(total)} profiles`;
             } else if (stage === "finalize") {
+              stageIcon = "M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
+              stageColor = "#10B981";
               stageText = "Finalizing";
               detailText = "Compiling results...";
             } else {
+              stageIcon = "M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M2.985 19.644l3.181-3.183";
+              stageColor = "#00AAFF";
               stageText = "Processing";
               detailText = total > 0 ? `${formatNumber(processed)} / ${formatNumber(total)} profiles` : "Initializing...";
             }
 
             return (
-              <>
+              <div className="relative">
+                {/* Stage header with icon */}
                 <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="h-2 w-2 rounded-full bg-primary-400 animate-pulse" />
-                    <p className="text-sm font-medium text-white">{stageText}</p>
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
+                      style={{ background: `${stageColor}15`, border: `1px solid ${stageColor}30` }}
+                    >
+                      <svg
+                        className="h-5 w-5 animate-pulse"
+                        style={{ color: stageColor }}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d={stageIcon} />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-white">{stageText}</p>
+                      <p className="text-xs text-white/40">{STAGE_LABELS[stage] || "Processing"}</p>
+                    </div>
                   </div>
-                  <p className="text-sm text-white/60">{detailText}</p>
-                </div>
-                <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-primary-500 via-accent-purple to-accent-pink rounded-full transition-all duration-700"
-                    style={{ width: `${Math.max(pct, 2)}%` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between mt-2">
-                  <p className="text-xs text-white/30">
-                    {Number(pct).toFixed(1)}% complete
-                    {(liveProgress?.failed_items ?? job.failed_items) > 0 && ` - ${liveProgress?.failed_items ?? job.failed_items} failed`}
-                  </p>
-                  {stage && (
-                    <p className="text-xs text-white/20">
-                      {STAGE_LABELS[stage] || stage}
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-white/80">{detailText}</p>
+                    <p className="text-xs text-white/30 mt-0.5">
+                      {Number(pct).toFixed(1)}% complete
+                      {(liveProgress?.failed_items ?? job.failed_items) > 0 && (
+                        <span className="text-red-400"> &middot; {liveProgress?.failed_items ?? job.failed_items} failed</span>
+                      )}
                     </p>
-                  )}
+                  </div>
                 </div>
+
+                {/* Progress bar with glow */}
+                <div className="w-full h-2.5 bg-white/[0.06] rounded-full overflow-hidden relative">
+                  <div
+                    className="h-full rounded-full transition-all duration-700 relative"
+                    style={{
+                      width: `${Math.max(pct, 2)}%`,
+                      background: `linear-gradient(90deg, ${stageColor}, ${stageColor}cc)`,
+                      boxShadow: `0 0 12px ${stageColor}40`,
+                    }}
+                  >
+                    {/* Animated shine on progress bar */}
+                    <div
+                      className="absolute inset-0 rounded-full"
+                      style={{
+                        background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)",
+                        animation: "shimmer 2s ease-in-out infinite",
+                        backgroundSize: "200% 100%",
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Stage pipeline dots */}
+                <div className="flex items-center justify-between mt-4 px-1">
+                  {(isPostDiscovery
+                    ? ["parse_input", "fetch_author", "fetch_posts", "finalize"]
+                    : ["parse_input", "fetch_author", "fetch_comments", "deduplicate", "enrich_profiles", "finalize"]
+                  ).map((s, i, arr) => {
+                    const stageOrder = arr.indexOf(stage);
+                    const thisOrder = i;
+                    const isDone = stageOrder > thisOrder;
+                    const isCurrent = s === stage;
+                    return (
+                      <div key={s} className="flex items-center gap-0 flex-1 last:flex-none">
+                        <div className="flex flex-col items-center">
+                          <div
+                            className={`h-2.5 w-2.5 rounded-full transition-all duration-500 ${
+                              isDone
+                                ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]"
+                                : isCurrent
+                                  ? "shadow-[0_0_8px] animate-pulse"
+                                  : "bg-white/10"
+                            }`}
+                            style={isCurrent ? { background: stageColor, boxShadow: `0 0 8px ${stageColor}` } : undefined}
+                          />
+                          <span className={`text-[9px] mt-1 whitespace-nowrap ${
+                            isCurrent ? "text-white/60 font-medium" : isDone ? "text-emerald-400/50" : "text-white/15"
+                          }`}>
+                            {(STAGE_LABELS[s] || s).replace("Fetching ", "").replace("Finding ", "").replace("Enriching ", "")}
+                          </span>
+                        </div>
+                        {i < arr.length - 1 && (
+                          <div className={`flex-1 h-px mx-1 mt-[-10px] ${isDone ? "bg-emerald-400/30" : "bg-white/5"}`} />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Pause / Stop buttons */}
                 {job.status === "running" && (
-                  <div className="flex gap-2 mt-4">
+                  <div className="flex gap-2 mt-5">
                     <button
                       onClick={handlePause}
                       disabled={pausing}
@@ -733,38 +823,52 @@ export default function JobDetailPage() {
                     </button>
                   </div>
                 )}
-              </>
+              </div>
             );
           })()}
         </div>
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {(() => {
-          const isRunning = job.status === "running" || job.status === "queued";
-          const liveTotal = isPostDiscovery
-            ? (liveProgress?.result_row_count ?? (isRunning ? job.result_row_count : 0)) || postsTotal || posts.length
-            : (isRunning ? (liveProgress?.processed_items ?? job.processed_items ?? 0) : 0) || job.result_row_count || profilesTotal || profiles.length;
-          const liveCredits = isRunning
-            ? (liveProgress?.stage_data as any)?.pages_fetched || job.credits_used
-            : job.credits_used;
-          return [
-            {
-              label: isPostDiscovery ? "Total Posts" : "Total Profiles",
-              value: formatNumber(liveTotal),
-            },
-            { label: "Credits Used", value: formatNumber(liveCredits) },
-            { label: "Failed", value: formatNumber(liveProgress?.failed_items ?? job.failed_items) },
-            { label: "Created", value: formatDate(job.created_at) },
-          ];
-        })().map((stat) => (
-          <div key={stat.label} className="glass-card p-4">
-            <p className="text-xs text-white/40">{stat.label}</p>
-            <p className="text-lg font-semibold text-white mt-1">{stat.value}</p>
+      {(() => {
+        const isRunning = job.status === "running" || job.status === "queued";
+        const liveTotal = isPostDiscovery
+          ? (liveProgress?.result_row_count ?? job.result_row_count) || postsTotal || posts.length
+          : (isRunning ? (liveProgress?.processed_items ?? job.processed_items ?? 0) : 0) || job.result_row_count || profilesTotal || profiles.length;
+        const liveCredits = isRunning
+          ? (liveProgress?.stage_data as any)?.pages_fetched || job.credits_used
+          : job.credits_used;
+
+        // Total comments for comment scrape jobs
+        const stageData = (liveProgress?.stage_data || {}) as Record<string, unknown>;
+        const pipelineComments = (job.error_details?.pipeline_state?.total_comments_fetched ?? 0) as number;
+        const liveComments = (stageData.total_comments as number) || pipelineComments;
+
+        const stats = [
+          {
+            label: isPostDiscovery ? "Total Posts" : "Total Profiles",
+            value: formatNumber(liveTotal),
+          },
+          ...(!isPostDiscovery ? [{
+            label: "Total Comments",
+            value: formatNumber(liveComments),
+          }] : []),
+          { label: "Credits Used", value: formatNumber(liveCredits) },
+          { label: "Failed", value: formatNumber(liveProgress?.failed_items ?? job.failed_items) },
+          { label: "Created", value: formatDate(job.created_at) },
+        ];
+
+        return (
+          <div className={`grid grid-cols-2 ${stats.length > 4 ? "md:grid-cols-5" : "md:grid-cols-4"} gap-4`}>
+            {stats.map((stat) => (
+              <div key={stat.label} className="glass-card p-4">
+                <p className="text-xs text-white/40">{stat.label}</p>
+                <p className="text-lg font-semibold text-white mt-1">{stat.value}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        );
+      })()}
 
       {/* Error Details */}
       {job.status === "failed" && (
@@ -861,8 +965,26 @@ export default function JobDetailPage() {
         </div>
       )}
 
+      {/* Resume button for paused jobs (outside the failed block) */}
+      {job.status === "paused" && canResume && (
+        <div className="glass-card p-6 border border-yellow-500/20">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <button
+              onClick={handleResume}
+              disabled={resuming}
+              className="relative overflow-hidden rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 text-center"
+            >
+              {resuming ? "Resuming..." : "Resume Scraping"}
+            </button>
+            <p className="text-xs text-white/30">
+              Creates a new job that continues from the last checkpoint
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Export Buttons + Report Link */}
-      {job.status === "completed" && (isPostDiscovery ? (postsTotal > 0 || posts.length > 0) : job.result_row_count > 0) && (
+      {["completed", "cancelled", "paused"].includes(job.status) && (isPostDiscovery ? (postsTotal > 0 || posts.length > 0) : job.result_row_count > 0) && (
         <div className="flex flex-col sm:flex-row gap-3">
           {isPostDiscovery ? (
             <>
@@ -920,11 +1042,35 @@ export default function JobDetailPage() {
 
       {/* Posts Table — loading placeholder while running with no posts yet */}
       {isPostDiscovery && posts.length === 0 && postsTotal === 0 && (job.status === "running" || job.status === "queued") && (
-        <div className="glass-card p-8 text-center">
-          <div className="flex items-center justify-center gap-3 text-white/50">
-            <div className="h-5 w-5 border-2 border-primary-400/30 border-t-primary-400 rounded-full animate-spin" />
-            <span className="text-sm">Loading discovered posts...</span>
+        <div className="glass-card p-8 relative overflow-hidden">
+          <div className="flex flex-col items-center justify-center gap-4">
+            {/* Animated scanning icon */}
+            <div className="relative h-16 w-16">
+              <div className="absolute inset-0 rounded-full border-2 border-primary-500/20" />
+              <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-primary-400 animate-spin" style={{ animationDuration: "1.5s" }} />
+              <div className="absolute inset-2 rounded-full border-2 border-transparent border-b-accent-purple animate-spin" style={{ animationDuration: "2.5s", animationDirection: "reverse" }} />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <svg className="h-6 w-6 text-primary-400/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                </svg>
+              </div>
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-medium text-white/60">Scanning for posts...</p>
+              <p className="text-xs text-white/25 mt-1">Posts will appear here as they&apos;re discovered</p>
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* Empty state for cancelled/paused/failed post discovery jobs */}
+      {isPostDiscovery && posts.length === 0 && postsTotal === 0 && ["cancelled", "paused", "failed"].includes(job.status) && (
+        <div className="glass-card p-8 text-center">
+          <p className="text-sm text-white/40">
+            {job.status === "cancelled" && "Job was stopped before any posts were discovered."}
+            {job.status === "paused" && "Job was paused before any posts were discovered. You can resume it."}
+            {job.status === "failed" && "Job failed before any posts were discovered."}
+          </p>
         </div>
       )}
 
@@ -1110,12 +1256,114 @@ export default function JobDetailPage() {
       )}
 
       {/* Profiles loading placeholder while running with no profiles yet */}
-      {!isPostDiscovery && profiles.length === 0 && profilesTotal === 0 && (job.status === "running" || job.status === "queued") && (
-        <div className="glass-card p-8 text-center">
-          <div className="flex items-center justify-center gap-3 text-white/50">
-            <div className="h-5 w-5 border-2 border-primary-400/30 border-t-primary-400 rounded-full animate-spin" />
-            <span className="text-sm">Scraping profiles...</span>
+      {!isPostDiscovery && profiles.length === 0 && profilesTotal === 0 && (job.status === "running" || job.status === "queued") && (() => {
+        const stage = liveProgress?.current_stage || "";
+        const sd = (liveProgress?.stage_data || {}) as Record<string, unknown>;
+        const topLevel = (sd.top_level_comments as number) || 0;
+        const replies = (sd.reply_comments as number) || 0;
+        const totalComments = (sd.total_comments as number) || 0;
+        const pages = (sd.pages_fetched as number) || 0;
+        const uniqueUsers = (sd.unique_users as number) || 0;
+
+        // Stage-specific icon, color, title, subtitle
+        let icon = "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z";
+        let color = "#00AAFF";
+        let title = "Preparing...";
+        let subtitle = "Profiles will appear here once enrichment begins";
+        let stats: { label: string; value: string }[] = [];
+
+        if (stage === "fetch_comments") {
+          icon = "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z";
+          color = "#00AAFF";
+          title = "Fetching comments...";
+          subtitle = "Collecting all comments before extracting profiles";
+          if (totalComments > 0) {
+            stats = [
+              { label: "Comments", value: formatNumber(topLevel) },
+              { label: "Replies", value: formatNumber(replies) },
+              { label: "Pages", value: formatNumber(pages) },
+              { label: "Total", value: formatNumber(totalComments) },
+            ];
+          }
+        } else if (stage === "deduplicate") {
+          icon = "M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z";
+          color = "#7C5CFF";
+          title = "Deduplicating user IDs...";
+          subtitle = uniqueUsers > 0
+            ? `Found ${formatNumber(uniqueUsers)} unique users from ${formatNumber(totalComments || (liveProgress?.stage_data as any)?.total_comments || 0)} comments`
+            : "Removing duplicate commenters to find unique users";
+          if (uniqueUsers > 0) {
+            stats = [{ label: "Unique Users", value: formatNumber(uniqueUsers) }];
+            if (totalComments > 0) stats.push({ label: "From Comments", value: formatNumber(totalComments) });
+          }
+        } else if (stage === "enrich_profiles") {
+          color = "#FF3366";
+          title = "Enriching profiles...";
+          const processed = liveProgress?.processed_items ?? 0;
+          const total = liveProgress?.total_items ?? 0;
+          subtitle = total > 0 ? `Scraping profile ${formatNumber(processed)} of ${formatNumber(total)}` : "Starting profile enrichment...";
+        } else if (stage === "parse_input" || stage === "fetch_author") {
+          icon = "M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z";
+          title = "Initializing...";
+          subtitle = "Parsing input and fetching page info";
+        }
+
+        return (
+          <div className="glass-card p-8 relative overflow-hidden">
+            <div className="flex flex-col items-center justify-center gap-4">
+              {/* Animated icon */}
+              <div className="relative h-16 w-16">
+                <div className="absolute inset-0 rounded-full border-2" style={{ borderColor: `${color}20` }} />
+                <div className="absolute inset-0 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: color, animationDuration: "1.5s" }} />
+                <div className="absolute inset-2 rounded-full border-2 border-transparent animate-spin" style={{ borderBottomColor: `${color}80`, animationDuration: "2.5s", animationDirection: "reverse" }} />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <svg className="h-6 w-6" style={{ color: `${color}cc` }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
+                  </svg>
+                </div>
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium text-white/60">{title}</p>
+                <p className="text-xs text-white/30 mt-1">{subtitle}</p>
+              </div>
+
+              {/* Live stats mini-cards */}
+              {stats.length > 0 && (
+                <div className="flex gap-3 mt-1">
+                  {stats.map((s) => (
+                    <div key={s.label} className="px-4 py-2 rounded-lg bg-white/[0.03] text-center">
+                      <p className="text-xs text-white/30">{s.label}</p>
+                      <p className="text-sm font-semibold text-white/70 mt-0.5">{s.value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Animated skeleton rows preview */}
+              <div className="w-full max-w-md space-y-2 mt-2">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-white/[0.02]">
+                    <div className="h-8 w-8 rounded-full bg-white/5 animate-pulse" style={{ animationDelay: `${i * 200}ms` }} />
+                    <div className="flex-1 space-y-1.5">
+                      <div className="h-3 w-2/3 rounded bg-white/5 animate-pulse" style={{ animationDelay: `${i * 200 + 100}ms` }} />
+                      <div className="h-2 w-1/3 rounded bg-white/[0.03] animate-pulse" style={{ animationDelay: `${i * 200 + 200}ms` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
+        );
+      })()}
+
+      {/* Empty state for cancelled/paused/failed comment scrape jobs */}
+      {!isPostDiscovery && profiles.length === 0 && profilesTotal === 0 && ["cancelled", "paused", "failed"].includes(job.status) && job.result_row_count === 0 && (
+        <div className="glass-card p-8 text-center">
+          <p className="text-sm text-white/40">
+            {job.status === "cancelled" && "Job was stopped before any profiles were scraped."}
+            {job.status === "paused" && "Job was paused. You can resume it to continue scraping."}
+            {job.status === "failed" && "Job failed before completing profile scraping."}
+          </p>
         </div>
       )}
 

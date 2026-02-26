@@ -95,6 +95,7 @@ const config: Config = {
         "data-flow": "dataFlow 3s ease-in-out infinite",
         "card-reveal": "cardReveal 0.5s ease-out both",
         "ticker": "ticker 0.4s ease-out both",
+        "shimmer": "shimmer 2s ease-in-out infinite",
       },
       keyframes: {
         float: {
@@ -155,6 +156,10 @@ const config: Config = {
         ticker: {
           from: { transform: "translateY(100%)", opacity: "0" },
           to: { transform: "translateY(0)", opacity: "1" },
+        },
+        shimmer: {
+          "0%": { backgroundPosition: "200% 0" },
+          "100%": { backgroundPosition: "-200% 0" },
         },
       },
       backdropBlur: {

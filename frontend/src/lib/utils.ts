@@ -5,6 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function formatNumber(n: number): string {
+  return n.toLocaleString();
+}
+
 export function formatCredits(credits: number): string {
   return credits.toLocaleString();
 }
