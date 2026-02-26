@@ -35,6 +35,14 @@ class FacebookGraphClient(AbstractSocialClient):
         """
         result = {"post_id": url, "is_group": False, "group_id": None, "page_id": None, "original_url": url}
 
+        def _resolve_page_id(page_segment: str, full_url: str) -> str:
+            """If page segment is 'profile.php', extract numeric ID from ?id= param."""
+            if page_segment and page_segment.startswith("profile.php"):
+                id_match = re.search(r"[?&]id=(\d+)", full_url)
+                if id_match:
+                    return id_match.group(1)
+            return page_segment
+
         # Direct post ID (not a URL)
         if not url.startswith("http"):
             # Handle compound IDs from feed: "pageId_postId" or "pageId_postId_commentId"
@@ -64,7 +72,7 @@ class FacebookGraphClient(AbstractSocialClient):
             # Extract page name from URL: facebook.com/{page}/posts/...
             page_match = re.search(r"facebook\.com/([^/]+)/posts/", url)
             if page_match:
-                result["page_id"] = page_match.group(1)
+                result["page_id"] = _resolve_page_id(page_match.group(1), url)
             return result
 
         # Video post - /{page}/videos/{id}
@@ -74,7 +82,7 @@ class FacebookGraphClient(AbstractSocialClient):
             # Extract page name from URL: facebook.com/{page}/videos/...
             page_match = re.search(r"facebook\.com/([^/]+)/videos/", url)
             if page_match:
-                result["page_id"] = page_match.group(1)
+                result["page_id"] = _resolve_page_id(page_match.group(1), url)
             return result
 
         # permalink.php?story_fbid=...
