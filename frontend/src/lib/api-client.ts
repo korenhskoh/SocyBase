@@ -272,6 +272,24 @@ export const fanAnalysisApi = {
     api.get(`/fan-analysis/export/${jobId}`, { params: { format }, responseType: "blob" }),
 };
 
+// Trends API
+export const trendsApi = {
+  getViralPosts: (params?: {
+    page_id?: string;
+    min_score?: number;
+    content_type?: string;
+    days?: number;
+    page?: number;
+    page_size?: number;
+    sort_by?: string;
+  }) => api.get("/trends/viral-posts", { params }),
+  getContentInsights: (params?: { page_id?: string; days?: number }) =>
+    api.get("/trends/content-insights", { params }),
+  getGoogleTrends: (params?: { keywords?: string; days?: number }) =>
+    api.get("/trends/google-trends", { params }),
+  getSourcePages: () => api.get("/trends/source-pages"),
+};
+
 // Business Profile API
 export const businessProfileApi = {
   getSuggestions: () => api.post("/business-profile/suggest-pages"),

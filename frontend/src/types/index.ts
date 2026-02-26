@@ -293,3 +293,61 @@ export interface AIPageSuggestions {
   audience_insights: string[];
   targeting_recommendations: string[];
 }
+
+// Trends types
+export interface ViralPost {
+  id: string;
+  post_id: string;
+  message: string | null;
+  created_time: string | null;
+  from_name: string | null;
+  comment_count: number;
+  reaction_count: number;
+  share_count: number;
+  attachment_type: string | null;
+  attachment_url: string | null;
+  post_url: string | null;
+  virality_score: number;
+  engagement_total: number;
+  source_page: string;
+  above_average: number;
+}
+
+export interface ContentInsights {
+  total_posts: number;
+  avg_engagement: number;
+  by_content_type: {
+    type: string;
+    count: number;
+    avg_reactions: number;
+    avg_comments: number;
+    avg_shares: number;
+  }[];
+  by_day_of_week: {
+    day: string;
+    count: number;
+    avg_engagement: number;
+  }[];
+  by_hour: {
+    hour: number;
+    count: number;
+    avg_engagement: number;
+  }[];
+  top_keywords: string[];
+  posting_frequency: number;
+}
+
+export interface GoogleTrendsData {
+  keywords: string[];
+  country: string;
+  geo?: string;
+  interest_over_time: Record<string, string | number>[];
+  related_queries: Record<string, string[]>;
+  error?: string;
+}
+
+export interface SourcePage {
+  input_value: string;
+  job_count: number;
+  total_posts: number;
+}
