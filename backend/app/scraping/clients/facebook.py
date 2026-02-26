@@ -6,6 +6,15 @@ from app.config import get_settings
 settings = get_settings()
 
 
+def _resolve_page_id(page_segment: str, full_url: str) -> str:
+    """If page segment is 'profile.php', extract numeric ID from ?id= param."""
+    if page_segment and page_segment.startswith("profile.php"):
+        id_match = re.search(r"[?&]id=(\d+)", full_url)
+        if id_match:
+            return id_match.group(1)
+    return page_segment
+
+
 class FacebookGraphClient(AbstractSocialClient):
     """Client for the akng.io.vn Facebook Graph API proxy."""
 
@@ -34,14 +43,6 @@ class FacebookGraphClient(AbstractSocialClient):
         - Direct post ID (pfbid...)
         """
         result = {"post_id": url, "is_group": False, "group_id": None, "page_id": None, "original_url": url}
-
-        def _resolve_page_id(page_segment: str, full_url: str) -> str:
-            """If page segment is 'profile.php', extract numeric ID from ?id= param."""
-            if page_segment and page_segment.startswith("profile.php"):
-                id_match = re.search(r"[?&]id=(\d+)", full_url)
-                if id_match:
-                    return id_match.group(1)
-            return page_segment
 
         # Direct post ID (not a URL)
         if not url.startswith("http"):
@@ -222,12 +223,40 @@ class FacebookGraphClient(AbstractSocialClient):
             result["is_group"] = True
             return result
 
-        # Page/profile URL
+        # Reel/video URL: /reel/{id}, /reels/{id}, /videos/{id}
+        # These are content IDs, not page IDs — extract the numeric ID
+        reel_match = re.search(r"/reels?/(\d+)", value)
+        if reel_match:
+            result["page_id"] = reel_match.group(1)
+            return result
+        video_match = re.search(r"/videos/(\d+)", value)
+        if video_match:
+            result["page_id"] = video_match.group(1)
+            return result
+
+        # Page/profile URL — skip known non-page path segments
         if value.startswith("http"):
+            # Try /{page}/posts/, /{page}/videos/, /{page}/reels/ first (page is before content type)
+            page_content_match = re.search(r"facebook\.com/([^/]+)/(?:posts|videos|reels?)/", value)
+            if page_content_match:
+                page_segment = page_content_match.group(1)
+                if page_segment not in ("www", "m", "web", "l"):
+                    result["page_id"] = _resolve_page_id(page_segment, value)
+                    return result
+
             username_match = re.search(r"facebook\.com/([^/?]+)", value)
             if username_match:
-                result["page_id"] = username_match.group(1)
-                return result
+                captured = username_match.group(1)
+                # Skip known content-type path segments
+                if captured in ("reel", "reels", "watch", "stories", "story", "photo", "video", "videos", "events", "marketplace"):
+                    # Try to get a numeric ID from the URL path
+                    id_match = re.search(r"/(?:reel|reels|watch|video|videos|stories|story)/(\d+)", value)
+                    if id_match:
+                        result["page_id"] = id_match.group(1)
+                        return result
+                else:
+                    result["page_id"] = captured
+                    return result
 
         # Plain username
         result["page_id"] = value.lstrip("@")

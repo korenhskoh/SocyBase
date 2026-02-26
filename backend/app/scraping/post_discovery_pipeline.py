@@ -396,8 +396,10 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         max_requests=settings_rate_limit(),
                     )
 
-                    # Retry wrapper for timeout errors (AKNG can be slow)
+                    # Retry wrapper for timeout and transient AKNG errors
                     raw_response = None
+                    posts_data = None
+                    paging = None
                     max_retries = 3
                     for attempt in range(max_retries):
                         # Try current token_type first; on 401, cycle through fallbacks
@@ -430,7 +432,22 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                 break  # Break token loop, retry with same token
 
                         if raw_response is not None:
-                            break  # Success
+                            # Try to unwrap — transient AKNG errors (code 2) are retryable
+                            try:
+                                posts_data, paging = _unwrap_response(raw_response)
+                                break  # Success
+                            except RuntimeError as unwrap_err:
+                                if "code 2)" in str(unwrap_err) and attempt < max_retries - 1:
+                                    wait = 5 * (attempt + 1)
+                                    logger.warning(
+                                        f"[Job {job_id}] Transient AKNG error on page {pages_fetched + 1} (attempt {attempt + 1}/{max_retries}): {unwrap_err}, retrying in {wait}s..."
+                                    )
+                                    await _append_log(db, job, "warn", "fetch_posts",
+                                        f"Transient API error on page {pages_fetched + 1}, retrying ({attempt + 1}/{max_retries})")
+                                    raw_response = None
+                                    await asyncio.sleep(wait)
+                                    continue
+                                raise  # Non-transient or last attempt
 
                         if isinstance(last_err, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout)):
                             if attempt < max_retries - 1:
@@ -454,10 +471,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     )
                     logger.info(
                         "[Job %s] Raw API response keys: %s, first 500 chars: %s",
-                        job_id, list(raw_response.keys()), str(raw_response)[:500],
+                        job_id, list(raw_response.keys()) if raw_response else [], str(raw_response)[:500],
                     )
-
-                    posts_data, paging = _unwrap_response(raw_response)
                     pages_fetched += 1
 
                     logger.info(
