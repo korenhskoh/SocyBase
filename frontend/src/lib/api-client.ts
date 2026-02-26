@@ -253,6 +253,7 @@ export const tenantSettingsApi = {
       product_service_links: string[];
       target_audience_description: string;
     };
+    ai_suggestions?: Record<string, unknown>;
   }) => api.put("/tenant/settings", data),
 };
 

@@ -45,7 +45,10 @@ def _mask_settings(settings: dict) -> TenantSettingsResponse:
     business_data = settings.get("business")
     business = BusinessProfileSettings(**business_data) if business_data else None
 
-    return TenantSettingsResponse(email=masked_email, telegram=masked_telegram, business=business)
+    # AI suggestions — no masking needed
+    ai_suggestions = settings.get("ai_suggestions")
+
+    return TenantSettingsResponse(email=masked_email, telegram=masked_telegram, business=business, ai_suggestions=ai_suggestions)
 
 
 @router.get("", response_model=TenantSettingsResponse)
@@ -98,6 +101,9 @@ async def update_tenant_settings(
 
     if data.business is not None:
         current["business"] = data.business.model_dump()
+
+    if data.ai_suggestions is not None:
+        current["ai_suggestions"] = data.ai_suggestions
 
     tenant.settings = current
     await db.flush()

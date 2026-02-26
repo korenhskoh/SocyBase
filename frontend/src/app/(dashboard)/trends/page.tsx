@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { trendsApi } from "@/lib/api-client";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { trendsApi, tenantSettingsApi } from "@/lib/api-client";
 import type {
   ViralPost,
   ContentInsights,
@@ -13,7 +13,18 @@ export default function TrendsPage() {
   // Google Trends state
   const [trendsData, setTrendsData] = useState<GoogleTrendsData | null>(null);
   const [trendsLoading, setTrendsLoading] = useState(true);
-  const [trendsKeywords, setTrendsKeywords] = useState("");
+  const [keywordChips, setKeywordChips] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("socybase_trends_keywords");
+        if (saved) return JSON.parse(saved);
+      } catch { /* ignore */ }
+    }
+    return [];
+  });
+  const [keywordInput, setKeywordInput] = useState("");
+  const [suggestedKeywords, setSuggestedKeywords] = useState<string[]>([]);
+  const chipInputRef = useRef<HTMLInputElement>(null);
 
   // Content Insights state
   const [insights, setInsights] = useState<ContentInsights | null>(null);
@@ -35,13 +46,57 @@ export default function TrendsPage() {
   // Expanded post
   const [expandedPost, setExpandedPost] = useState<string | null>(null);
 
-  // Load source pages
+  // Load source pages + business profile suggestions
   useEffect(() => {
     trendsApi
       .getSourcePages()
       .then((r) => setSourcePages(r.data.pages || []))
       .catch(() => {});
+
+    // Load business profile for keyword suggestions
+    tenantSettingsApi.get()
+      .then((r) => {
+        const biz = r.data?.business;
+        if (biz) {
+          const suggestions: string[] = [];
+          if (biz.industry) suggestions.push(biz.industry);
+          if (biz.business_name) suggestions.push(biz.business_name);
+          if (biz.business_type && biz.business_type !== biz.industry) suggestions.push(biz.business_type);
+          setSuggestedKeywords(suggestions.filter(Boolean).slice(0, 4));
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  // Chip management helpers
+  const addChip = (value: string) => {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed || keywordChips.length >= 5 || keywordChips.includes(trimmed)) return;
+    const updated = [...keywordChips, trimmed];
+    setKeywordChips(updated);
+    setKeywordInput("");
+    localStorage.setItem("socybase_trends_keywords", JSON.stringify(updated));
+  };
+
+  const removeChip = (index: number) => {
+    const updated = keywordChips.filter((_, i) => i !== index);
+    setKeywordChips(updated);
+    localStorage.setItem("socybase_trends_keywords", JSON.stringify(updated));
+  };
+
+  const handleChipKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if ((e.key === "Enter" || e.key === ",") && keywordInput.trim()) {
+      e.preventDefault();
+      addChip(keywordInput);
+    } else if (e.key === "Backspace" && !keywordInput && keywordChips.length > 0) {
+      removeChip(keywordChips.length - 1);
+    }
+  };
+
+  const searchWithChips = () => {
+    const keywords = keywordChips.join(",");
+    loadTrends(keywords || undefined);
+  };
 
   // Load Google Trends
   const loadTrends = useCallback(
@@ -59,7 +114,9 @@ export default function TrendsPage() {
   );
 
   useEffect(() => {
-    loadTrends();
+    const savedKeywords = keywordChips.length > 0 ? keywordChips.join(",") : undefined;
+    loadTrends(savedKeywords);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadTrends]);
 
   // Load Content Insights
@@ -198,25 +255,71 @@ export default function TrendsPage() {
           </h2>
         </div>
 
-        {/* Keyword search */}
-        <div className="flex gap-2 mb-4">
-          <input
-            type="text"
-            value={trendsKeywords}
-            onChange={(e) => setTrendsKeywords(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") loadTrends(trendsKeywords);
-            }}
-            placeholder="Search keywords (comma-separated, max 5)..."
-            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white placeholder-white/30 focus:border-primary-500 focus:outline-none"
-          />
-          <button
-            onClick={() => loadTrends(trendsKeywords)}
-            disabled={trendsLoading}
-            className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white text-sm rounded-lg transition disabled:opacity-50"
-          >
-            {trendsLoading ? "Loading..." : "Search"}
-          </button>
+        {/* Keyword chips input */}
+        <div className="space-y-2 mb-4">
+          <div className="flex gap-2">
+            <div
+              className="flex-1 flex flex-wrap items-center gap-1.5 bg-white/5 border border-white/10 rounded-lg px-3 py-2 focus-within:border-primary-500 transition cursor-text min-h-[40px]"
+              onClick={() => chipInputRef.current?.focus()}
+            >
+              {keywordChips.map((chip, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary-500/20 text-primary-400 text-xs font-medium"
+                >
+                  {chip}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeChip(i);
+                    }}
+                    className="hover:text-white transition"
+                  >
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </span>
+              ))}
+              {keywordChips.length < 5 && (
+                <input
+                  ref={chipInputRef}
+                  type="text"
+                  value={keywordInput}
+                  onChange={(e) => setKeywordInput(e.target.value)}
+                  onKeyDown={handleChipKeyDown}
+                  placeholder={keywordChips.length === 0 ? "Type keyword + Enter (max 5)..." : "Add more..."}
+                  className="flex-1 min-w-[120px] bg-transparent text-sm text-white placeholder-white/30 focus:outline-none"
+                />
+              )}
+            </div>
+            <button
+              onClick={searchWithChips}
+              disabled={trendsLoading}
+              className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white text-sm rounded-lg transition disabled:opacity-50 shrink-0"
+            >
+              {trendsLoading ? "Loading..." : "Search"}
+            </button>
+          </div>
+
+          {/* Suggested keywords from business profile */}
+          {suggestedKeywords.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] text-white/30">Suggestions:</span>
+              {suggestedKeywords
+                .filter((s) => !keywordChips.includes(s.toLowerCase()))
+                .map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => addChip(s)}
+                    disabled={keywordChips.length >= 5}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 hover:bg-white/10 text-white/50 hover:text-white/80 text-[11px] transition disabled:opacity-30"
+                  >
+                    + {s}
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
 
         {trendsLoading ? (
@@ -227,7 +330,7 @@ export default function TrendsPage() {
           <div className="text-center py-8">
             <p className="text-white/40 text-sm">{trendsData.error}</p>
             <p className="text-white/20 text-xs mt-1">
-              Try setting your industry in Business Profile, or enter keywords
+              Try setting your industry in AI Business Profile, or enter keywords
               above
             </p>
           </div>
@@ -331,7 +434,7 @@ export default function TrendsPage() {
               No trend data available yet
             </p>
             <p className="text-white/20 text-xs mt-1">
-              Enter keywords above or set your industry in Business Profile
+              Enter keywords above or set your industry in AI Business Profile
             </p>
           </div>
         )}

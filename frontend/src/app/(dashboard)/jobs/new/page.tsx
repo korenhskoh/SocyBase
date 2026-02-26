@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { jobsApi } from "@/lib/api-client";
 import type { CursorHistoryItem } from "@/types";
 
@@ -86,8 +86,17 @@ const PLATFORMS: PlatformDef[] = [
   },
 ];
 
-export default function NewJobPage() {
+export default function NewJobPageWrapper() {
+  return (
+    <Suspense fallback={<div className="flex justify-center py-20"><div className="h-8 w-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" /></div>}>
+      <NewJobPage />
+    </Suspense>
+  );
+}
+
+function NewJobPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // ── Step state ──────────────────────────────────────────────────
   const [step, setStep] = useState(1); // 1=platform, 2=scrapeType, 3=configure
@@ -122,6 +131,34 @@ export default function NewJobPage() {
       if (flags.dedup_save_credits === false) setDedupFeatureEnabled(false);
     }).catch(() => {});
   }, []);
+
+  // ── Pre-fill from query params (e.g. from AI Business Profile "Scrape This") ──
+  useEffect(() => {
+    const inputParam = searchParams.get("input");
+    const typeParam = searchParams.get("type");
+    if (!inputParam && !typeParam) return;
+
+    const fbPlatform = PLATFORMS.find((p) => p.id === "facebook");
+    if (!fbPlatform) return;
+
+    setSelectedPlatform(fbPlatform);
+
+    if (typeParam === "post_discovery") {
+      const postDiscovery = fbPlatform.scrapeTypes.find((st) => st.id === "post_discovery");
+      if (postDiscovery) {
+        setSelectedScrapeType(postDiscovery);
+        setStep(3);
+        if (inputParam) setPageInput(inputParam);
+      }
+    } else {
+      const commentScraper = fbPlatform.scrapeTypes.find((st) => st.id === "comment_scraper");
+      if (commentScraper) {
+        setSelectedScrapeType(commentScraper);
+        setStep(3);
+        if (inputParam) setInputValue(inputParam);
+      }
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Comment Scraper state ───────────────────────────────────────
   const [inputValue, setInputValue] = useState("");

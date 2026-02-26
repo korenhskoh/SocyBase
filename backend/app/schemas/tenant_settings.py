@@ -42,9 +42,11 @@ class TenantSettingsResponse(BaseModel):
     email: EmailSettingsResponse | None = None
     telegram: TelegramSettingsResponse | None = None
     business: BusinessProfileSettings | None = None
+    ai_suggestions: dict | None = None
 
 
 class UpdateTenantSettingsRequest(BaseModel):
     email: EmailSettingsRequest | None = None
     telegram: TelegramSettingsRequest | None = None
     business: BusinessProfileSettings | None = None
+    ai_suggestions: dict | None = None

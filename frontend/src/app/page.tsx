@@ -6,6 +6,10 @@ import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { LogoFull } from "@/components/ui/Logo";
 import { HeroDataCards } from "@/components/landing/HeroDataCards";
+import { creditsApi } from "@/lib/api-client";
+import { formatCurrency } from "@/lib/utils";
+import type { CreditPackage } from "@/types";
+import { useTranslation } from "@/hooks/useTranslation";
 import {
   MockupProfileExtraction,
   MockupCommentScraping,
@@ -54,55 +58,32 @@ const LinkedInIcon = ({ className = "h-5 w-5" }: { className?: string }) => (
 /* ─── Data ─── */
 const features = [
   {
-    title: "Profile Extraction",
-    description:
-      "Extract 18+ structured fields — name, education, work, location, and more from public profiles automatically.",
+    titleKey: "landing.profile_extraction",
+    descKey: "landing.profile_extraction_desc",
     icon: "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z",
     color: "#00AAFF",
     mockup: <MockupProfileExtraction />,
   },
   {
-    title: "Comment Scraping",
-    description:
-      "Collect comments with commenter details, timestamps, and full text. Perfect for audience research and sentiment analysis.",
+    titleKey: "landing.comment_scraping",
+    descKey: "landing.comment_scraping_desc",
     icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z",
     color: "#7C5CFF",
     mockup: <MockupCommentScraping />,
   },
   {
-    title: "Bulk Processing",
-    description:
-      "Upload thousands of profile URLs or user IDs. Process them all in a single job with live progress tracking.",
+    titleKey: "landing.bulk_processing",
+    descKey: "landing.bulk_processing_desc",
     icon: "M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z",
     color: "#FF3366",
     mockup: <MockupBulkProcessing />,
   },
   {
-    title: "Export Anywhere",
-    description:
-      "Download as CSV or Facebook Ads custom audience format. Ready for your CRM, ad platform, or analytics pipeline.",
+    titleKey: "landing.export_anywhere",
+    descKey: "landing.export_anywhere_desc",
     icon: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3",
     color: "#FFAA00",
     mockup: <MockupExportAnywhere />,
-  },
-];
-
-const plans = [
-  { name: "Starter", credits: "100", price: "$9.99", bonus: 0, popular: false },
-  { name: "Growth", credits: "500", price: "$39.99", bonus: 50, popular: true },
-  {
-    name: "Professional",
-    credits: "2,000",
-    price: "$129.99",
-    bonus: 300,
-    popular: false,
-  },
-  {
-    name: "Enterprise",
-    credits: "10,000",
-    price: "$499.99",
-    bonus: 2000,
-    popular: false,
   },
 ];
 
@@ -134,9 +115,16 @@ const CheckIcon = ({ color }: { color: string }) => (
 export default function LandingPage() {
   const [isAuth, setIsAuth] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [packages, setPackages] = useState<CreditPackage[]>([]);
+  const [packagesLoading, setPackagesLoading] = useState(true);
+  const { t, lang, setLang } = useTranslation();
 
   useEffect(() => {
     if (localStorage.getItem("access_token")) setIsAuth(true);
+    creditsApi.getPackages()
+      .then((res) => setPackages(res.data.packages || res.data || []))
+      .catch(() => {})
+      .finally(() => setPackagesLoading(false));
   }, []);
 
   return (
@@ -151,28 +139,34 @@ export default function LandingPage() {
 
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="text-sm text-white/50 hover:text-white transition">
-                Features
+                {t("landing.features")}
               </a>
               <a href="#how-it-works" className="text-sm text-white/50 hover:text-white transition">
-                How it Works
+                {t("landing.how_it_works")}
               </a>
               <a href="#pricing" className="text-sm text-white/50 hover:text-white transition">
-                Pricing
+                {t("landing.pricing")}
               </a>
             </div>
 
             <div className="hidden md:flex items-center gap-3">
+              <button
+                onClick={() => setLang(lang === "en" ? "zh" : "en")}
+                className="px-3 py-1.5 text-xs font-medium text-white/50 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition"
+              >
+                {lang === "en" ? "中文" : "EN"}
+              </button>
               {isAuth ? (
                 <Link href="/dashboard" className="btn-glow-refined !px-5 !py-2 text-sm">
-                  Dashboard
+                  {t("nav.dashboard")}
                 </Link>
               ) : (
                 <>
                   <Link href="/login" className="btn-ghost !px-5 !py-2 text-sm">
-                    Sign In
+                    {t("auth.sign_in")}
                   </Link>
                   <Link href="/register" className="btn-glow-refined !px-5 !py-2 text-sm">
-                    Get Started
+                    {t("landing.get_started")}
                   </Link>
                 </>
               )}
@@ -205,20 +199,26 @@ export default function LandingPage() {
           {mobileMenu && (
             <div className="md:hidden border-t border-white/5 py-4 space-y-3">
               <a href="#features" className="block text-sm text-white/60 py-2">
-                Features
+                {t("landing.features")}
               </a>
               <a href="#how-it-works" className="block text-sm text-white/60 py-2">
-                How it Works
+                {t("landing.how_it_works")}
               </a>
               <a href="#pricing" className="block text-sm text-white/60 py-2">
-                Pricing
+                {t("landing.pricing")}
               </a>
+              <button
+                onClick={() => setLang(lang === "en" ? "zh" : "en")}
+                className="block text-sm text-white/60 py-2"
+              >
+                {lang === "en" ? "中文" : "English"}
+              </button>
               <div className="pt-3 border-t border-white/5 flex gap-3">
                 <Link href="/login" className="flex-1 text-center btn-ghost !py-2 text-sm">
-                  Sign In
+                  {t("auth.sign_in")}
                 </Link>
                 <Link href="/register" className="flex-1 text-center btn-glow-refined !py-2 text-sm">
-                  Get Started
+                  {t("landing.get_started")}
                 </Link>
               </div>
             </div>
@@ -242,7 +242,7 @@ export default function LandingPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
               >
-                Social Data Intelligence Platform
+                {t("landing.subtitle")}
               </motion.p>
 
               <motion.h1
@@ -251,9 +251,9 @@ export default function LandingPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.1 }}
               >
-                Turn Social Profiles Into
+                {t("landing.hero_title_1")}
                 <br />
-                <span className="gradient-text">Structured Data</span>
+                <span className="gradient-text">{t("landing.hero_title_2")}</span>
               </motion.h1>
 
               <motion.p
@@ -262,9 +262,7 @@ export default function LandingPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.2 }}
               >
-                Paste a Facebook post URL and extract structured profile data for every commenter
-                — names, demographics, education, work history, and 18+ fields. Export as CSV or
-                Facebook Ads custom audience format.
+                {t("landing.hero_desc")}
               </motion.p>
 
               <motion.div
@@ -275,7 +273,7 @@ export default function LandingPage() {
               >
                 <Link href="/register" className="btn-glow-refined !px-8 !py-4 text-base group">
                   <span className="flex items-center gap-2">
-                    Start Free
+                    {t("landing.start_free")}
                     <svg
                       className="h-4 w-4 group-hover:translate-x-1 transition-transform"
                       fill="none"
@@ -310,7 +308,7 @@ export default function LandingPage() {
                       d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z"
                     />
                   </svg>
-                  See How it Works
+                  {t("landing.see_how")}
                 </a>
               </motion.div>
             </div>
@@ -348,20 +346,20 @@ export default function LandingPage() {
             viewport={{ once: true, margin: "-50px" }}
           >
             {[
-              { value: "18+", label: "Data Fields", color: "#00AAFF" },
-              { value: "10K+", label: "Profiles / Job", color: "#7C5CFF" },
-              { value: "99.9%", label: "Uptime", color: "#FF3366" },
-              { value: "<2s", label: "Per Profile", color: "#FFAA00" },
+              { value: "18+", labelKey: "landing.data_fields", color: "#00AAFF" },
+              { value: "10K+", labelKey: "landing.profiles_job", color: "#7C5CFF" },
+              { value: "99.9%", labelKey: "landing.uptime", color: "#FF3366" },
+              { value: "<2s", labelKey: "landing.per_profile", color: "#FFAA00" },
             ].map((s) => (
               <motion.div
-                key={s.label}
+                key={s.labelKey}
                 variants={fadeInUp}
                 className="glass-card-soft p-4 text-center"
               >
                 <p className="text-2xl md:text-3xl font-bold" style={{ color: s.color }}>
                   {s.value}
                 </p>
-                <p className="text-xs text-white/35 mt-1">{s.label}</p>
+                <p className="text-xs text-white/35 mt-1">{t(s.labelKey)}</p>
               </motion.div>
             ))}
           </motion.div>
@@ -372,7 +370,7 @@ export default function LandingPage() {
       <section className="py-12 border-b border-white/[0.03]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <p className="text-center text-xs uppercase tracking-widest text-white/20 mb-6">
-            Extract data from
+            {t("landing.extract_from")}
           </p>
           <div className="flex items-center justify-center gap-6 sm:gap-10 md:gap-16 opacity-30">
             <FacebookIcon className="h-7 w-7 text-[#1877F2]" />
@@ -401,15 +399,14 @@ export default function LandingPage() {
             viewport={{ once: true }}
           >
             <p className="text-sm font-semibold uppercase tracking-widest mb-3" style={{ color: "#7C5CFF" }}>
-              Features
+              {t("landing.features")}
             </p>
             <h2 className="text-3xl md:text-5xl font-bold">
-              Everything you need to{" "}
-              <span className="gradient-text">extract & enrich</span>
+              {t("landing.features_heading")}{" "}
+              <span className="gradient-text">{t("landing.features_heading_2")}</span>
             </h2>
             <p className="mt-4 text-white/40 max-w-xl mx-auto">
-              Powerful tools for marketers, researchers, and data teams who need social media data
-              at scale.
+              {t("landing.features_desc")}
             </p>
           </motion.div>
 
@@ -419,7 +416,7 @@ export default function LandingPage() {
               const isEven = i % 2 === 1;
               return (
                 <motion.div
-                  key={f.title}
+                  key={f.titleKey}
                   className={`grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-16 items-center ${
                     isEven ? "md:direction-rtl" : ""
                   }`}
@@ -431,8 +428,8 @@ export default function LandingPage() {
                   {/* Text side */}
                   <div className={`${isEven ? "md:order-2" : "md:order-1"}`}>
                     <div className="accent-line mb-6" style={{ background: f.color }} />
-                    <h3 className="text-2xl font-semibold text-white mb-3">{f.title}</h3>
-                    <p className="text-white/40 leading-relaxed max-w-md">{f.description}</p>
+                    <h3 className="text-2xl font-semibold text-white mb-3">{t(f.titleKey)}</h3>
+                    <p className="text-white/40 leading-relaxed max-w-md">{t(f.descKey)}</p>
                   </div>
 
                   {/* Mockup side */}
@@ -466,10 +463,10 @@ export default function LandingPage() {
             viewport={{ once: true }}
           >
             <p className="text-sm font-semibold uppercase tracking-widest mb-3" style={{ color: "#FF3366" }}>
-              How it Works
+              {t("landing.how_it_works")}
             </p>
             <h2 className="text-3xl md:text-5xl font-bold">
-              Three steps to <span className="gradient-text">your data</span>
+              {t("landing.three_steps")} <span className="gradient-text">{t("landing.your_data")}</span>
             </h2>
           </motion.div>
 
@@ -520,22 +517,22 @@ export default function LandingPage() {
               {[
                 {
                   step: "01",
-                  title: "Create an account",
-                  desc: "Sign up in seconds with email or Google. Get a workspace with credit balance tracking, job history, and team access. No credit card required.",
+                  titleKey: "landing.step_1_title",
+                  descKey: "landing.step_1_desc",
                   color: "#00AAFF",
                   icon: "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z",
                 },
                 {
                   step: "02",
-                  title: "Configure your job",
-                  desc: "Paste a Facebook post URL or upload a list of profile IDs. Choose your target platform and click extract. Track progress in real-time.",
+                  titleKey: "landing.step_2_title",
+                  descKey: "landing.step_2_desc",
                   color: "#7C5CFF",
                   icon: "M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281zM15 12a3 3 0 11-6 0 3 3 0 016 0z",
                 },
                 {
                   step: "03",
-                  title: "Download results",
-                  desc: "Get a structured CSV with 18 normalized fields per profile. Or export as Facebook Ads custom audience format for instant retargeting.",
+                  titleKey: "landing.step_3_title",
+                  descKey: "landing.step_3_desc",
                   color: "#FF3366",
                   icon: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3",
                 },
@@ -573,8 +570,8 @@ export default function LandingPage() {
                     </span>
                   </div>
 
-                  <h3 className="text-lg font-semibold text-white mb-2">{item.title}</h3>
-                  <p className="text-white/40 text-sm leading-relaxed">{item.desc}</p>
+                  <h3 className="text-lg font-semibold text-white mb-2">{t(item.titleKey)}</h3>
+                  <p className="text-white/40 text-sm leading-relaxed">{t(item.descKey)}</p>
                 </motion.div>
               ))}
             </motion.div>
@@ -599,19 +596,16 @@ export default function LandingPage() {
                   className="text-sm font-semibold uppercase tracking-widest mb-3"
                   style={{ color: "#FFAA00" }}
                 >
-                  Structured Output
+                  {t("landing.structured_output")}
                 </p>
                 <h2 className="text-3xl md:text-4xl font-bold mb-4">
-                  <span className="gradient-text">18 fields</span> per profile, every time
+                  <span className="gradient-text">{t("landing.fields_per_profile")}</span> {t("landing.fields_desc")}
                 </h2>
                 <p className="text-white/40 mb-8 leading-relaxed">
-                  Every profile comes back with the same 18 normalized fields: full name, gender,
-                  birthday, relationship status, education, work, position, hometown, current city,
-                  website, languages, username, profile link, and more. No manual parsing or cleanup
-                  needed.
+                  {t("landing.fields_body")}
                 </p>
                 <Link href="/register" className="btn-glow-refined !w-fit !px-6 !py-3 text-sm">
-                  Try it Free
+                  {t("landing.try_free")}
                 </Link>
               </div>
 
@@ -673,93 +667,113 @@ export default function LandingPage() {
               className="text-sm font-semibold uppercase tracking-widest mb-3"
               style={{ color: "#FFAA00" }}
             >
-              Pricing
+              {t("landing.pricing")}
             </p>
             <h2 className="text-3xl md:text-5xl font-bold">
-              Simple, credit-based <span className="gradient-text">pricing</span>
+              {t("landing.pricing_heading")} <span className="gradient-text">{t("landing.pricing_heading_2")}</span>
             </h2>
             <p className="mt-4 text-white/40 max-w-xl mx-auto">
-              Buy credits, use when you need. No subscriptions, no recurring charges.
+              {t("landing.pricing_desc")}
               <span className="block mt-1 text-white/50 font-medium">
-                1 credit = 1 profile extracted with all 18 data fields.
+                {t("landing.pricing_note")}
               </span>
             </p>
           </motion.div>
 
-          <motion.div
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5"
-            variants={staggerContainer}
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true, margin: "-50px" }}
-          >
-            {plans.map((p) => (
-              <motion.div
-                key={p.name}
-                variants={fadeInUp}
-                className="glass-card-soft p-8 relative flex flex-col transition-all duration-300 hover:border-white/15"
-              >
-                {/* Popular card soft radial glow */}
-                {p.popular && (
-                  <div className="absolute inset-0 rounded-2xl bg-[#7C5CFF]/[0.06] blur-xl pointer-events-none" />
-                )}
-
-                {p.popular && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
-                    <span
-                      className="px-3 py-1 text-xs font-semibold rounded-full text-white"
-                      style={{
-                        background: "linear-gradient(135deg, #00AAFF, #7C5CFF, #FF3366)",
-                      }}
-                    >
-                      Most Popular
-                    </span>
+          {packagesLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="glass-card-soft p-8 animate-pulse">
+                  <div className="h-5 w-24 bg-white/5 rounded mb-4" />
+                  <div className="h-10 w-32 bg-white/5 rounded mb-2" />
+                  <div className="h-4 w-20 bg-white/5 rounded mb-6" />
+                  <div className="space-y-3">
+                    <div className="h-4 w-full bg-white/5 rounded" />
+                    <div className="h-4 w-full bg-white/5 rounded" />
+                    <div className="h-4 w-full bg-white/5 rounded" />
                   </div>
-                )}
+                  <div className="h-10 w-full bg-white/5 rounded-xl mt-6" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <motion.div
+              className={`grid grid-cols-1 sm:grid-cols-2 ${packages.length >= 4 ? "lg:grid-cols-4" : packages.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-2"} gap-5`}
+              variants={staggerContainer}
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true, margin: "-50px" }}
+            >
+              {packages.map((pkg, idx) => {
+                const isPopular = idx === 1;
+                const priceStr = formatCurrency(pkg.price_cents, pkg.currency);
+                const [whole, decimal] = priceStr.split(".");
+                return (
+                  <motion.div
+                    key={pkg.id}
+                    variants={fadeInUp}
+                    className="glass-card-soft p-8 relative flex flex-col transition-all duration-300 hover:border-white/15"
+                  >
+                    {isPopular && (
+                      <div className="absolute inset-0 rounded-2xl bg-[#7C5CFF]/[0.06] blur-xl pointer-events-none" />
+                    )}
 
-                <div className="relative">
-                  <h3 className="text-lg font-semibold text-white">{p.name}</h3>
-                  <div className="mt-4 mb-1">
-                    <span className="text-4xl font-bold text-white">
-                      {p.price.split(".")[0]}
-                    </span>
-                    <span className="text-white/40">.{p.price.split(".")[1]}</span>
-                  </div>
-                  <p className="text-sm text-white/30 mb-6">one-time purchase</p>
-
-                  <div className="space-y-3 flex-1">
-                    <div className="flex items-center gap-2 text-sm">
-                      <CheckIcon color="#00AAFF" />
-                      <span className="text-white/60">{p.credits} credits</span>
-                    </div>
-                    {p.bonus > 0 && (
-                      <div className="flex items-center gap-2 text-sm">
-                        <CheckIcon color="#7C5CFF" />
-                        <span style={{ color: "#7C5CFF" }}>+{p.bonus} bonus</span>
+                    {isPopular && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
+                        <span
+                          className="px-3 py-1 text-xs font-semibold rounded-full text-white"
+                          style={{
+                            background: "linear-gradient(135deg, #00AAFF, #7C5CFF, #FF3366)",
+                          }}
+                        >
+                          {t("landing.most_popular")}
+                        </span>
                       </div>
                     )}
-                    <div className="flex items-center gap-2 text-sm">
-                      <CheckIcon color="#FF3366" />
-                      <span className="text-white/60">CSV + FB Ads export</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <CheckIcon color="#FFAA00" />
-                      <span className="text-white/60">Never expires</span>
-                    </div>
-                  </div>
 
-                  <Link
-                    href="/register"
-                    className={`mt-6 block text-center py-2.5 rounded-xl text-sm font-medium transition-all ${
-                      p.popular ? "btn-glow-refined !py-2.5" : "btn-ghost !py-2.5"
-                    }`}
-                  >
-                    Get Started
-                  </Link>
-                </div>
-              </motion.div>
-            ))}
-          </motion.div>
+                    <div className="relative">
+                      <h3 className="text-lg font-semibold text-white">{pkg.name}</h3>
+                      <div className="mt-4 mb-1">
+                        <span className="text-4xl font-bold text-white">{whole}</span>
+                        {decimal && <span className="text-white/40">.{decimal}</span>}
+                      </div>
+                      <p className="text-sm text-white/30 mb-6">{t("landing.one_time")}</p>
+
+                      <div className="space-y-3 flex-1">
+                        <div className="flex items-center gap-2 text-sm">
+                          <CheckIcon color="#00AAFF" />
+                          <span className="text-white/60">{pkg.credits.toLocaleString()} {t("landing.credits_label")}</span>
+                        </div>
+                        {pkg.bonus_credits > 0 && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <CheckIcon color="#7C5CFF" />
+                            <span style={{ color: "#7C5CFF" }}>+{pkg.bonus_credits.toLocaleString()} bonus</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 text-sm">
+                          <CheckIcon color="#FF3366" />
+                          <span className="text-white/60">{t("landing.csv_fb_export")}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm">
+                          <CheckIcon color="#FFAA00" />
+                          <span className="text-white/60">{t("landing.never_expires")}</span>
+                        </div>
+                      </div>
+
+                      <Link
+                        href="/register"
+                        className={`mt-6 block text-center py-2.5 rounded-xl text-sm font-medium transition-all ${
+                          isPopular ? "btn-glow-refined !py-2.5" : "btn-ghost !py-2.5"
+                        }`}
+                      >
+                        {t("landing.get_started")}
+                      </Link>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+          )}
         </div>
       </section>
 
@@ -787,20 +801,19 @@ export default function LandingPage() {
             viewport={{ once: true }}
           >
             <h2 className="text-3xl md:text-5xl font-bold mb-4">
-              Ready to extract{" "}
-              <span className="gradient-text">your first profiles</span>?
+              {t("landing.cta_heading")}{" "}
+              <span className="gradient-text">{t("landing.cta_heading_2")}</span>?
             </h2>
             <p className="text-white/40 max-w-lg mx-auto mb-8 text-lg">
-              Join marketers and researchers using SocyBase to turn social media into actionable
-              data.
+              {t("landing.cta_desc")}
             </p>
             <Link
               href="/register"
               className="btn-glow-refined !px-10 !py-4 text-base inline-block"
             >
-              Create Free Account
+              {t("landing.create_free")}
             </Link>
-            <p className="mt-4 text-xs text-white/20">No credit card required</p>
+            <p className="mt-4 text-xs text-white/20">{t("landing.no_cc")}</p>
           </motion.div>
         </div>
       </section>
@@ -812,13 +825,13 @@ export default function LandingPage() {
             <LogoFull size="xs" />
             <div className="flex items-center gap-6 text-sm text-white/30">
               <a href="#features" className="hover:text-white/60 transition">
-                Features
+                {t("landing.features")}
               </a>
               <a href="#pricing" className="hover:text-white/60 transition">
-                Pricing
+                {t("landing.pricing")}
               </a>
               <Link href="/login" className="hover:text-white/60 transition">
-                Sign In
+                {t("auth.sign_in")}
               </Link>
             </div>
             <p className="text-xs text-white/20">

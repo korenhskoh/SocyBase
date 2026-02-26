@@ -38,6 +38,9 @@ export default function BusinessProfilePage() {
           );
           setBizTargetAudience(s.business.target_audience_description || "");
         }
+        if (s.ai_suggestions) {
+          setAiSuggestions(s.ai_suggestions as AIPageSuggestions);
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -71,6 +74,8 @@ export default function BusinessProfilePage() {
     try {
       const res = await businessProfileApi.getSuggestions();
       setAiSuggestions(res.data);
+      // Fire-and-forget save to tenant settings
+      tenantSettingsApi.update({ ai_suggestions: res.data }).catch(() => {});
     } catch {
       alert("Failed to get AI suggestions. Make sure your business profile is saved and OpenAI API key is configured.");
     } finally {
@@ -90,7 +95,7 @@ export default function BusinessProfilePage() {
     return (
       <div className="max-w-2xl mx-auto space-y-8">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white">Business Profile</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-white">AI Business Profile</h1>
           <p className="text-white/50 mt-1">Only admins can manage the business profile</p>
         </div>
       </div>
@@ -100,7 +105,7 @@ export default function BusinessProfilePage() {
   return (
     <div className="max-w-2xl mx-auto space-y-8">
       <div>
-        <h1 className="text-2xl md:text-3xl font-bold text-white">Business Profile</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-white">AI Business Profile</h1>
         <p className="text-white/50 mt-1">Help AI understand your business for smarter fan analysis and competitor discovery</p>
       </div>
 
@@ -245,7 +250,7 @@ export default function BusinessProfilePage() {
         )}
 
         <button onClick={handleSaveBusiness} disabled={bizSaving} className="btn-glow disabled:opacity-50">
-          {bizSaving ? "Saving..." : "Save Business Profile"}
+          {bizSaving ? "Saving..." : "Save AI Business Profile"}
         </button>
       </div>
 
@@ -314,12 +319,19 @@ export default function BusinessProfilePage() {
                         <p className="text-sm font-medium text-white">{page.name}</p>
                         <p className="text-xs text-white/40 mt-0.5">{page.reason}</p>
                         {page.facebook_url && (
-                          <p className="text-xs text-purple-400/70 font-mono mt-1 truncate">{page.facebook_url}</p>
+                          <a
+                            href={page.facebook_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-purple-400/70 hover:text-purple-300 font-mono mt-1 truncate block underline decoration-purple-400/30 hover:decoration-purple-300/60 transition-colors"
+                          >
+                            {page.facebook_url}
+                          </a>
                         )}
                       </div>
                       {page.facebook_url && (
                         <a
-                          href={`/jobs/new?input=${encodeURIComponent(page.facebook_url)}`}
+                          href={`/jobs/new?input=${encodeURIComponent(page.facebook_url)}&type=post_discovery`}
                           className="shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium text-purple-300 bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 transition"
                         >
                           Scrape This

@@ -247,6 +247,7 @@ export interface TenantSettings {
   email: EmailSettings | null;
   telegram: TelegramOrgSettings | null;
   business: BusinessProfileSettings | null;
+  ai_suggestions: AIPageSuggestions | null;
 }
 
 export interface FanEngagementMetrics {
