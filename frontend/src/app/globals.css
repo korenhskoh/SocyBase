@@ -76,6 +76,12 @@
            transition-all duration-200;
   }
 
+  /* Dark background for native select dropdown options */
+  select option {
+    background-color: #1a1a2e;
+    color: #fff;
+  }
+
   /* Brand icon colors */
   .social-facebook { @apply text-[#1877F2]; }
   .social-tiktok { @apply text-[#00F2EA]; }

@@ -745,7 +745,7 @@ export default function JobDetailPage() {
           const isRunning = job.status === "running" || job.status === "queued";
           const liveTotal = isPostDiscovery
             ? (liveProgress?.result_row_count ?? (isRunning ? job.result_row_count : 0)) || postsTotal || posts.length
-            : job.result_row_count;
+            : (isRunning ? (liveProgress?.processed_items ?? job.processed_items ?? 0) : 0) || job.result_row_count || profilesTotal || profiles.length;
           const liveCredits = isRunning
             ? (liveProgress?.stage_data as any)?.pages_fetched || job.credits_used
             : job.credits_used;
@@ -1109,6 +1109,16 @@ export default function JobDetailPage() {
         </div>
       )}
 
+      {/* Profiles loading placeholder while running with no profiles yet */}
+      {!isPostDiscovery && profiles.length === 0 && profilesTotal === 0 && (job.status === "running" || job.status === "queued") && (
+        <div className="glass-card p-8 text-center">
+          <div className="flex items-center justify-center gap-3 text-white/50">
+            <div className="h-5 w-5 border-2 border-primary-400/30 border-t-primary-400 rounded-full animate-spin" />
+            <span className="text-sm">Scraping profiles...</span>
+          </div>
+        </div>
+      )}
+
       {/* Profiles Results Table (non-post_discovery jobs) */}
       {!isPostDiscovery && (profiles.length > 0 || profilesTotal > 0) && (
         <div className="glass-card overflow-hidden">
@@ -1263,7 +1273,7 @@ export default function JobDetailPage() {
               <select
                 value={fansSortBy}
                 onChange={(e) => setFansSortBy(e.target.value)}
-                className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white/70 focus:outline-none focus:border-primary-500/50"
+                className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white/70 focus:outline-none focus:border-primary-500/50 [&>option]:bg-[#1a1a2e] [&>option]:text-white"
               >
                 <option value="engagement_score">Sort: Engagement</option>
                 <option value="total_comments">Sort: Comments</option>

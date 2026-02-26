@@ -6,6 +6,7 @@ class BusinessProfileSettings(BaseModel):
     business_name: str = ""
     business_type: str = ""
     industry: str = ""
+    country: str = ""
     facebook_page_url: str = ""
     product_service_links: List[str] = Field(default_factory=list)
     target_audience_description: str = ""

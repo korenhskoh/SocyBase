@@ -248,6 +248,7 @@ export const tenantSettingsApi = {
       business_name: string;
       business_type: string;
       industry: string;
+      country: string;
       facebook_page_url: string;
       product_service_links: string[];
       target_audience_description: string;

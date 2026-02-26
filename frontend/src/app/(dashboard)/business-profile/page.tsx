@@ -12,6 +12,7 @@ export default function BusinessProfilePage() {
   const [bizName, setBizName] = useState("");
   const [bizType, setBizType] = useState("");
   const [bizIndustry, setBizIndustry] = useState("");
+  const [bizCountry, setBizCountry] = useState("");
   const [bizFbUrl, setBizFbUrl] = useState("");
   const [bizProductLinks, setBizProductLinks] = useState<string[]>([""]);
   const [bizTargetAudience, setBizTargetAudience] = useState("");
@@ -30,6 +31,7 @@ export default function BusinessProfilePage() {
           setBizName(s.business.business_name || "");
           setBizType(s.business.business_type || "");
           setBizIndustry(s.business.industry || "");
+          setBizCountry(s.business.country || "");
           setBizFbUrl(s.business.facebook_page_url || "");
           setBizProductLinks(
             s.business.product_service_links?.length ? s.business.product_service_links : [""]
@@ -50,6 +52,7 @@ export default function BusinessProfilePage() {
           business_name: bizName,
           business_type: bizType,
           industry: bizIndustry,
+          country: bizCountry,
           facebook_page_url: bizFbUrl,
           product_service_links: bizProductLinks.filter((l) => l.trim()),
           target_audience_description: bizTargetAudience,
@@ -132,7 +135,7 @@ export default function BusinessProfilePage() {
               <select
                 value={bizType}
                 onChange={(e) => setBizType(e.target.value)}
-                className="input-glass"
+                className="input-glass [&>option]:bg-[#1a1a2e] [&>option]:text-white"
               >
                 <option value="">Select type...</option>
                 <option value="ecommerce">E-Commerce</option>
@@ -151,15 +154,27 @@ export default function BusinessProfilePage() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm text-white/60 mb-1.5">Industry</label>
-            <input
-              type="text"
-              value={bizIndustry}
-              onChange={(e) => setBizIndustry(e.target.value)}
-              placeholder="e.g. Fashion, Technology, Food & Beverage"
-              className="input-glass"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">Industry</label>
+              <input
+                type="text"
+                value={bizIndustry}
+                onChange={(e) => setBizIndustry(e.target.value)}
+                placeholder="e.g. Fashion, Technology, Food & Beverage"
+                className="input-glass"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">Country</label>
+              <input
+                type="text"
+                value={bizCountry}
+                onChange={(e) => setBizCountry(e.target.value)}
+                placeholder="e.g. Malaysia, Thailand, Indonesia"
+                className="input-glass"
+              />
+            </div>
           </div>
 
           <div>

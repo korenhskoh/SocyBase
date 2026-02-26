@@ -162,7 +162,7 @@ export default function FanCatchPage() {
             <select
               value={selectedJobId}
               onChange={(e) => setSelectedJobId(e.target.value)}
-              className="input-glass text-sm flex-1 max-w-lg"
+              className="input-glass text-sm flex-1 max-w-lg [&>option]:bg-[#1a1a2e] [&>option]:text-white"
             >
               {jobs.map((j) => (
                 <option key={j.id} value={j.id}>
@@ -214,7 +214,7 @@ export default function FanCatchPage() {
               <select
                 value={fansSortBy}
                 onChange={(e) => setFansSortBy(e.target.value)}
-                className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white/70 focus:outline-none focus:border-primary-500/50"
+                className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white/70 focus:outline-none focus:border-primary-500/50 [&>option]:bg-[#1a1a2e] [&>option]:text-white"
               >
                 <option value="engagement_score">Sort: Engagement</option>
                 <option value="total_comments">Sort: Comments</option>

@@ -73,7 +73,9 @@ class OpenAIService:
         system_prompt = (
             "You are a social media marketing strategist. Based on the business profile "
             "provided, suggest Facebook pages that this business should monitor and scrape "
-            "for audience insights. Return a JSON object with:\n"
+            "for audience insights. Pay special attention to the country/region — suggest "
+            "pages that are relevant to the local market and language when a country is specified. "
+            "Return a JSON object with:\n"
             '  "business_fit_analysis": 2-3 sentence analysis of the business positioning,\n'
             '  "suggested_pages": list of 5-10 objects with:\n'
             '    "name": page name,\n'
@@ -88,6 +90,7 @@ class OpenAIService:
             f"Business: {business_data.get('business_name', 'Unknown')}\n"
             f"Type: {business_data.get('business_type', 'N/A')}\n"
             f"Industry: {business_data.get('industry', 'N/A')}\n"
+            f"Country: {business_data.get('country', 'N/A')}\n"
             f"Facebook Page: {business_data.get('facebook_page_url', 'N/A')}\n"
             f"Products/Services: {', '.join(business_data.get('product_service_links', []))}\n"
             f"Target Audience: {business_data.get('target_audience_description', 'N/A')}\n"
