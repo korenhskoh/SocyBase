@@ -85,6 +85,12 @@ class FacebookGraphClient(AbstractSocialClient):
                 result["page_id"] = _resolve_page_id(page_match.group(1), url)
             return result
 
+        # Reel post - /reel/{id} or /reels/{id}
+        reel_match = re.search(r"/reels?/(\d+)", url)
+        if reel_match:
+            result["post_id"] = reel_match.group(1)
+            return result
+
         # permalink.php?story_fbid=...
         story_match = re.search(r"story_fbid=(\d+)", url)
         if story_match:
