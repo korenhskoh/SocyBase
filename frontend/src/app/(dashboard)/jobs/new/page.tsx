@@ -47,10 +47,10 @@ const PLATFORMS: PlatformDef[] = [
       {
         id: "comment_scraper",
         label: "Comment Profile Scraper",
-        desc: "Extract commenter profiles from any post",
+        desc: "Extract commenter profiles from any Facebook post",
         icon: COMMENT_ICON,
         steps: [
-          { title: "Paste URL", desc: "Enter a Facebook post URL or ID" },
+          { title: "Paste URL", desc: "Enter a Facebook post, video, or reel URL" },
           { title: "Extract Comments", desc: "We fetch all commenters from the post" },
           { title: "Get Profiles", desc: "Each commenter's profile is enriched" },
         ],
@@ -58,10 +58,10 @@ const PLATFORMS: PlatformDef[] = [
       {
         id: "post_discovery",
         label: "Page Post Discovery",
-        desc: "Discover all posts from a page, group, or profile",
+        desc: "Discover all posts from a Facebook page, group, or profile",
         icon: DISCOVER_ICON,
         steps: [
-          { title: "Enter Page", desc: "Provide a Page ID, username, or URL" },
+          { title: "Enter Page", desc: "Page URL, username, or numeric ID" },
           { title: "Discover Posts", desc: "We fetch all posts with engagement data" },
           { title: "Select & Scrape", desc: "Pick posts to extract commenter profiles" },
         ],
@@ -544,12 +544,19 @@ function NewJobPage() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     className="input-glass min-h-[100px] resize-none"
-                    placeholder={"https://www.facebook.com/page/posts/123456789\nor paste a post ID like pfbid0zzVHSdSfx5a4..."}
+                    placeholder={"Paste a Facebook post URL here...\n\nhttps://www.facebook.com/pagename/posts/123456789\nhttps://fb.watch/abc123\npfbid0zzVHSdSfx5a4..."}
                     required
                   />
-                  <p className="text-xs text-white/30">
-                    Supported: Page posts, group posts, video posts, photo posts, reels
-                  </p>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-white/50">Supported URL formats:</p>
+                    <div className="grid grid-cols-1 gap-1 text-xs text-white/30">
+                      <p><span className="text-white/50">Post:</span> facebook.com/<span className="text-white/45">page</span>/posts/<span className="text-white/45">postId</span></p>
+                      <p><span className="text-white/50">Video:</span> facebook.com/watch?v=<span className="text-white/45">videoId</span> or fb.watch/<span className="text-white/45">id</span></p>
+                      <p><span className="text-white/50">Reel:</span> facebook.com/reel/<span className="text-white/45">reelId</span></p>
+                      <p><span className="text-white/50">Photo:</span> facebook.com/photo?fbid=<span className="text-white/45">photoId</span></p>
+                      <p><span className="text-white/50">Short ID:</span> pfbid0... or numeric post ID</p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Advanced Options */}
@@ -671,12 +678,19 @@ function NewJobPage() {
                     value={pageInput}
                     onChange={(e) => setPageInput(e.target.value)}
                     className="input-glass min-h-[100px] resize-none"
-                    placeholder={"Enter a Page ID, username, or URL\ne.g., mtpfan, 123456789, https://facebook.com/pagename"}
+                    placeholder={"Enter a Facebook page URL, username, or numeric ID...\n\nhttps://facebook.com/pagename\npagename\n100064690598698"}
                     required
                   />
-                  <p className="text-xs text-white/30">
-                    Supported: Page IDs, usernames, @handles, group URLs, profile URLs
-                  </p>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-white/50">Supported input formats:</p>
+                    <div className="grid grid-cols-1 gap-1 text-xs text-white/30">
+                      <p><span className="text-white/50">Page URL:</span> facebook.com/<span className="text-white/45">pagename</span></p>
+                      <p><span className="text-white/50">Username:</span> <span className="text-white/45">pagename</span> (without facebook.com)</p>
+                      <p><span className="text-white/50">Page ID:</span> <span className="text-white/45">100064690598698</span> (numeric ID)</p>
+                      <p><span className="text-white/50">Group:</span> facebook.com/groups/<span className="text-white/45">groupId</span> (use EAAGNO token type)</p>
+                      <p><span className="text-white/50">Profile:</span> facebook.com/profile.php?id=<span className="text-white/45">userId</span></p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Token Type */}

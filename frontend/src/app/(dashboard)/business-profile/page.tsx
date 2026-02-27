@@ -7,7 +7,6 @@ import type { TenantSettings, AIPageSuggestions } from "@/types";
 
 export default function BusinessProfilePage() {
   const { user } = useAuthStore();
-  const isAdmin = user?.role === "tenant_admin" || user?.role === "super_admin";
 
   const [bizName, setBizName] = useState("");
   const [bizType, setBizType] = useState("");
@@ -87,17 +86,6 @@ export default function BusinessProfilePage() {
     return (
       <div className="flex justify-center py-20">
         <div className="h-8 w-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
-    return (
-      <div className="max-w-2xl mx-auto space-y-8">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white">AI Business Profile</h1>
-          <p className="text-white/50 mt-1">Only admins can manage the business profile</p>
-        </div>
       </div>
     );
   }

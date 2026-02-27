@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_admin
+from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.schemas.tenant_settings import (
@@ -70,10 +70,23 @@ async def get_tenant_settings(
 @router.put("", response_model=TenantSettingsResponse)
 async def update_tenant_settings(
     data: UpdateTenantSettingsRequest,
-    user: User = Depends(get_current_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update tenant settings. Only tenant_admin or super_admin."""
+    """Update tenant settings.
+
+    Any user can update business profile, ai_suggestions, and telegram settings.
+    Only tenant_admin or super_admin can update email (SMTP) settings.
+    """
+    is_admin = user.role in ("tenant_admin", "super_admin")
+
+    # Non-admins cannot update email settings
+    if not is_admin and data.email is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admins can update email settings",
+        )
+
     result = await db.execute(
         select(Tenant).where(Tenant.id == user.tenant_id)
     )

@@ -559,3 +559,91 @@ async def update_feature_flag(
 
     await db.commit()
     return {"key": data.key, **value}
+
+
+# ── Payment Gateway Settings ─────────────────────────────────────────
+
+
+class PaymentSettingsUpdate(BaseModel):
+    stripe_publishable_key: str | None = None
+    stripe_secret_key: str | None = None
+    stripe_webhook_secret: str | None = None
+    bank_name: str | None = None
+    bank_account_name: str | None = None
+    bank_account_number: str | None = None
+    bank_duitnow_id: str | None = None
+    bank_swift_code: str | None = None
+    stripe_enabled: bool = True
+    bank_transfer_enabled: bool = True
+
+
+PAYMENT_SETTINGS_KEY = "payment_settings"
+PAYMENT_MASKED = "sk_****"
+
+
+@router.get("/payment-settings")
+async def get_payment_settings(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get payment gateway settings (masked secrets)."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == PAYMENT_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {}
+
+    data = dict(setting.value)
+    # Mask secret keys
+    if data.get("stripe_secret_key"):
+        data["stripe_secret_key"] = PAYMENT_MASKED
+    if data.get("stripe_webhook_secret"):
+        data["stripe_webhook_secret"] = PAYMENT_MASKED
+    return data
+
+
+@router.put("/payment-settings")
+async def update_payment_settings(
+    data: PaymentSettingsUpdate,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update payment gateway settings."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == PAYMENT_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    existing = dict(setting.value) if setting else {}
+
+    new_value = data.model_dump(exclude_none=True)
+
+    # Preserve existing secrets if masked placeholder sent back
+    if new_value.get("stripe_secret_key") == PAYMENT_MASKED:
+        new_value["stripe_secret_key"] = existing.get("stripe_secret_key", "")
+    if new_value.get("stripe_webhook_secret") == PAYMENT_MASKED:
+        new_value["stripe_webhook_secret"] = existing.get("stripe_webhook_secret", "")
+
+    merged = {**existing, **new_value}
+
+    if setting:
+        setting.value = merged
+        setting.updated_by = admin.id
+    else:
+        setting = SystemSetting(
+            key=PAYMENT_SETTINGS_KEY,
+            value=merged,
+            description="Payment gateway configuration (Stripe + bank transfer)",
+            updated_by=admin.id,
+        )
+        db.add(setting)
+
+    await db.commit()
+
+    # Return masked version
+    resp = dict(merged)
+    if resp.get("stripe_secret_key"):
+        resp["stripe_secret_key"] = PAYMENT_MASKED
+    if resp.get("stripe_webhook_secret"):
+        resp["stripe_webhook_secret"] = PAYMENT_MASKED
+    return resp

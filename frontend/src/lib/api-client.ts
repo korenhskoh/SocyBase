@@ -122,6 +122,7 @@ export const creditsApi = {
   getHistory: (params?: { page?: number; page_size?: number }) =>
     api.get("/credits/history", { params }),
   getPackages: () => api.get("/credits/packages"),
+  getPaymentInfo: () => api.get("/credits/payment-info"),
 };
 
 // Payments API
@@ -216,6 +217,19 @@ export const adminApi = {
   getFeatureFlags: () => api.get("/admin/feature-flags"),
   updateFeatureFlag: (key: string, enabled: boolean) =>
     api.put("/admin/feature-flags", { key, enabled }),
+  getPaymentSettings: () => api.get("/admin/payment-settings"),
+  updatePaymentSettings: (data: {
+    stripe_publishable_key?: string;
+    stripe_secret_key?: string;
+    stripe_webhook_secret?: string;
+    bank_name?: string;
+    bank_account_name?: string;
+    bank_account_number?: string;
+    bank_duitnow_id?: string;
+    bank_swift_code?: string;
+    stripe_enabled?: boolean;
+    bank_transfer_enabled?: boolean;
+  }) => api.put("/admin/payment-settings", data),
 };
 
 // Telegram API

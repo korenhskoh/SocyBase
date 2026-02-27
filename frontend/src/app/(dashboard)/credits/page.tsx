@@ -16,9 +16,20 @@ export default function CreditsPage() {
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // Payment info from admin settings
+  const [paymentInfo, setPaymentInfo] = useState<{
+    stripe_enabled: boolean;
+    bank_transfer_enabled: boolean;
+    bank_name: string;
+    bank_account_name: string;
+    bank_account_number: string;
+    bank_duitnow_id: string;
+  } | null>(null);
+
   useEffect(() => {
     creditsApi.getBalance().then((r) => setBalance(r.data)).catch(() => {});
     creditsApi.getPackages().then((r) => setPackages(r.data)).catch(() => {});
+    creditsApi.getPaymentInfo().then((r) => setPaymentInfo(r.data)).catch(() => {});
   }, []);
 
   const handlePurchase = async () => {
@@ -143,24 +154,28 @@ export default function CreditsPage() {
         <div className="space-y-4 animate-slide-up">
           <h2 className="text-xl font-semibold text-white">Payment Method</h2>
           <div className="flex gap-3">
-            <button
-              onClick={() => setPaymentMethod("stripe")}
-              className={`flex-1 glass-card p-4 text-center transition-all ${
-                paymentMethod === "stripe" ? "border-primary-500 bg-primary-500/10" : ""
-              }`}
-            >
-              <p className="font-medium text-white">Stripe</p>
-              <p className="text-xs text-white/40 mt-1">Credit/Debit Card</p>
-            </button>
-            <button
-              onClick={() => setPaymentMethod("bank_transfer")}
-              className={`flex-1 glass-card p-4 text-center transition-all ${
-                paymentMethod === "bank_transfer" ? "border-primary-500 bg-primary-500/10" : ""
-              }`}
-            >
-              <p className="font-medium text-white">DuitNow</p>
-              <p className="text-xs text-white/40 mt-1">Malaysian Bank Transfer</p>
-            </button>
+            {(paymentInfo?.stripe_enabled !== false) && (
+              <button
+                onClick={() => setPaymentMethod("stripe")}
+                className={`flex-1 glass-card p-4 text-center transition-all ${
+                  paymentMethod === "stripe" ? "border-primary-500 bg-primary-500/10" : ""
+                }`}
+              >
+                <p className="font-medium text-white">Stripe</p>
+                <p className="text-xs text-white/40 mt-1">Credit/Debit Card</p>
+              </button>
+            )}
+            {(paymentInfo?.bank_transfer_enabled !== false) && (
+              <button
+                onClick={() => setPaymentMethod("bank_transfer")}
+                className={`flex-1 glass-card p-4 text-center transition-all ${
+                  paymentMethod === "bank_transfer" ? "border-primary-500 bg-primary-500/10" : ""
+                }`}
+              >
+                <p className="font-medium text-white">DuitNow</p>
+                <p className="text-xs text-white/40 mt-1">Bank Transfer</p>
+              </button>
+            )}
           </div>
 
           <button
@@ -179,7 +194,7 @@ export default function CreditsPage() {
           <div className="glass-card max-w-md w-full mx-4 p-6 space-y-5">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-bold text-white">
-                DuitNow Bank Transfer
+                Bank Transfer
               </h3>
               <button
                 onClick={() => setShowBankModal(false)}
@@ -192,12 +207,16 @@ export default function CreditsPage() {
             {/* Bank Details */}
             <div className="rounded-lg bg-white/5 border border-white/10 p-4 space-y-2">
               <p className="text-sm text-white/40">Transfer to:</p>
-              <p className="text-white font-medium">SocyBase Sdn Bhd</p>
-              <p className="text-white/60 text-sm">Bank: Maybank</p>
-              <p className="text-white/60 text-sm">Account: 5621 2345 6789</p>
-              <p className="text-white/60 text-sm">
-                DuitNow ID: socybase@duitnow
-              </p>
+              <p className="text-white font-medium">{paymentInfo?.bank_account_name || "---"}</p>
+              {paymentInfo?.bank_name && (
+                <p className="text-white/60 text-sm">Bank: {paymentInfo.bank_name}</p>
+              )}
+              {paymentInfo?.bank_account_number && (
+                <p className="text-white/60 text-sm">Account: {paymentInfo.bank_account_number}</p>
+              )}
+              {paymentInfo?.bank_duitnow_id && (
+                <p className="text-white/60 text-sm">DuitNow ID: {paymentInfo.bank_duitnow_id}</p>
+              )}
               <div className="mt-2 pt-2 border-t border-white/10">
                 <p className="text-sm text-white/40">Amount</p>
                 <p className="text-lg font-bold text-white">
