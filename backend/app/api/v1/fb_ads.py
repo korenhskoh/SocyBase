@@ -415,6 +415,71 @@ async def disconnect(
     return {"detail": "Disconnected successfully."}
 
 
+@router.get("/debug-token")
+async def debug_token(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug endpoint: inspect stored FB token via Meta's /debug_token API."""
+    conn, account = await _get_active_connection(db, user.tenant_id)
+    if not conn:
+        return {"error": "No active connection"}
+
+    meta = MetaAPIService()
+    settings = get_settings()
+
+    try:
+        token = meta.decrypt_token(conn.access_token_encrypted)
+    except Exception as e:
+        return {"error": f"Token decryption failed: {e}"}
+
+    diag = {
+        "app_id_configured": settings.meta_app_id[:8] + "..." if settings.meta_app_id else "(empty)",
+        "app_secret_configured": bool(settings.meta_app_secret),
+        "token_first_chars": token[:12] + "..." if token else "(empty)",
+        "token_length": len(token) if token else 0,
+        "ad_account_id": account.account_id if account else None,
+    }
+
+    # Call Meta's debug_token endpoint (uses app token: app_id|app_secret)
+    app_token = f"{settings.meta_app_id}|{settings.meta_app_secret}"
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            resp = await client.get(
+                f"https://graph.facebook.com/v22.0/debug_token",
+                params={"input_token": token, "access_token": app_token},
+            )
+            diag["debug_token_status"] = resp.status_code
+            diag["debug_token_response"] = resp.json()
+        except Exception as e:
+            diag["debug_token_error"] = str(e)
+
+        # Also try a simple /me call to verify token works at all
+        try:
+            resp2 = await client.get(
+                f"https://graph.facebook.com/v22.0/me",
+                params={"access_token": token, "fields": "id,name"},
+            )
+            diag["me_status"] = resp2.status_code
+            diag["me_response"] = resp2.json()
+        except Exception as e:
+            diag["me_error"] = str(e)
+
+        # Try the campaigns call that's failing
+        if account:
+            try:
+                resp3 = await client.get(
+                    f"https://graph.facebook.com/v22.0/{account.account_id}/campaigns",
+                    params={"access_token": token, "fields": "id,name", "limit": 1},
+                )
+                diag["campaigns_status"] = resp3.status_code
+                diag["campaigns_response"] = resp3.json()
+            except Exception as e:
+                diag["campaigns_error"] = str(e)
+
+    return diag
+
+
 # ---------------------------------------------------------------------------
 # Ad Accounts
 # ---------------------------------------------------------------------------

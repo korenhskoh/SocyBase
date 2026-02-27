@@ -95,6 +95,8 @@ export default function FBPerformancePage() {
 
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncStats, setSyncStats] = useState<{campaigns: number; adsets: number; ads: number; insights: number} | null>(null);
+  const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
+  const [debugging, setDebugging] = useState(false);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -209,6 +211,23 @@ export default function FBPerformancePage() {
             )}
             {syncing ? "Syncing..." : "Sync Now"}
           </button>
+          <button
+            onClick={async () => {
+              setDebugging(true);
+              try {
+                const res = await fbAdsApi.debugToken();
+                setDebugInfo(res.data);
+              } catch (err: unknown) {
+                setDebugInfo({ error: (err as { message?: string })?.message || "Failed" });
+              } finally {
+                setDebugging(false);
+              }
+            }}
+            disabled={debugging}
+            className="text-xs px-3 py-2 rounded-lg font-medium bg-white/5 border border-white/10 text-white/40 hover:text-white/60 hover:bg-white/10 transition disabled:opacity-50"
+          >
+            {debugging ? "..." : "Debug"}
+          </button>
         </div>
       </div>
 
@@ -227,6 +246,19 @@ export default function FBPerformancePage() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           Synced {syncStats.campaigns} campaigns, {syncStats.adsets} ad sets, {syncStats.ads} ads, {syncStats.insights} insight rows.
+        </div>
+      )}
+
+      {/* Debug info */}
+      {debugInfo && (
+        <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wider">Token Diagnostics</h3>
+            <button onClick={() => setDebugInfo(null)} className="text-white/30 hover:text-white/60 text-xs">Close</button>
+          </div>
+          <pre className="text-xs text-white/50 whitespace-pre-wrap overflow-auto max-h-80 font-mono">
+            {JSON.stringify(debugInfo, null, 2)}
+          </pre>
         </div>
       )}
 

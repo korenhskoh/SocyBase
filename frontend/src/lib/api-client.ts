@@ -344,6 +344,7 @@ export const fbAdsApi = {
   getInsightsSummary: (dateFrom?: string, dateTo?: string) =>
     api.get("/fb-ads/insights/summary", { params: { date_from: dateFrom, date_to: dateTo } }),
   triggerSync: () => api.post("/fb-ads/sync"),
+  debugToken: () => api.get("/fb-ads/debug-token"),
   updateCampaignStatus: (id: string, status: string) =>
     api.post(`/fb-ads/campaigns/${id}/status`, { status }),
   updateAdSetStatus: (id: string, status: string) =>
