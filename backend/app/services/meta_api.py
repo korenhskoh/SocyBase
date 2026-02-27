@@ -1,5 +1,6 @@
 """Meta Marketing API client — OAuth, token management, account listing."""
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -51,6 +52,33 @@ class MetaAPIService:
     def _auth_params(self, access_token: str) -> dict:
         """Return auth query params for Graph API calls."""
         return {"access_token": access_token}
+
+    async def _get_with_retry(
+        self, client: httpx.AsyncClient, url: str, params: dict,
+        max_retries: int = 3,
+    ) -> httpx.Response:
+        """GET with automatic retry on Facebook rate limit (error code 17)."""
+        for attempt in range(max_retries + 1):
+            resp = await client.get(url, params=params)
+            if resp.status_code == 400:
+                try:
+                    body = resp.json()
+                    if body.get("error", {}).get("code") == 17:
+                        if attempt < max_retries:
+                            wait = min(2 ** (attempt + 1), 60)
+                            logger.warning(
+                                "Rate limit hit, retrying in %ds (attempt %d/%d)",
+                                wait, attempt + 1, max_retries,
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                except Exception:
+                    pass
+            resp.raise_for_status()
+            return resp
+        # Should not reach here, but just in case
+        resp.raise_for_status()
+        return resp
 
     # -- OAuth flow --------------------------------------------------------
 
@@ -124,8 +152,7 @@ class MetaAPIService:
         }
         async with httpx.AsyncClient() as client:
             while url:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
+                resp = await self._get_with_retry(client, url, params)
                 data = resp.json()
                 for acc in data.get("data", []):
                     status_map = {1: "ACTIVE", 2: "DISABLED", 3: "UNSETTLED", 7: "PENDING_RISK_REVIEW", 9: "IN_GRACE_PERIOD", 101: "PENDING_CLOSURE"}
@@ -157,8 +184,7 @@ class MetaAPIService:
         }
         async with httpx.AsyncClient() as client:
             while url:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
+                resp = await self._get_with_retry(client, url, params)
                 data = resp.json()
                 for pg in data.get("data", []):
                     pages.append({
@@ -199,19 +225,30 @@ class MetaAPIService:
 
     # -- Campaigns, Ad Sets, Ads (Phase 2) ---------------------------------
 
-    async def list_campaigns(self, access_token: str, ad_account_id: str) -> list[dict]:
-        """Fetch all campaigns for an ad account."""
+    async def list_campaigns(
+        self, access_token: str, ad_account_id: str,
+        status_filter: list[str] | None = None,
+    ) -> list[dict]:
+        """Fetch campaigns for an ad account.
+
+        Args:
+            status_filter: List of effective_status values to include.
+                           Defaults to ACTIVE + PAUSED to avoid fetching
+                           hundreds of deleted/archived campaigns.
+        """
+        if status_filter is None:
+            status_filter = ["ACTIVE", "PAUSED"]
         campaigns = []
         url = f"{GRAPH_BASE}/{ad_account_id}/campaigns"
         params = {
             **self._auth_params(access_token),
             "fields": "id,name,objective,status,daily_budget,lifetime_budget,buying_type,created_time,updated_time",
             "limit": 200,
+            "effective_status": json.dumps(status_filter),
         }
         async with httpx.AsyncClient(timeout=30) as client:
             while url:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
+                resp = await self._get_with_retry(client, url, params)
                 data = resp.json()
                 for c in data.get("data", []):
                     campaigns.append({
@@ -244,8 +281,7 @@ class MetaAPIService:
         }
         async with httpx.AsyncClient(timeout=30) as client:
             while url:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
+                resp = await self._get_with_retry(client, url, params)
                 data = resp.json()
                 for a in data.get("data", []):
                     adsets.append({
@@ -279,8 +315,7 @@ class MetaAPIService:
         }
         async with httpx.AsyncClient(timeout=30) as client:
             while url:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
+                resp = await self._get_with_retry(client, url, params)
                 data = resp.json()
                 for ad in data.get("data", []):
                     creative = ad.get("creative", {})
@@ -321,8 +356,7 @@ class MetaAPIService:
         }
         async with httpx.AsyncClient(timeout=60) as client:
             while url:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
+                resp = await self._get_with_retry(client, url, params)
                 data = resp.json()
                 for row in data.get("data", []):
                     # Determine object_id based on level
