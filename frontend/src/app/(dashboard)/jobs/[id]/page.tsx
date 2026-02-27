@@ -984,7 +984,7 @@ export default function JobDetailPage() {
       )}
 
       {/* Export Buttons + Report Link */}
-      {["completed", "cancelled", "paused"].includes(job.status) && (isPostDiscovery ? (postsTotal > 0 || posts.length > 0) : job.result_row_count > 0) && (
+      {["completed", "cancelled", "paused"].includes(job.status) && (isPostDiscovery ? (postsTotal > 0 || posts.length > 0 || job.result_row_count > 0) : job.result_row_count > 0) && (
         <div className="flex flex-col sm:flex-row gap-3">
           {isPostDiscovery ? (
             <>
@@ -1063,8 +1063,18 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      {/* Empty state for cancelled/paused/failed post discovery jobs */}
-      {isPostDiscovery && posts.length === 0 && postsTotal === 0 && ["cancelled", "paused", "failed"].includes(job.status) && (
+      {/* Loading state for cancelled/paused/failed jobs that have posts but haven't loaded yet */}
+      {isPostDiscovery && posts.length === 0 && postsTotal === 0 && ["cancelled", "paused", "failed"].includes(job.status) && job.result_row_count > 0 && (
+        <div className="glass-card p-8">
+          <div className="flex flex-col items-center justify-center gap-3">
+            <div className="h-6 w-6 border-2 border-primary-500/30 border-t-primary-400 rounded-full animate-spin" />
+            <p className="text-sm text-white/40">Loading {formatNumber(job.result_row_count)} discovered posts...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state for cancelled/paused/failed post discovery jobs with no posts */}
+      {isPostDiscovery && posts.length === 0 && postsTotal === 0 && ["cancelled", "paused", "failed"].includes(job.status) && job.result_row_count === 0 && (
         <div className="glass-card p-8 text-center">
           <p className="text-sm text-white/40">
             {job.status === "cancelled" && "Job was stopped before any posts were discovered."}

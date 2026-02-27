@@ -566,10 +566,14 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
                         job.credits_used = credits_used
                         await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
+                        # Save cursors so "Discover Older Posts" works for stopped jobs
+                        _cur_after = (page_params or {}).get("__paging_token") or (page_params or {}).get("after")
                         await _save_pipeline_state(
                             db, job, "fetch_posts",
                             pages_fetched=pages_fetched,
                             last_cursor=last_cursor,
+                            last_after_cursor=_cur_after,
+                            first_before_cursor=first_before_cursor,
                             total_posts_fetched=total_posts_fetched,
                         )
                         await _append_log(

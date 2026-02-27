@@ -180,6 +180,7 @@ export const adminApi = {
     api.post(`/admin/payments/${id}/reject`, { admin_notes: notes }),
   grantCredits: (data: { tenant_id: string; amount: number; description: string }) =>
     api.post("/admin/credits/grant", data),
+  getCreditBalances: () => api.get("/admin/credits/balances"),
   getAuditLogs: (params?: { page?: number }) =>
     api.get("/admin/audit-logs", { params }),
   listPackages: () => api.get("/admin/packages"),

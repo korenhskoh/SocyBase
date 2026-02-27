@@ -4,8 +4,16 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api-client";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatNumber } from "@/lib/utils";
 import type { User } from "@/types";
+
+interface CreditBalanceInfo {
+  tenant_id: string;
+  tenant_name: string;
+  balance: number;
+  lifetime_purchased: number;
+  lifetime_used: number;
+}
 
 export default function AdminUsersPage() {
   const { user: currentUser } = useAuth(true);
@@ -18,24 +26,36 @@ export default function AdminUsersPage() {
   const [editValue, setEditValue] = useState("");
   const [savingConcurrency, setSavingConcurrency] = useState(false);
 
+  // Credit balances keyed by tenant_id
+  const [creditBalances, setCreditBalances] = useState<Record<string, CreditBalanceInfo>>({});
+  const [grantingTenant, setGrantingTenant] = useState<string | null>(null);
+  const [grantAmount, setGrantAmount] = useState("");
+  const [grantDescription, setGrantDescription] = useState("");
+  const [savingGrant, setSavingGrant] = useState(false);
+
   useEffect(() => {
     if (currentUser?.role === "super_admin") {
-      adminApi
-        .listUsers({ page: 1 })
-        .then((r) => {
-          setUsers(r.data);
-          // Fetch concurrency limits for unique tenants
-          const tenantIds = Array.from(new Set(r.data.map((u: User) => u.tenant_id))) as string[];
-          tenantIds.forEach((tid) => {
-            adminApi.getTenantConcurrency(tid).then((res) => {
-              setConcurrencyLimits((prev) => ({ ...prev, [tid]: res.data.max_concurrent_jobs }));
-            }).catch(() => {
-              setConcurrencyLimits((prev) => ({ ...prev, [tid]: 3 }));
-            });
+      Promise.all([
+        adminApi.listUsers({ page: 1 }),
+        adminApi.getCreditBalances(),
+      ]).then(([usersRes, balancesRes]) => {
+        setUsers(usersRes.data);
+        // Index balances by tenant_id
+        const balMap: Record<string, CreditBalanceInfo> = {};
+        (balancesRes.data as CreditBalanceInfo[]).forEach((b) => {
+          balMap[b.tenant_id] = b;
+        });
+        setCreditBalances(balMap);
+        // Fetch concurrency limits for unique tenants
+        const tenantIds = Array.from(new Set(usersRes.data.map((u: User) => u.tenant_id))) as string[];
+        tenantIds.forEach((tid) => {
+          adminApi.getTenantConcurrency(tid).then((res) => {
+            setConcurrencyLimits((prev) => ({ ...prev, [tid]: res.data.max_concurrent_jobs }));
+          }).catch(() => {
+            setConcurrencyLimits((prev) => ({ ...prev, [tid]: 3 }));
           });
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false));
+        });
+      }).catch(() => {}).finally(() => setLoading(false));
     }
   }, [currentUser]);
 
@@ -86,6 +106,40 @@ export default function AdminUsersPage() {
     }
   };
 
+  const startGrantCredits = (tenantId: string) => {
+    setGrantingTenant(tenantId);
+    setGrantAmount("");
+    setGrantDescription("Bonus credits");
+  };
+
+  const handleGrantCredits = async (tenantId: string) => {
+    const amount = parseInt(grantAmount, 10);
+    if (isNaN(amount) || amount <= 0) return;
+
+    setSavingGrant(true);
+    try {
+      const res = await adminApi.grantCredits({
+        tenant_id: tenantId,
+        amount,
+        description: grantDescription || "Bonus credits",
+      });
+      // Update local balance
+      setCreditBalances((prev) => ({
+        ...prev,
+        [tenantId]: {
+          ...prev[tenantId],
+          balance: res.data.new_balance,
+          lifetime_purchased: (prev[tenantId]?.lifetime_purchased || 0) + amount,
+        },
+      }));
+      setGrantingTenant(null);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Failed to grant credits");
+    } finally {
+      setSavingGrant(false);
+    }
+  };
+
   if (currentUser?.role !== "super_admin") {
     return (
       <div className="text-center py-20 text-white/40">
@@ -109,7 +163,7 @@ export default function AdminUsersPage() {
             <h1 className="text-2xl md:text-3xl font-bold text-white">User Management</h1>
           </div>
           <p className="text-white/50 mt-1 ml-7">
-            Manage users, roles, access, and concurrency limits
+            Manage users, roles, credits, and concurrency limits
           </p>
         </div>
       </div>
@@ -126,7 +180,7 @@ export default function AdminUsersPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[800px]">
+          <table className="w-full min-w-[900px]">
             <thead>
               <tr className="border-b border-white/5">
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-4 md:px-6 py-3">
@@ -142,6 +196,9 @@ export default function AdminUsersPage() {
                   Active
                 </th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-4 md:px-6 py-3">
+                  Credits
+                </th>
+                <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-4 md:px-6 py-3">
                   Max Jobs
                 </th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-4 md:px-6 py-3">
@@ -150,7 +207,9 @@ export default function AdminUsersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {users.map((u) => (
+              {users.map((u) => {
+                const bal = creditBalances[u.tenant_id];
+                return (
                 <tr key={u.id} className="hover:bg-white/[0.02] transition">
                   <td className="px-4 md:px-6 py-4 text-sm text-white/80">{u.email}</td>
                   <td className="px-4 md:px-6 py-4 text-sm text-white/60">
@@ -178,6 +237,75 @@ export default function AdminUsersPage() {
                     >
                       {u.is_active ? "Active" : "Inactive"}
                     </button>
+                  </td>
+                  {/* Credits */}
+                  <td className="px-4 md:px-6 py-4">
+                    {grantingTenant === u.tenant_id ? (
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="Amount"
+                            value={grantAmount}
+                            onChange={(e) => setGrantAmount(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleGrantCredits(u.tenant_id);
+                              if (e.key === "Escape") setGrantingTenant(null);
+                            }}
+                            className="w-20 bg-white/5 border border-emerald-500/50 rounded-lg px-2 py-1 text-sm text-white focus:outline-none"
+                            autoFocus
+                            disabled={savingGrant}
+                          />
+                          <button
+                            onClick={() => handleGrantCredits(u.tenant_id)}
+                            disabled={savingGrant || !grantAmount}
+                            className="text-emerald-400 hover:text-emerald-300 transition disabled:opacity-30"
+                            title="Grant"
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => setGrantingTenant(null)}
+                            className="text-white/30 hover:text-white/60 transition"
+                            title="Cancel"
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Reason (optional)"
+                          value={grantDescription}
+                          onChange={(e) => setGrantDescription(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleGrantCredits(u.tenant_id);
+                            if (e.key === "Escape") setGrantingTenant(null);
+                          }}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/60 focus:outline-none focus:border-white/20"
+                          disabled={savingGrant}
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-mono text-white/70">
+                          {bal ? formatNumber(bal.balance) : "---"}
+                        </span>
+                        <button
+                          onClick={() => startGrantCredits(u.tenant_id)}
+                          className="text-emerald-400/60 hover:text-emerald-400 transition p-0.5 rounded hover:bg-emerald-400/10"
+                          title="Grant bonus credits"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
                   </td>
                   {/* Concurrent jobs limit */}
                   <td className="px-4 md:px-6 py-4">
@@ -234,7 +362,8 @@ export default function AdminUsersPage() {
                     {formatDate(u.created_at)}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           </div>

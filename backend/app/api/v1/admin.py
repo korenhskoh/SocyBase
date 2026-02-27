@@ -243,6 +243,36 @@ async def grant_credits(
     return {"message": f"Granted {data.amount} credits", "new_balance": balance.balance}
 
 
+@router.get("/credits/balances")
+async def list_credit_balances(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all tenants with their credit balance info."""
+    result = await db.execute(
+        select(
+            Tenant.id,
+            Tenant.name,
+            CreditBalance.balance,
+            CreditBalance.lifetime_purchased,
+            CreditBalance.lifetime_used,
+        )
+        .outerjoin(CreditBalance, CreditBalance.tenant_id == Tenant.id)
+        .order_by(Tenant.name)
+    )
+    rows = result.all()
+    return [
+        {
+            "tenant_id": str(r[0]),
+            "tenant_name": r[1],
+            "balance": r[2] or 0,
+            "lifetime_purchased": r[3] or 0,
+            "lifetime_used": r[4] or 0,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/audit-logs", response_model=list[AuditLogResponse])
 async def list_audit_logs(
     admin: User = Depends(get_super_admin),
