@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -870,9 +870,175 @@ async def trigger_sync(
     if not account:
         raise HTTPException(status_code=400, detail="No ad account selected.")
 
-    from app.scraping.fb_sync_tasks import sync_fb_data
-    task = sync_fb_data.delay(str(user.tenant_id))
-    return {"detail": "Sync started.", "task_id": task.id}
+    # Try Celery first, fall back to inline sync
+    try:
+        from app.scraping.fb_sync_tasks import sync_fb_data
+        task = sync_fb_data.delay(str(user.tenant_id))
+        return {"detail": "Sync started.", "task_id": task.id}
+    except Exception:
+        logger.info("Celery not available, running sync inline for tenant %s", user.tenant_id)
+
+    # Inline sync: fetch data directly from Meta API
+    meta = MetaAPIService()
+    token = meta.decrypt_token(conn.access_token_encrypted)
+    stats = {"campaigns": 0, "adsets": 0, "ads": 0, "insights": 0}
+
+    try:
+        # 1. Sync campaigns
+        campaigns = await meta.list_campaigns(token, account.account_id)
+        for c in campaigns:
+            existing = await db.execute(
+                select(FBCampaign).where(FBCampaign.campaign_id == c["campaign_id"])
+            )
+            camp = existing.scalar_one_or_none()
+            if camp:
+                camp.name = c["name"]
+                camp.objective = c["objective"]
+                camp.status = c["status"]
+                camp.daily_budget = c["daily_budget"]
+                camp.lifetime_budget = c["lifetime_budget"]
+                camp.buying_type = c["buying_type"]
+                camp.raw_data = c["raw_data"]
+                camp.synced_at = datetime.now(timezone.utc)
+            else:
+                camp = FBCampaign(
+                    tenant_id=user.tenant_id,
+                    ad_account_id=account.id,
+                    campaign_id=c["campaign_id"],
+                    name=c["name"],
+                    objective=c["objective"],
+                    status=c["status"],
+                    daily_budget=c["daily_budget"],
+                    lifetime_budget=c["lifetime_budget"],
+                    buying_type=c["buying_type"],
+                    raw_data=c["raw_data"],
+                )
+                db.add(camp)
+                await db.flush()
+            stats["campaigns"] += 1
+
+            # 2. Sync ad sets for each campaign
+            adsets = await meta.list_adsets(token, c["campaign_id"])
+            for a in adsets:
+                existing = await db.execute(
+                    select(FBAdSet).where(FBAdSet.adset_id == a["adset_id"])
+                )
+                adset = existing.scalar_one_or_none()
+                if adset:
+                    adset.name = a["name"]
+                    adset.status = a["status"]
+                    adset.daily_budget = a["daily_budget"]
+                    adset.targeting = a["targeting"]
+                    adset.optimization_goal = a["optimization_goal"]
+                    adset.billing_event = a["billing_event"]
+                    adset.bid_strategy = a["bid_strategy"]
+                    adset.raw_data = a["raw_data"]
+                    adset.synced_at = datetime.now(timezone.utc)
+                else:
+                    adset = FBAdSet(
+                        tenant_id=user.tenant_id,
+                        campaign_id=camp.id,
+                        adset_id=a["adset_id"],
+                        name=a["name"],
+                        status=a["status"],
+                        daily_budget=a["daily_budget"],
+                        targeting=a["targeting"],
+                        optimization_goal=a["optimization_goal"],
+                        billing_event=a["billing_event"],
+                        bid_strategy=a["bid_strategy"],
+                        raw_data=a["raw_data"],
+                    )
+                    db.add(adset)
+                    await db.flush()
+                stats["adsets"] += 1
+
+                # 3. Sync ads for each ad set
+                ads = await meta.list_ads(token, a["adset_id"])
+                for ad_data in ads:
+                    existing = await db.execute(
+                        select(FBAd).where(FBAd.ad_id == ad_data["ad_id"])
+                    )
+                    ad = existing.scalar_one_or_none()
+                    if ad:
+                        ad.name = ad_data["name"]
+                        ad.status = ad_data["status"]
+                        ad.creative_id = ad_data["creative_id"]
+                        ad.creative_data = ad_data["creative_data"]
+                        ad.raw_data = ad_data["raw_data"]
+                        ad.synced_at = datetime.now(timezone.utc)
+                    else:
+                        db.add(FBAd(
+                            tenant_id=user.tenant_id,
+                            adset_id=adset.id,
+                            ad_id=ad_data["ad_id"],
+                            name=ad_data["name"],
+                            status=ad_data["status"],
+                            creative_id=ad_data["creative_id"],
+                            creative_data=ad_data["creative_data"],
+                            raw_data=ad_data["raw_data"],
+                        ))
+                    stats["ads"] += 1
+
+        # 4. Sync insights (last 90 days)
+        date_to = date.today().isoformat()
+        date_from = (date.today() - timedelta(days=90)).isoformat()
+
+        for level in ("campaign", "adset", "ad"):
+            rows = await meta.get_insights(
+                token, account.account_id, date_from, date_to, level=level
+            )
+            for row in rows:
+                row_date = date.fromisoformat(row["date"]) if isinstance(row["date"], str) else row["date"]
+                existing = await db.execute(
+                    select(FBInsight).where(
+                        FBInsight.object_type == row["object_type"],
+                        FBInsight.object_id == row["object_id"],
+                        FBInsight.date == row_date,
+                    )
+                )
+                insight = existing.scalar_one_or_none()
+                if insight:
+                    insight.spend = row["spend"]
+                    insight.impressions = row["impressions"]
+                    insight.clicks = row["clicks"]
+                    insight.ctr = row["ctr"]
+                    insight.cpc = row["cpc"]
+                    insight.cpm = row["cpm"]
+                    insight.results = row["results"]
+                    insight.cost_per_result = row["cost_per_result"]
+                    insight.purchase_value = row["purchase_value"]
+                    insight.roas = row["roas"]
+                    insight.actions = row["actions"]
+                    insight.synced_at = datetime.now(timezone.utc)
+                else:
+                    db.add(FBInsight(
+                        tenant_id=user.tenant_id,
+                        object_type=row["object_type"],
+                        object_id=row["object_id"],
+                        date=row_date,
+                        spend=row["spend"],
+                        impressions=row["impressions"],
+                        clicks=row["clicks"],
+                        ctr=row["ctr"],
+                        cpc=row["cpc"],
+                        cpm=row["cpm"],
+                        results=row["results"],
+                        cost_per_result=row["cost_per_result"],
+                        purchase_value=row["purchase_value"],
+                        roas=row["roas"],
+                        actions=row["actions"],
+                    ))
+                stats["insights"] += 1
+
+        conn.last_synced_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    except Exception as e:
+        logger.exception("Inline sync failed for tenant %s", user.tenant_id)
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+    return {"detail": "Sync complete.", "stats": stats}
 
 
 @router.post("/campaigns/{campaign_db_id}/status")
