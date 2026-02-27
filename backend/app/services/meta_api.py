@@ -49,13 +49,8 @@ class MetaAPIService:
         return self._fernet.decrypt(encrypted.encode()).decode()
 
     def _auth_params(self, access_token: str) -> dict:
-        """Return access_token + appsecret_proof params for API calls."""
-        proof = hmac.new(
-            self.app_secret.encode(),
-            access_token.encode(),
-            hashlib.sha256,
-        ).hexdigest()
-        return {"access_token": access_token, "appsecret_proof": proof}
+        """Return auth query params for Graph API calls."""
+        return {"access_token": access_token}
 
     # -- OAuth flow --------------------------------------------------------
 
