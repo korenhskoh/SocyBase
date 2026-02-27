@@ -11,10 +11,10 @@ import { formatCurrency } from "@/lib/utils";
 import type { CreditPackage } from "@/types";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
-  MockupProfileExtraction,
-  MockupCommentScraping,
-  MockupBulkProcessing,
-  MockupExportAnywhere,
+  MockupCompetitorDiscovery,
+  MockupAudienceExtraction,
+  MockupEngagementScoring,
+  MockupFBAdsExport,
 } from "@/components/landing/FeatureMockups";
 
 /* ─── Dynamic 3D imports (SSR disabled — Three.js is browser-only) ─── */
@@ -58,32 +58,32 @@ const LinkedInIcon = ({ className = "h-5 w-5" }: { className?: string }) => (
 /* ─── Data ─── */
 const features = [
   {
-    titleKey: "landing.profile_extraction",
-    descKey: "landing.profile_extraction_desc",
-    icon: "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z",
-    color: "#00AAFF",
-    mockup: <MockupProfileExtraction />,
-  },
-  {
-    titleKey: "landing.comment_scraping",
-    descKey: "landing.comment_scraping_desc",
-    icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z",
+    titleKey: "landing.feature_1_title",
+    descKey: "landing.feature_1_desc",
+    icon: "M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z",
     color: "#7C5CFF",
-    mockup: <MockupCommentScraping />,
+    mockup: <MockupCompetitorDiscovery />,
   },
   {
-    titleKey: "landing.bulk_processing",
-    descKey: "landing.bulk_processing_desc",
-    icon: "M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z",
+    titleKey: "landing.feature_2_title",
+    descKey: "landing.feature_2_desc",
+    icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z",
+    color: "#00AAFF",
+    mockup: <MockupAudienceExtraction />,
+  },
+  {
+    titleKey: "landing.feature_3_title",
+    descKey: "landing.feature_3_desc",
+    icon: "M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z",
     color: "#FF3366",
-    mockup: <MockupBulkProcessing />,
+    mockup: <MockupEngagementScoring />,
   },
   {
-    titleKey: "landing.export_anywhere",
-    descKey: "landing.export_anywhere_desc",
+    titleKey: "landing.feature_4_title",
+    descKey: "landing.feature_4_desc",
     icon: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3",
     color: "#FFAA00",
-    mockup: <MockupExportAnywhere />,
+    mockup: <MockupFBAdsExport />,
   },
 ];
 
@@ -322,6 +322,29 @@ export default function LandingPage() {
                   {t("landing.see_how")}
                 </a>
               </motion.div>
+
+              {/* Social proof */}
+              <motion.div
+                className="mt-8 flex items-center gap-3"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.5, duration: 0.6 }}
+              >
+                <div className="flex -space-x-2">
+                  {["#00AAFF", "#7C5CFF", "#FF3366", "#FFAA00"].map((c, i) => (
+                    <div
+                      key={i}
+                      className="h-8 w-8 rounded-full border-2 border-navy-950 flex items-center justify-center text-[10px] font-bold text-white/60"
+                      style={{ background: `${c}20` }}
+                    >
+                      {["S", "M", "L", "A"][i]}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-sm text-white/30">
+                  <span className="text-white/60 font-medium">500+</span> {t("landing.social_proof")}
+                </p>
+              </motion.div>
             </div>
 
             {/* Right column — 3D Globe + HeroDataCards (desktop only) */}
@@ -357,10 +380,10 @@ export default function LandingPage() {
             viewport={{ once: true, margin: "-50px" }}
           >
             {[
-              { value: "18+", labelKey: "landing.data_fields", color: "#00AAFF" },
-              { value: "10K+", labelKey: "landing.profiles_job", color: "#7C5CFF" },
-              { value: "99.9%", labelKey: "landing.uptime", color: "#FF3366" },
-              { value: "<2s", labelKey: "landing.per_profile", color: "#FFAA00" },
+              { value: "50K+", labelKey: "landing.stat_audiences", color: "#00AAFF" },
+              { value: "2M+", labelKey: "landing.stat_profiles", color: "#7C5CFF" },
+              { value: "94%", labelKey: "landing.stat_intent_accuracy", color: "#FF3366" },
+              { value: "<60s", labelKey: "landing.stat_export_speed", color: "#FFAA00" },
             ].map((s) => (
               <motion.div
                 key={s.labelKey}
@@ -392,6 +415,83 @@ export default function LandingPage() {
               <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
             </svg>
           </div>
+        </div>
+      </section>
+
+      {/* ══════════════════ PIPELINE FLOW ══════════════════ */}
+      <section className="py-16 relative overflow-hidden">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <motion.div
+            className="hidden md:flex items-center justify-between gap-2"
+            variants={staggerContainer}
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, margin: "-50px" }}
+          >
+            {[
+              { labelKey: "landing.pipeline_find", color: "#7C5CFF", icon: "M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" },
+              { labelKey: "landing.pipeline_extract", color: "#00AAFF", icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" },
+              { labelKey: "landing.pipeline_score", color: "#FF3366", icon: "M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" },
+              { labelKey: "landing.pipeline_export", color: "#FFAA00", icon: "M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" },
+            ].map((step, i) => (
+              <motion.div key={step.labelKey} className="contents" variants={fadeInUp}>
+                <div className="glass-card-soft p-4 text-center flex-1 group hover:border-white/10 transition-all">
+                  <div
+                    className="h-10 w-10 rounded-xl mx-auto mb-2 flex items-center justify-center transition-all group-hover:scale-110"
+                    style={{ background: `${step.color}10` }}
+                  >
+                    <svg className="h-5 w-5" style={{ color: step.color }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d={step.icon} />
+                    </svg>
+                  </div>
+                  <p className="text-[11px] font-medium text-white/50">{t(step.labelKey)}</p>
+                </div>
+                {i < 3 && (
+                  <div className="flex-shrink-0 px-1">
+                    <svg className="h-4 w-8" viewBox="0 0 32 16" fill="none">
+                      <line x1="0" y1="8" x2="24" y2="8" stroke={`${step.color}40`} strokeWidth="1.5" strokeDasharray="3 3" />
+                      <path d="M22 4l6 4-6 4" stroke={`${step.color}40`} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                    </svg>
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </motion.div>
+
+          {/* Mobile: vertical pipeline */}
+          <motion.div
+            className="md:hidden flex flex-col items-center gap-3"
+            variants={staggerContainer}
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, margin: "-30px" }}
+          >
+            {[
+              { labelKey: "landing.pipeline_find", color: "#7C5CFF" },
+              { labelKey: "landing.pipeline_extract", color: "#00AAFF" },
+              { labelKey: "landing.pipeline_score", color: "#FF3366" },
+              { labelKey: "landing.pipeline_export", color: "#FFAA00" },
+            ].map((step, i) => (
+              <motion.div key={step.labelKey} variants={fadeInUp} className="w-full">
+                <div className="glass-card-soft px-4 py-3 flex items-center gap-3">
+                  <div
+                    className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 text-xs font-bold"
+                    style={{ background: `${step.color}15`, color: step.color }}
+                  >
+                    {i + 1}
+                  </div>
+                  <span className="text-sm text-white/60">{t(step.labelKey)}</span>
+                </div>
+                {i < 3 && (
+                  <div className="flex justify-center py-1">
+                    <svg className="h-4 w-4 text-white/10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3" />
+                    </svg>
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </motion.div>
         </div>
       </section>
 
@@ -477,14 +577,14 @@ export default function LandingPage() {
               {t("landing.how_it_works")}
             </p>
             <h2 className="text-3xl md:text-5xl font-bold">
-              {t("landing.three_steps")} <span className="gradient-text">{t("landing.your_data")}</span>
+              {t("landing.workflow_heading")} <span className="gradient-text">{t("landing.workflow_heading_2")}</span>
             </h2>
           </motion.div>
 
           {/* Horizontal steps layout */}
           <div className="relative">
             {/* SVG connecting line (desktop only) — draws itself */}
-            <div className="hidden md:block absolute top-16 left-[16.67%] right-[16.67%] h-[2px] z-0">
+            <div className="hidden lg:block absolute top-16 left-[12.5%] right-[12.5%] h-[2px] z-0">
               <motion.svg
                 className="w-full h-full"
                 initial="hidden"
@@ -510,16 +610,17 @@ export default function LandingPage() {
                 />
                 <defs>
                   <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#00AAFF" />
-                    <stop offset="50%" stopColor="#7C5CFF" />
-                    <stop offset="100%" stopColor="#FF3366" />
+                    <stop offset="0%" stopColor="#7C5CFF" />
+                    <stop offset="33%" stopColor="#00AAFF" />
+                    <stop offset="67%" stopColor="#FF3366" />
+                    <stop offset="100%" stopColor="#FFAA00" />
                   </linearGradient>
                 </defs>
               </motion.svg>
             </div>
 
             <motion.div
-              className="grid grid-cols-1 md:grid-cols-3 gap-8 relative z-10"
+              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 relative z-10"
               variants={staggerContainer}
               initial="hidden"
               whileInView="visible"
@@ -528,24 +629,31 @@ export default function LandingPage() {
               {[
                 {
                   step: "01",
-                  titleKey: "landing.step_1_title",
-                  descKey: "landing.step_1_desc",
-                  color: "#00AAFF",
-                  icon: "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z",
+                  titleKey: "landing.workflow_step_1_title",
+                  descKey: "landing.workflow_step_1_desc",
+                  color: "#7C5CFF",
+                  icon: "M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z",
                 },
                 {
                   step: "02",
-                  titleKey: "landing.step_2_title",
-                  descKey: "landing.step_2_desc",
-                  color: "#7C5CFF",
-                  icon: "M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281zM15 12a3 3 0 11-6 0 3 3 0 016 0z",
+                  titleKey: "landing.workflow_step_2_title",
+                  descKey: "landing.workflow_step_2_desc",
+                  color: "#00AAFF",
+                  icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z",
                 },
                 {
                   step: "03",
-                  titleKey: "landing.step_3_title",
-                  descKey: "landing.step_3_desc",
+                  titleKey: "landing.workflow_step_3_title",
+                  descKey: "landing.workflow_step_3_desc",
                   color: "#FF3366",
-                  icon: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3",
+                  icon: "M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z",
+                },
+                {
+                  step: "04",
+                  titleKey: "landing.workflow_step_4_title",
+                  descKey: "landing.workflow_step_4_desc",
+                  color: "#FFAA00",
+                  icon: "M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z",
                 },
               ].map((item) => (
                 <motion.div

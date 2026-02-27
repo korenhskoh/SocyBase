@@ -3,12 +3,11 @@
 import { motion } from "framer-motion";
 
 const dataFields = [
-  { name: "Full Name", value: "John Doe", color: "#00AAFF" },
-  { name: "Location", value: "New York, US", color: "#7C5CFF" },
-  { name: "Education", value: "MIT '18", color: "#FF3366" },
-  { name: "Work", value: "Google Inc.", color: "#FFAA00" },
-  { name: "Position", value: "Sr. Engineer", color: "#00AAFF" },
-  { name: "Gender", value: "Male", color: "#7C5CFF" },
+  { name: "Competitor", value: "BrandX Fashion", color: "#7C5CFF" },
+  { name: "Fans Extracted", value: "2,847 profiles", color: "#00AAFF" },
+  { name: "High Intent", value: "1,247 (43.8%)", color: "#FF3366" },
+  { name: "Avg Score", value: "87 / 100", color: "#FFAA00" },
+  { name: "Export", value: "FB Ads Ready", color: "#00AAFF" },
 ];
 
 const containerVariants = {
@@ -46,7 +45,7 @@ export function HeroDataCards() {
             className="h-2 w-2 rounded-full shrink-0"
             style={{ background: field.color, boxShadow: `0 0 8px ${field.color}40` }}
           />
-          <span className="text-xs text-white/40 w-20 shrink-0">{field.name}</span>
+          <span className="text-xs text-white/40 w-24 shrink-0">{field.name}</span>
           <span className="text-sm text-white/80 font-medium">{field.value}</span>
         </motion.div>
       ))}
