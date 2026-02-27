@@ -51,6 +51,17 @@ export default function AdminPaymentsPage() {
     }
   };
 
+  const handleRefund = async (paymentId: string) => {
+    if (!confirm("Are you sure you want to refund this payment? Credits will be deducted from the tenant.")) return;
+    const notes = prompt("Refund reason (optional):");
+    try {
+      await adminApi.refundPayment(paymentId, notes || undefined);
+      fetchPayments();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Failed to refund");
+    }
+  };
+
   if (user?.role !== "super_admin") {
     return (
       <div className="text-center py-20 text-white/40">
@@ -73,13 +84,13 @@ export default function AdminPaymentsPage() {
           <h1 className="text-2xl md:text-3xl font-bold text-white">Payment Management</h1>
         </div>
         <p className="text-white/50 mt-1 ml-7">
-          Review and approve payments
+          Review, approve, and refund payments
         </p>
       </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">
-        {["", "pending", "completed", "failed"].map((s) => (
+        {["", "pending", "completed", "failed", "refunded"].map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -136,15 +147,20 @@ export default function AdminPaymentsPage() {
                     {formatCurrency(p.amount_cents, p.currency)}
                   </td>
                   <td className="px-6 py-4">
-                    <span
-                      className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                        p.method === "stripe"
-                          ? "text-purple-400 bg-purple-400/10"
-                          : "text-blue-400 bg-blue-400/10"
-                      }`}
-                    >
-                      {p.method === "stripe" ? "Stripe" : "Bank Transfer"}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span
+                        className={`text-xs px-2.5 py-1 rounded-full font-medium w-fit ${
+                          p.method === "stripe"
+                            ? "text-purple-400 bg-purple-400/10"
+                            : "text-blue-400 bg-blue-400/10"
+                        }`}
+                      >
+                        {p.method === "stripe" ? "Stripe" : "Bank Transfer"}
+                      </span>
+                      {p.stripe_subscription_id && (
+                        <span className="text-[10px] text-amber-400/70">subscription</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     <span
@@ -174,22 +190,32 @@ export default function AdminPaymentsPage() {
                     {formatDate(p.created_at)}
                   </td>
                   <td className="px-6 py-4">
-                    {p.status === "pending" && (
-                      <div className="flex gap-2">
+                    <div className="flex gap-2">
+                      {p.status === "pending" && (
+                        <>
+                          <button
+                            onClick={() => handleApprove(p.id)}
+                            className="text-xs px-3 py-1.5 rounded-lg font-medium text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 hover:bg-emerald-400/20 transition"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleReject(p.id)}
+                            className="text-xs px-3 py-1.5 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+                      {p.status === "completed" && (
                         <button
-                          onClick={() => handleApprove(p.id)}
-                          className="text-xs px-3 py-1.5 rounded-lg font-medium text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 hover:bg-emerald-400/20 transition"
+                          onClick={() => handleRefund(p.id)}
+                          className="text-xs px-3 py-1.5 rounded-lg font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 hover:bg-amber-400/20 transition"
                         >
-                          Approve
+                          Refund
                         </button>
-                        <button
-                          onClick={() => handleReject(p.id)}
-                          className="text-xs px-3 py-1.5 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

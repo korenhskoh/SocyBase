@@ -12,7 +12,25 @@ interface EditValues {
   credits?: number;
   price_cents?: number;
   bonus_credits?: number;
+  billing_interval?: string;
+  stripe_price_id?: string;
   sort_order?: number;
+}
+
+const BILLING_OPTIONS = [
+  { value: "one_time", label: "One-time" },
+  { value: "monthly", label: "Monthly" },
+  { value: "annual", label: "Annual" },
+];
+
+function billingLabel(interval: string) {
+  return BILLING_OPTIONS.find((o) => o.value === interval)?.label || interval;
+}
+
+function billingColor(interval: string) {
+  if (interval === "monthly") return "text-cyan-400 bg-cyan-400/10";
+  if (interval === "annual") return "text-violet-400 bg-violet-400/10";
+  return "text-white/40 bg-white/5";
 }
 
 export default function AdminPackagesPage() {
@@ -27,6 +45,8 @@ export default function AdminPackagesPage() {
     credits: 100,
     price_cents: 999,
     bonus_credits: 0,
+    billing_interval: "one_time",
+    stripe_price_id: "",
     sort_order: 0,
   });
 
@@ -45,9 +65,12 @@ export default function AdminPackagesPage() {
 
   const handleCreate = async () => {
     try {
-      await adminApi.createPackage(newPkg);
+      await adminApi.createPackage({
+        ...newPkg,
+        stripe_price_id: newPkg.stripe_price_id || undefined,
+      });
       setShowCreate(false);
-      setNewPkg({ name: "", credits: 100, price_cents: 999, bonus_credits: 0, sort_order: 0 });
+      setNewPkg({ name: "", credits: 100, price_cents: 999, bonus_credits: 0, billing_interval: "one_time", stripe_price_id: "", sort_order: 0 });
       fetchPackages();
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to create package");
@@ -61,6 +84,8 @@ export default function AdminPackagesPage() {
       credits: pkg.credits,
       price_cents: pkg.price_cents,
       bonus_credits: pkg.bonus_credits,
+      billing_interval: pkg.billing_interval,
+      stripe_price_id: pkg.stripe_price_id || "",
       sort_order: pkg.sort_order,
     });
   };
@@ -68,7 +93,10 @@ export default function AdminPackagesPage() {
   const saveEdit = async () => {
     if (!editingId) return;
     try {
-      await adminApi.updatePackage(editingId, editValues);
+      await adminApi.updatePackage(editingId, {
+        ...editValues,
+        stripe_price_id: editValues.stripe_price_id || undefined,
+      });
       setEditingId(null);
       fetchPackages();
     } catch (err: any) {
@@ -114,7 +142,7 @@ export default function AdminPackagesPage() {
             </Link>
             <h1 className="text-2xl md:text-3xl font-bold text-white">Package Management</h1>
           </div>
-          <p className="text-white/50 mt-1 ml-7">Manage credit packages and pricing</p>
+          <p className="text-white/50 mt-1 ml-7">Manage credit packages, subscriptions, and pricing</p>
         </div>
         <button
           onClick={() => setShowCreate(!showCreate)}
@@ -128,7 +156,7 @@ export default function AdminPackagesPage() {
       {showCreate && (
         <div className="glass-card p-6 space-y-4">
           <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">New Package</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div>
               <label className="block text-xs text-white/40 mb-1">Name</label>
               <input
@@ -167,6 +195,28 @@ export default function AdminPackagesPage() {
               />
             </div>
             <div>
+              <label className="block text-xs text-white/40 mb-1">Billing Type</label>
+              <select
+                value={newPkg.billing_interval}
+                onChange={(e) => setNewPkg({ ...newPkg, billing_interval: e.target.value })}
+                className="input-glass text-sm"
+              >
+                {BILLING_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Stripe Price ID</label>
+              <input
+                type="text"
+                value={newPkg.stripe_price_id}
+                onChange={(e) => setNewPkg({ ...newPkg, stripe_price_id: e.target.value })}
+                className="input-glass text-sm"
+                placeholder="price_..."
+              />
+            </div>
+            <div>
               <label className="block text-xs text-white/40 mb-1">Sort Order</label>
               <input
                 type="number"
@@ -176,6 +226,14 @@ export default function AdminPackagesPage() {
               />
             </div>
           </div>
+          {newPkg.billing_interval !== "one_time" && (
+            <div className="rounded-lg bg-cyan-500/5 border border-cyan-500/15 p-3">
+              <p className="text-xs text-cyan-300/80">
+                For subscription packages, use a recurring Stripe Price ID (created with interval = {newPkg.billing_interval === "monthly" ? "month" : "year"}).
+                Credits will be added automatically each billing cycle.
+              </p>
+            </div>
+          )}
           <button
             onClick={handleCreate}
             disabled={!newPkg.name}
@@ -198,13 +256,14 @@ export default function AdminPackagesPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[800px]">
+          <table className="w-full min-w-[900px]">
             <thead>
               <tr className="border-b border-white/5">
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Name</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Credits</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Bonus</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Price</th>
+                <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Billing</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Status</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Order</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Actions</th>
@@ -248,6 +307,17 @@ export default function AdminPackagesPage() {
                         />
                       </td>
                       <td className="px-6 py-3">
+                        <select
+                          value={editValues.billing_interval ?? "one_time"}
+                          onChange={(e) => setEditValues({ ...editValues, billing_interval: e.target.value })}
+                          className="input-glass text-sm"
+                        >
+                          {BILLING_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-6 py-3">
                         <span className="text-xs text-white/40">-</span>
                       </td>
                       <td className="px-6 py-3">
@@ -282,6 +352,14 @@ export default function AdminPackagesPage() {
                       <td className="px-6 py-4 text-sm text-white/50">+{pkg.bonus_credits.toLocaleString()}</td>
                       <td className="px-6 py-4 text-sm text-white/70 font-medium">
                         {formatCurrency(pkg.price_cents, pkg.currency)}
+                        {pkg.billing_interval !== "one_time" && (
+                          <span className="text-white/30 text-xs">/{pkg.billing_interval === "monthly" ? "mo" : "yr"}</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${billingColor(pkg.billing_interval)}`}>
+                          {billingLabel(pkg.billing_interval)}
+                        </span>
                       </td>
                       <td className="px-6 py-4">
                         <button

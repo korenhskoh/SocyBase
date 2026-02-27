@@ -17,6 +17,7 @@ class CreditPackage(Base):
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     stripe_price_id: Mapped[str | None] = mapped_column(String(255))
+    billing_interval: Mapped[str] = mapped_column(String(20), default="one_time")  # one_time, monthly, annual
     bonus_credits: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

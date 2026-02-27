@@ -151,6 +151,7 @@ export interface CreditPackage {
   price_cents: number;
   currency: string;
   stripe_price_id: string | null;
+  billing_interval: "one_time" | "monthly" | "annual";
   bonus_credits: number;
   is_active: boolean;
   sort_order: number;
@@ -166,10 +167,12 @@ export interface Payment {
   currency: string;
   method: "stripe" | "bank_transfer";
   status: "pending" | "completed" | "failed" | "refunded";
+  stripe_subscription_id: string | null;
   bank_transfer_reference: string | null;
   bank_transfer_proof_url: string | null;
   admin_notes: string | null;
   completed_at: string | null;
+  refunded_at: string | null;
   created_at: string;
 }
 

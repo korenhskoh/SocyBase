@@ -190,6 +190,76 @@ async def approve_payment(
     return payment
 
 
+@router.post("/payments/{payment_id}/refund", response_model=PaymentResponse)
+async def refund_payment(
+    payment_id: UUID,
+    data: ApprovePaymentRequest,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Refund a completed Stripe payment. Deducts credited amount from tenant balance."""
+    import stripe as stripe_lib
+    from app.config import get_settings
+
+    result = await db.execute(
+        select(Payment).where(Payment.id == payment_id, Payment.status == "completed")
+    )
+    payment = result.scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Completed payment not found")
+
+    # Stripe refund
+    if payment.method == "stripe" and payment.stripe_payment_intent_id:
+        settings = get_settings()
+        stripe_lib.api_key = settings.stripe_secret_key
+        try:
+            stripe_lib.Refund.create(payment_intent=payment.stripe_payment_intent_id)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Stripe refund failed: {str(e)}")
+
+    # Mark payment as refunded
+    payment.status = "refunded"
+    payment.refunded_at = datetime.now(timezone.utc)
+    if data.admin_notes:
+        payment.admin_notes = data.admin_notes
+
+    # Deduct credits from tenant
+    if payment.credit_package_id:
+        pkg_result = await db.execute(
+            select(CreditPackage).where(CreditPackage.id == payment.credit_package_id)
+        )
+        package = pkg_result.scalar_one_or_none()
+        credits_to_deduct = (package.credits + package.bonus_credits) if package else 0
+    else:
+        credits_to_deduct = 0
+
+    if credits_to_deduct > 0:
+        balance_result = await db.execute(
+            select(CreditBalance)
+            .where(CreditBalance.tenant_id == payment.tenant_id)
+            .with_for_update()
+        )
+        balance = balance_result.scalar_one_or_none()
+        if balance:
+            balance.balance = max(0, balance.balance - credits_to_deduct)
+            balance.lifetime_purchased = max(0, balance.lifetime_purchased - credits_to_deduct)
+
+            transaction = CreditTransaction(
+                tenant_id=payment.tenant_id,
+                user_id=admin.id,
+                type="refund",
+                amount=-credits_to_deduct,
+                balance_after=balance.balance,
+                description=f"Refund for payment {str(payment.id)[:8]}",
+                reference_type="payment",
+                reference_id=payment.id,
+            )
+            db.add(transaction)
+
+    await db.flush()
+    return payment
+
+
 @router.post("/payments/{payment_id}/reject", response_model=PaymentResponse)
 async def reject_payment(
     payment_id: UUID,
@@ -317,6 +387,7 @@ async def create_package(
         price_cents=data.price_cents,
         currency=data.currency,
         stripe_price_id=data.stripe_price_id,
+        billing_interval=data.billing_interval,
         bonus_credits=data.bonus_credits,
         is_active=data.is_active,
         sort_order=data.sort_order,
@@ -575,6 +646,7 @@ class PaymentSettingsUpdate(BaseModel):
     bank_swift_code: str | None = None
     stripe_enabled: bool = True
     bank_transfer_enabled: bool = True
+    payment_model: str = "one_time"  # one_time, subscription, both
 
 
 PAYMENT_SETTINGS_KEY = "payment_settings"

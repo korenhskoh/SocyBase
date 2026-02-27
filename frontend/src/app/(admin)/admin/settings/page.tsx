@@ -5,11 +5,20 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api-client";
 
+const PAYMENT_MODELS = [
+  { value: "one_time", label: "One-time Packages", desc: "Users buy credit packs once" },
+  { value: "subscription", label: "Subscription Only", desc: "Monthly or annual billing" },
+  { value: "both", label: "Both", desc: "Users choose one-time or subscription" },
+];
+
 export default function AdminSettingsPage() {
   const { user } = useAuth(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+
+  // Payment model
+  const [paymentModel, setPaymentModel] = useState("one_time");
 
   // Stripe settings
   const [stripeEnabled, setStripeEnabled] = useState(true);
@@ -31,6 +40,7 @@ export default function AdminSettingsPage() {
         .getPaymentSettings()
         .then((r) => {
           const d = r.data;
+          if (d.payment_model) setPaymentModel(d.payment_model);
           if (d.stripe_enabled !== undefined) setStripeEnabled(d.stripe_enabled);
           if (d.stripe_publishable_key) setStripePubKey(d.stripe_publishable_key);
           if (d.stripe_secret_key) setStripeSecretKey(d.stripe_secret_key);
@@ -52,6 +62,7 @@ export default function AdminSettingsPage() {
     setMessage("");
     try {
       await adminApi.updatePaymentSettings({
+        payment_model: paymentModel,
         stripe_enabled: stripeEnabled,
         stripe_publishable_key: stripePubKey || undefined,
         stripe_secret_key: stripeSecretKey || undefined,
@@ -90,7 +101,7 @@ export default function AdminSettingsPage() {
           <h1 className="text-2xl md:text-3xl font-bold text-white">Payment Settings</h1>
         </div>
         <p className="text-white/50 mt-1 ml-7">
-          Configure Stripe and bank transfer payment methods
+          Configure payment methods and billing model
         </p>
       </div>
 
@@ -100,6 +111,50 @@ export default function AdminSettingsPage() {
         </div>
       ) : (
         <>
+          {/* Payment Model */}
+          <div className="glass-card p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-amber-500/10 border border-amber-500/20">
+                <svg className="h-5 w-5 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Payment Model</h2>
+                <p className="text-sm text-white/40">Choose how users purchase credits</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+              {PAYMENT_MODELS.map((m) => (
+                <button
+                  key={m.value}
+                  onClick={() => setPaymentModel(m.value)}
+                  className={`p-4 rounded-lg text-left transition-all border ${
+                    paymentModel === m.value
+                      ? "border-primary-500 bg-primary-500/10"
+                      : "border-white/10 bg-white/[0.02] hover:bg-white/5"
+                  }`}
+                >
+                  <p className={`text-sm font-medium ${paymentModel === m.value ? "text-primary-400" : "text-white/70"}`}>
+                    {m.label}
+                  </p>
+                  <p className="text-xs text-white/40 mt-1">{m.desc}</p>
+                </button>
+              ))}
+            </div>
+
+            {paymentModel !== "one_time" && (
+              <div className="rounded-lg bg-amber-500/5 border border-amber-500/15 p-3">
+                <p className="text-xs text-amber-300/80">
+                  For subscriptions, create packages with &quot;Monthly&quot; or &quot;Annual&quot; billing type in Package Management.
+                  Each package needs a recurring Stripe Price ID. Credits are automatically added on each renewal.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Stripe Configuration */}
           <div className="glass-card p-6 space-y-4">
             <div className="flex items-center justify-between">
@@ -246,12 +301,21 @@ export default function AdminSettingsPage() {
             )}
           </div>
 
-          {/* Info box */}
-          <div className="rounded-lg bg-blue-500/5 border border-blue-500/15 p-4">
-            <p className="text-xs text-blue-300/80">
-              These settings control what users see on the Credits page when making payments.
-              Bank details will be shown in the bank transfer modal. Stripe keys are used for
-              checkout session creation. Disabling a method hides it from the payment options.
+          {/* Webhook Events Info */}
+          <div className="rounded-lg bg-blue-500/5 border border-blue-500/15 p-4 space-y-2">
+            <p className="text-xs font-medium text-blue-300/90">Stripe Webhook Events to Enable:</p>
+            <div className="grid grid-cols-2 gap-1">
+              {[
+                "checkout.session.completed",
+                "invoice.paid",
+                "customer.subscription.deleted",
+                "charge.refunded",
+              ].map((evt) => (
+                <p key={evt} className="text-xs text-blue-300/60 font-mono">{evt}</p>
+              ))}
+            </div>
+            <p className="text-xs text-blue-300/50 pt-1">
+              These events handle one-time payments, subscription renewals, cancellations, and refunds.
             </p>
           </div>
 

@@ -30,6 +30,7 @@ class CreditPackageResponse(BaseModel):
     credits: int
     price_cents: int
     currency: str
+    billing_interval: str = "one_time"
     bonus_credits: int
     sort_order: int
 
@@ -43,6 +44,7 @@ class AdminCreditPackageResponse(BaseModel):
     price_cents: int
     currency: str
     stripe_price_id: str | None
+    billing_interval: str = "one_time"
     bonus_credits: int
     is_active: bool
     sort_order: int
@@ -57,6 +59,7 @@ class CreateCreditPackageRequest(BaseModel):
     price_cents: int = Field(ge=0)
     currency: str = "USD"
     stripe_price_id: str | None = None
+    billing_interval: str = "one_time"  # one_time, monthly, annual
     bonus_credits: int = Field(ge=0, default=0)
     is_active: bool = True
     sort_order: int = 0
@@ -68,6 +71,7 @@ class UpdateCreditPackageRequest(BaseModel):
     price_cents: int | None = Field(None, ge=0)
     currency: str | None = None
     stripe_price_id: str | None = None
+    billing_interval: str | None = None
     bonus_credits: int | None = Field(None, ge=0)
     is_active: bool | None = None
     sort_order: int | None = None

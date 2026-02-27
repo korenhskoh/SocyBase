@@ -117,6 +117,7 @@ export default function LandingPage() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [packages, setPackages] = useState<CreditPackage[]>([]);
   const [packagesLoading, setPackagesLoading] = useState(true);
+  const [paymentModel, setPaymentModel] = useState("one_time");
   const { t, lang, setLang } = useTranslation();
 
   useEffect(() => {
@@ -125,7 +126,17 @@ export default function LandingPage() {
       .then((res) => setPackages(res.data.packages || res.data || []))
       .catch(() => {})
       .finally(() => setPackagesLoading(false));
+    creditsApi.getPublicConfig()
+      .then((res) => setPaymentModel(res.data.payment_model || "one_time"))
+      .catch(() => {});
   }, []);
+
+  // Filter packages based on admin payment model
+  const visiblePackages = packages.filter((pkg) => {
+    if (paymentModel === "one_time") return pkg.billing_interval === "one_time";
+    if (paymentModel === "subscription") return pkg.billing_interval !== "one_time";
+    return true;
+  });
 
   return (
     <div className="min-h-screen bg-navy-950 text-white overflow-x-hidden">
@@ -698,16 +709,18 @@ export default function LandingPage() {
             </div>
           ) : (
             <motion.div
-              className={`grid grid-cols-1 sm:grid-cols-2 ${packages.length >= 4 ? "lg:grid-cols-4" : packages.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-2"} gap-5`}
+              className={`grid grid-cols-1 sm:grid-cols-2 ${visiblePackages.length >= 4 ? "lg:grid-cols-4" : visiblePackages.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-2"} gap-5`}
               variants={staggerContainer}
               initial="hidden"
               whileInView="visible"
               viewport={{ once: true, margin: "-50px" }}
             >
-              {packages.map((pkg, idx) => {
+              {visiblePackages.map((pkg, idx) => {
                 const isPopular = idx === 1;
                 const priceStr = formatCurrency(pkg.price_cents, pkg.currency);
                 const [whole, decimal] = priceStr.split(".");
+                const isSubscription = pkg.billing_interval !== "one_time";
+                const intervalLabel = pkg.billing_interval === "monthly" ? "/mo" : pkg.billing_interval === "annual" ? "/yr" : "";
                 return (
                   <motion.div
                     key={pkg.id}
@@ -736,13 +749,21 @@ export default function LandingPage() {
                       <div className="mt-4 mb-1">
                         <span className="text-4xl font-bold text-white">{whole}</span>
                         {decimal && <span className="text-white/40">.{decimal}</span>}
+                        {intervalLabel && <span className="text-lg text-white/30">{intervalLabel}</span>}
                       </div>
-                      <p className="text-sm text-white/30 mb-6">{t("landing.one_time")}</p>
+                      <p className="text-sm text-white/30 mb-6">
+                        {isSubscription
+                          ? pkg.billing_interval === "monthly" ? t("landing.billed_monthly") : t("landing.billed_annually")
+                          : t("landing.one_time")}
+                      </p>
 
                       <div className="space-y-3 flex-1">
                         <div className="flex items-center gap-2 text-sm">
                           <CheckIcon color="#00AAFF" />
-                          <span className="text-white/60">{pkg.credits.toLocaleString()} {t("landing.credits_label")}</span>
+                          <span className="text-white/60">
+                            {pkg.credits.toLocaleString()} {t("landing.credits_label")}
+                            {isSubscription ? `/${pkg.billing_interval === "monthly" ? "mo" : "yr"}` : ""}
+                          </span>
                         </div>
                         {pkg.bonus_credits > 0 && (
                           <div className="flex items-center gap-2 text-sm">
@@ -756,7 +777,9 @@ export default function LandingPage() {
                         </div>
                         <div className="flex items-center gap-2 text-sm">
                           <CheckIcon color="#FFAA00" />
-                          <span className="text-white/60">{t("landing.never_expires")}</span>
+                          <span className="text-white/60">
+                            {isSubscription ? t("landing.auto_renew") : t("landing.never_expires")}
+                          </span>
                         </div>
                       </div>
 
@@ -766,7 +789,7 @@ export default function LandingPage() {
                           isPopular ? "btn-glow-refined !py-2.5" : "btn-ghost !py-2.5"
                         }`}
                       >
-                        {t("landing.get_started")}
+                        {isSubscription ? t("landing.subscribe") : t("landing.get_started")}
                       </Link>
                     </div>
                   </motion.div>

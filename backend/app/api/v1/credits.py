@@ -84,4 +84,16 @@ async def get_payment_info(
         "bank_account_name": data.get("bank_account_name", ""),
         "bank_account_number": data.get("bank_account_number", ""),
         "bank_duitnow_id": data.get("bank_duitnow_id", ""),
+        "payment_model": data.get("payment_model", "one_time"),
     }
+
+
+@router.get("/public-config")
+async def get_public_config(db: AsyncSession = Depends(get_db)):
+    """Public endpoint: returns payment model setting for landing page."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "payment_settings")
+    )
+    setting = result.scalar_one_or_none()
+    data = setting.value if setting else {}
+    return {"payment_model": data.get("payment_model", "one_time")}

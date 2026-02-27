@@ -123,6 +123,7 @@ export const creditsApi = {
     api.get("/credits/history", { params }),
   getPackages: () => api.get("/credits/packages"),
   getPaymentInfo: () => api.get("/credits/payment-info"),
+  getPublicConfig: () => api.get("/credits/public-config"),
 };
 
 // Payments API
@@ -136,6 +137,8 @@ export const paymentsApi = {
   }) => api.post("/payments/bank-transfer", data),
   getHistory: (params?: { page?: number }) =>
     api.get("/payments/history", { params }),
+  getSubscriptionStatus: () => api.get("/payments/subscription-status"),
+  cancelSubscription: () => api.post("/payments/stripe/cancel-subscription"),
 };
 
 // Export API
@@ -179,6 +182,8 @@ export const adminApi = {
     api.post(`/admin/payments/${id}/approve`, { admin_notes: notes }),
   rejectPayment: (id: string, notes?: string) =>
     api.post(`/admin/payments/${id}/reject`, { admin_notes: notes }),
+  refundPayment: (id: string, notes?: string) =>
+    api.post(`/admin/payments/${id}/refund`, { admin_notes: notes }),
   grantCredits: (data: { tenant_id: string; amount: number; description: string }) =>
     api.post("/admin/credits/grant", data),
   getCreditBalances: () => api.get("/admin/credits/balances"),
@@ -191,6 +196,7 @@ export const adminApi = {
     price_cents: number;
     currency?: string;
     stripe_price_id?: string;
+    billing_interval?: string;
     bonus_credits?: number;
     is_active?: boolean;
     sort_order?: number;
@@ -203,6 +209,7 @@ export const adminApi = {
       price_cents?: number;
       currency?: string;
       stripe_price_id?: string;
+      billing_interval?: string;
       bonus_credits?: number;
       is_active?: boolean;
       sort_order?: number;
@@ -229,6 +236,7 @@ export const adminApi = {
     bank_swift_code?: string;
     stripe_enabled?: boolean;
     bank_transfer_enabled?: boolean;
+    payment_model?: string;
   }) => api.put("/admin/payment-settings", data),
 };
 

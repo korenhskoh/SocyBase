@@ -5,6 +5,15 @@ import { creditsApi, paymentsApi, uploadsApi } from "@/lib/api-client";
 import { formatCredits, formatCurrency } from "@/lib/utils";
 import type { CreditBalance, CreditPackage } from "@/types";
 
+interface SubscriptionStatus {
+  has_subscription: boolean;
+  subscription_id?: string;
+  status?: string;
+  current_period_end?: number;
+  cancel_at_period_end?: boolean;
+  package_id?: string;
+}
+
 export default function CreditsPage() {
   const [balance, setBalance] = useState<CreditBalance | null>(null);
   const [packages, setPackages] = useState<CreditPackage[]>([]);
@@ -15,6 +24,8 @@ export default function CreditsPage() {
   const [bankReference, setBankReference] = useState("");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null);
+  const [cancellingSubscription, setCancellingSubscription] = useState(false);
 
   // Payment info from admin settings
   const [paymentInfo, setPaymentInfo] = useState<{
@@ -24,28 +35,47 @@ export default function CreditsPage() {
     bank_account_name: string;
     bank_account_number: string;
     bank_duitnow_id: string;
+    payment_model: string;
   } | null>(null);
 
   useEffect(() => {
     creditsApi.getBalance().then((r) => setBalance(r.data)).catch(() => {});
     creditsApi.getPackages().then((r) => setPackages(r.data)).catch(() => {});
     creditsApi.getPaymentInfo().then((r) => setPaymentInfo(r.data)).catch(() => {});
+    paymentsApi.getSubscriptionStatus().then((r) => setSubscription(r.data)).catch(() => {});
   }, []);
+
+  // Filter packages based on admin payment model setting
+  const paymentModel = paymentInfo?.payment_model || "one_time";
+  const visiblePackages = packages.filter((pkg) => {
+    if (paymentModel === "one_time") return pkg.billing_interval === "one_time";
+    if (paymentModel === "subscription") return pkg.billing_interval !== "one_time";
+    return true; // "both" — show all
+  });
+
+  // Group packages for "both" mode
+  const oneTimePackages = visiblePackages.filter((p) => p.billing_interval === "one_time");
+  const subscriptionPackages = visiblePackages.filter((p) => p.billing_interval !== "one_time");
+  const showBothSections = paymentModel === "both" && oneTimePackages.length > 0 && subscriptionPackages.length > 0;
 
   const handlePurchase = async () => {
     if (!selectedPkg) return;
-    setLoading(true);
-    try {
-      if (paymentMethod === "stripe") {
+    const pkg = packages.find((p) => p.id === selectedPkg);
+    const isSubscription = pkg && pkg.billing_interval !== "one_time";
+
+    // Subscriptions always go through Stripe
+    if (isSubscription || paymentMethod === "stripe") {
+      setLoading(true);
+      try {
         const res = await paymentsApi.createStripeCheckout(selectedPkg);
         window.location.href = res.data.checkout_url;
-      } else {
-        setShowBankModal(true);
+      } catch (err: any) {
+        alert(err.response?.data?.detail || "Payment failed");
+      } finally {
+        setLoading(false);
       }
-    } catch (err: any) {
-      alert(err.response?.data?.detail || "Payment failed");
-    } finally {
-      setLoading(false);
+    } else {
+      setShowBankModal(true);
     }
   };
 
@@ -74,7 +104,22 @@ export default function CreditsPage() {
     }
   };
 
+  const handleCancelSubscription = async () => {
+    if (!confirm("Are you sure you want to cancel your subscription? You will keep your remaining credits.")) return;
+    setCancellingSubscription(true);
+    try {
+      await paymentsApi.cancelSubscription();
+      setSubscription({ has_subscription: false });
+      alert("Subscription cancelled successfully.");
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Failed to cancel subscription");
+    } finally {
+      setCancellingSubscription(false);
+    }
+  };
+
   const selectedPackage = packages.find((p) => p.id === selectedPkg);
+  const isSelectedSubscription = selectedPackage && selectedPackage.billing_interval !== "one_time";
 
   const packageColors = [
     "from-primary-500 to-blue-600",
@@ -82,6 +127,42 @@ export default function CreditsPage() {
     "from-accent-pink to-rose-600",
     "from-cyan-500 to-teal-600",
   ];
+
+  const renderPackageCard = (pkg: CreditPackage, i: number) => (
+    <button
+      key={pkg.id}
+      onClick={() => setSelectedPkg(pkg.id)}
+      className={`glass-card p-6 text-left transition-all hover:scale-[1.02] ${
+        selectedPkg === pkg.id
+          ? "border-primary-500 shadow-[0_0_20px_rgba(59,130,246,0.2)]"
+          : ""
+      }`}
+    >
+      <div className={`h-2 w-12 rounded-full bg-gradient-to-r ${packageColors[i % packageColors.length]} mb-4`} />
+      <h3 className="text-lg font-bold text-white">{pkg.name}</h3>
+      <p className="text-3xl font-bold text-white mt-2">
+        {formatCurrency(pkg.price_cents, pkg.currency)}
+        {pkg.billing_interval !== "one_time" && (
+          <span className="text-sm font-normal text-white/40">
+            /{pkg.billing_interval === "monthly" ? "mo" : "yr"}
+          </span>
+        )}
+      </p>
+      <div className="mt-3 space-y-1">
+        <p className="text-sm text-white/60">
+          {formatCredits(pkg.credits)} credits{pkg.billing_interval !== "one_time" ? `/${pkg.billing_interval === "monthly" ? "month" : "year"}` : ""}
+        </p>
+        {pkg.bonus_credits > 0 && (
+          <p className="text-sm text-emerald-400">
+            +{formatCredits(pkg.bonus_credits)} bonus!
+          </p>
+        )}
+      </div>
+      <p className="text-xs text-white/30 mt-2">
+        ~{formatCurrency(Math.round(pkg.price_cents / (pkg.credits + pkg.bonus_credits)), pkg.currency)}/credit
+      </p>
+    </button>
+  );
 
   return (
     <div className="space-y-8">
@@ -112,78 +193,118 @@ export default function CreditsPage() {
         </div>
       </div>
 
-      {/* Credit Packages */}
-      <div>
-        <h2 className="text-xl font-semibold text-white mb-4">Choose a Package</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {packages.map((pkg, i) => (
-            <button
-              key={pkg.id}
-              onClick={() => setSelectedPkg(pkg.id)}
-              className={`glass-card p-6 text-left transition-all hover:scale-[1.02] ${
-                selectedPkg === pkg.id
-                  ? "border-primary-500 shadow-[0_0_20px_rgba(59,130,246,0.2)]"
-                  : ""
-              }`}
-            >
-              <div className={`h-2 w-12 rounded-full bg-gradient-to-r ${packageColors[i % packageColors.length]} mb-4`} />
-              <h3 className="text-lg font-bold text-white">{pkg.name}</h3>
-              <p className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(pkg.price_cents, pkg.currency)}
-              </p>
-              <div className="mt-3 space-y-1">
-                <p className="text-sm text-white/60">
-                  {formatCredits(pkg.credits)} credits
-                </p>
-                {pkg.bonus_credits > 0 && (
-                  <p className="text-sm text-emerald-400">
-                    +{formatCredits(pkg.bonus_credits)} bonus!
-                  </p>
+      {/* Active Subscription */}
+      {subscription?.has_subscription && subscription.status === "active" && (
+        <div className="glass-card p-5 border-cyan-500/20">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium text-cyan-400 bg-cyan-400/10">
+                  Active Subscription
+                </span>
+                {subscription.cancel_at_period_end && (
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium text-amber-400 bg-amber-400/10">
+                    Cancelling
+                  </span>
                 )}
               </div>
-              <p className="text-xs text-white/30 mt-2">
-                ~{formatCurrency(Math.round(pkg.price_cents / (pkg.credits + pkg.bonus_credits)), pkg.currency)}/credit
+              <p className="text-sm text-white/60 mt-2">
+                {subscription.current_period_end && (
+                  <>Next billing: {new Date(subscription.current_period_end * 1000).toLocaleDateString()}</>
+                )}
               </p>
-            </button>
-          ))}
+            </div>
+            {!subscription.cancel_at_period_end && (
+              <button
+                onClick={handleCancelSubscription}
+                disabled={cancellingSubscription}
+                className="text-xs px-4 py-2 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition disabled:opacity-50"
+              >
+                {cancellingSubscription ? "Cancelling..." : "Cancel Subscription"}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Credit Packages */}
+      {showBothSections ? (
+        <>
+          {/* One-time packages */}
+          <div>
+            <h2 className="text-xl font-semibold text-white mb-4">One-time Packages</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {oneTimePackages.map((pkg, i) => renderPackageCard(pkg, i))}
+            </div>
+          </div>
+          {/* Subscription packages */}
+          <div>
+            <h2 className="text-xl font-semibold text-white mb-4">Subscription Plans</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {subscriptionPackages.map((pkg, i) => renderPackageCard(pkg, i))}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div>
+          <h2 className="text-xl font-semibold text-white mb-4">
+            {paymentModel === "subscription" ? "Subscription Plans" : "Choose a Package"}
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {visiblePackages.map((pkg, i) => renderPackageCard(pkg, i))}
+          </div>
+        </div>
+      )}
 
       {/* Payment Method */}
       {selectedPkg && (
         <div className="space-y-4 animate-slide-up">
-          <h2 className="text-xl font-semibold text-white">Payment Method</h2>
-          <div className="flex gap-3">
-            {(paymentInfo?.stripe_enabled !== false) && (
-              <button
-                onClick={() => setPaymentMethod("stripe")}
-                className={`flex-1 glass-card p-4 text-center transition-all ${
-                  paymentMethod === "stripe" ? "border-primary-500 bg-primary-500/10" : ""
-                }`}
-              >
-                <p className="font-medium text-white">Stripe</p>
-                <p className="text-xs text-white/40 mt-1">Credit/Debit Card</p>
-              </button>
-            )}
-            {(paymentInfo?.bank_transfer_enabled !== false) && (
-              <button
-                onClick={() => setPaymentMethod("bank_transfer")}
-                className={`flex-1 glass-card p-4 text-center transition-all ${
-                  paymentMethod === "bank_transfer" ? "border-primary-500 bg-primary-500/10" : ""
-                }`}
-              >
-                <p className="font-medium text-white">DuitNow</p>
-                <p className="text-xs text-white/40 mt-1">Bank Transfer</p>
-              </button>
-            )}
-          </div>
+          {isSelectedSubscription ? (
+            <div className="rounded-lg bg-cyan-500/5 border border-cyan-500/15 p-4">
+              <p className="text-sm text-cyan-300/80">
+                Subscription payments are processed through Stripe. Credits will be automatically added to your account each billing cycle.
+              </p>
+            </div>
+          ) : (
+            <>
+              <h2 className="text-xl font-semibold text-white">Payment Method</h2>
+              <div className="flex gap-3">
+                {(paymentInfo?.stripe_enabled !== false) && (
+                  <button
+                    onClick={() => setPaymentMethod("stripe")}
+                    className={`flex-1 glass-card p-4 text-center transition-all ${
+                      paymentMethod === "stripe" ? "border-primary-500 bg-primary-500/10" : ""
+                    }`}
+                  >
+                    <p className="font-medium text-white">Stripe</p>
+                    <p className="text-xs text-white/40 mt-1">Credit/Debit Card</p>
+                  </button>
+                )}
+                {(paymentInfo?.bank_transfer_enabled !== false) && (
+                  <button
+                    onClick={() => setPaymentMethod("bank_transfer")}
+                    className={`flex-1 glass-card p-4 text-center transition-all ${
+                      paymentMethod === "bank_transfer" ? "border-primary-500 bg-primary-500/10" : ""
+                    }`}
+                  >
+                    <p className="font-medium text-white">DuitNow</p>
+                    <p className="text-xs text-white/40 mt-1">Bank Transfer</p>
+                  </button>
+                )}
+              </div>
+            </>
+          )}
 
           <button
             onClick={handlePurchase}
             disabled={loading}
             className="btn-glow w-full text-lg py-4 disabled:opacity-50"
           >
-            {loading ? "Processing..." : "Purchase Credits"}
+            {loading
+              ? "Processing..."
+              : isSelectedSubscription
+              ? "Subscribe Now"
+              : "Purchase Credits"}
           </button>
         </div>
       )}
