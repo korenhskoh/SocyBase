@@ -51,6 +51,8 @@ async def score_ad_components(
 
     # 3. Store results
     now = datetime.now(timezone.utc)
+    df_date = date.fromisoformat(date_from)
+    dt_date = date.fromisoformat(date_to)
     for s in scores:
         # Remove old score for same group
         old = await db.execute(
@@ -59,8 +61,8 @@ async def score_ad_components(
                 FBInsightScore.ad_account_id == ad_account_id,
                 FBInsightScore.group_type == group_type,
                 FBInsightScore.group_value == s["name"],
-                FBInsightScore.date_range_start == date_from,
-                FBInsightScore.date_range_end == date_to,
+                FBInsightScore.date_range_start == df_date,
+                FBInsightScore.date_range_end == dt_date,
             )
         )
         existing = old.scalar_one_or_none()
@@ -76,8 +78,8 @@ async def score_ad_components(
                 group_value=s["name"],
                 score=s["score"],
                 metrics=s["metrics"],
-                date_range_start=date_from,
-                date_range_end=date_to,
+                date_range_start=df_date,
+                date_range_end=dt_date,
                 scored_at=now,
             ))
 

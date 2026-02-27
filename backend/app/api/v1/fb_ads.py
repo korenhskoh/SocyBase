@@ -584,13 +584,11 @@ async def select_pixel(
 # Phase 2: Performance Dashboard
 # ---------------------------------------------------------------------------
 
-def _default_date_range(date_from: str | None, date_to: str | None) -> tuple[str, str]:
-    """Return (date_from, date_to) defaulting to last 28 days."""
-    if not date_to:
-        date_to = date.today().isoformat()
-    if not date_from:
-        date_from = (date.today() - timedelta(days=28)).isoformat()
-    return date_from, date_to
+def _default_date_range(date_from: str | None, date_to: str | None) -> tuple[date, date]:
+    """Return (date_from, date_to) as date objects, defaulting to last 28 days."""
+    dt = date.fromisoformat(date_to) if date_to else date.today()
+    df = date.fromisoformat(date_from) if date_from else (date.today() - timedelta(days=28))
+    return df, dt
 
 
 async def _get_active_connection(db: AsyncSession, tenant_id) -> tuple[FBConnection | None, FBAdAccount | None]:
@@ -1026,7 +1024,7 @@ async def run_ai_scoring(
     df, dt = _default_date_range(body.date_from, body.date_to)
 
     from app.services.fb_insights_ai import score_ad_components
-    scores = await score_ad_components(db, user.tenant_id, account.id, df, dt, body.group_type)
+    scores = await score_ad_components(db, user.tenant_id, account.id, df.isoformat(), dt.isoformat(), body.group_type)
     await db.commit()
 
     return {"detail": f"Scored {len(scores)} {body.group_type} components.", "count": len(scores)}
