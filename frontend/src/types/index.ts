@@ -507,9 +507,22 @@ export interface AICampaignItem {
   name: string;
   objective: string;
   daily_budget: number;
+  landing_page_url: string | null;
+  conversion_event: string | null;
   audience_strategy: string;
   creative_strategy: string;
-  ai_summary: Record<string, unknown> | null;
+  custom_instructions: string | null;
+  ai_summary: {
+    strategy?: string;
+    num_adsets?: number;
+    num_ads?: number;
+    total_daily_budget?: number;
+    objective?: string;
+    audience_strategy?: string;
+    creative_strategy?: string;
+    historical_winners_used?: number;
+    business_name?: string;
+  } | null;
   generation_progress: { stage: string; pct: number; error?: string } | null;
   credits_used: number;
   meta_campaign_id: string | null;

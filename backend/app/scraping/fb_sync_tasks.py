@@ -278,55 +278,49 @@ def generate_ai_campaign(campaign_id: str):
         loop.close()
 
 
-@celery_app.task(name="app.scraping.fb_sync_tasks.publish_ai_campaign")
-def publish_ai_campaign(campaign_id: str):
-    """Celery task: publish AI campaign to Meta Ads."""
-    from app.services.meta_api import MetaAPIService
+async def _run_publish(campaign_id: str) -> dict:
+    """Core async publish logic — usable from Celery or inline."""
+    import httpx
+    from app.services.meta_api import MetaAPIService, GRAPH_BASE
     from app.models.fb_ads import (
         AICampaign, AICampaignAdSet, AICampaignAd,
         FBConnection, FBAdAccount, FBPage,
     )
 
-    async def _run():
-        meta = MetaAPIService()
+    meta = MetaAPIService()
 
-        async with async_session() as db:
-            result = await db.execute(select(AICampaign).where(AICampaign.id == campaign_id))
-            campaign = result.scalar_one_or_none()
-            if not campaign:
-                raise ValueError("Campaign not found")
+    async with async_session() as db:
+        result = await db.execute(select(AICampaign).where(AICampaign.id == campaign_id))
+        campaign = result.scalar_one_or_none()
+        if not campaign:
+            raise ValueError("Campaign not found")
 
-            # Get connection
-            conn_r = await db.execute(
-                select(FBConnection).where(
-                    FBConnection.tenant_id == campaign.tenant_id,
-                    FBConnection.is_active == True,
-                )
+        conn_r = await db.execute(
+            select(FBConnection).where(
+                FBConnection.tenant_id == campaign.tenant_id,
+                FBConnection.is_active == True,
             )
-            conn = conn_r.scalar_one_or_none()
-            if not conn:
-                raise ValueError("No active FB connection")
+        )
+        conn = conn_r.scalar_one_or_none()
+        if not conn:
+            raise ValueError("No active FB connection")
 
-            token = meta.decrypt_token(conn.access_token_encrypted)
+        token = meta.decrypt_token(conn.access_token_encrypted)
 
-            # Get ad account
-            acc_r = await db.execute(select(FBAdAccount).where(FBAdAccount.id == campaign.ad_account_id))
-            account = acc_r.scalar_one_or_none()
-            if not account:
-                raise ValueError("Ad account not found")
+        acc_r = await db.execute(select(FBAdAccount).where(FBAdAccount.id == campaign.ad_account_id))
+        account = acc_r.scalar_one_or_none()
+        if not account:
+            raise ValueError("Ad account not found")
 
-            # Get page
-            page = None
-            if campaign.page_id:
-                page_r = await db.execute(select(FBPage).where(FBPage.id == campaign.page_id))
-                page = page_r.scalar_one_or_none()
+        page = None
+        if campaign.page_id:
+            page_r = await db.execute(select(FBPage).where(FBPage.id == campaign.page_id))
+            page = page_r.scalar_one_or_none()
 
-            campaign.status = "publishing"
-            await db.flush()
+        campaign.status = "publishing"
+        await db.flush()
 
-            import httpx
-            from app.services.meta_api import GRAPH_BASE
-
+        try:
             async with httpx.AsyncClient(timeout=30) as client:
                 # 1. Create campaign
                 resp = await client.post(
@@ -371,7 +365,6 @@ def publish_ai_campaign(campaign_id: str):
                         select(AICampaignAd).where(AICampaignAd.adset_id == adset.id)
                     )
                     for ad in ads_r.scalars().all():
-                        # Create ad creative first
                         creative_data = {
                             "name": ad.name,
                             "object_story_spec": json.dumps({
@@ -393,7 +386,6 @@ def publish_ai_campaign(campaign_id: str):
                         resp.raise_for_status()
                         creative_id = resp.json().get("id")
 
-                        # Create ad
                         resp = await client.post(
                             f"{GRAPH_BASE}/{account.account_id}/ads",
                             params={"access_token": token},
@@ -410,12 +402,21 @@ def publish_ai_campaign(campaign_id: str):
             campaign.status = "published"
             campaign.published_at = datetime.now(timezone.utc)
             await db.commit()
-
             return {"status": "published", "meta_campaign_id": meta_campaign_id}
 
+        except Exception:
+            campaign.status = "failed"
+            campaign.generation_progress = {"stage": "error", "pct": 0, "error": "Publishing failed — see logs."}
+            await db.commit()
+            raise
+
+
+@celery_app.task(name="app.scraping.fb_sync_tasks.publish_ai_campaign")
+def publish_ai_campaign(campaign_id: str):
+    """Celery task: publish AI campaign to Meta Ads."""
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(_run())
+        result = loop.run_until_complete(_run_publish(campaign_id))
         logger.info("AI campaign published for %s: %s", campaign_id, result)
         return result
     finally:

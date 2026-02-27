@@ -365,6 +365,7 @@ export const fbAdsApi = {
   createAICampaign: (data: Record<string, unknown>) => api.post("/fb-ads/launch", data),
   listAICampaigns: () => api.get("/fb-ads/launch/history"),
   getAICampaign: (id: string) => api.get(`/fb-ads/launch/${id}`),
+  updateAICampaign: (id: string, data: Record<string, unknown>) => api.put(`/fb-ads/launch/${id}`, data),
   generateAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/generate`),
   publishAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/publish`),
 };

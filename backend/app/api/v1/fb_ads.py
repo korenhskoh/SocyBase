@@ -22,6 +22,7 @@ from app.models.fb_ads import (
 )
 from app.models.user import User
 from app.models.job import ScrapingJob, ScrapedProfile
+from app.models.credit import CreditBalance, CreditTransaction
 from app.services.meta_api import MetaAPIService
 
 logger = logging.getLogger(__name__)
@@ -227,8 +228,11 @@ class AICampaignResponse(BaseModel):
     name: str
     objective: str
     daily_budget: int
+    landing_page_url: str | None = None
+    conversion_event: str | None = None
     audience_strategy: str
     creative_strategy: str
+    custom_instructions: str | None = None
     ai_summary: dict | None = None
     generation_progress: dict | None = None
     credits_used: int
@@ -236,6 +240,16 @@ class AICampaignResponse(BaseModel):
     published_at: str | None = None
     created_at: str
     adsets: list[AICampaignAdSetResponse] = []
+
+
+class UpdateCampaignRequest(BaseModel):
+    """Edit a campaign draft before publishing."""
+    name: str | None = None
+    daily_budget: int | None = None
+    landing_page_url: str | None = None
+    conversion_event: str | None = None
+    custom_instructions: str | None = None
+    adsets: list[dict] | None = None  # [{id, name, daily_budget, targeting, ads: [{id, headline, primary_text, description, cta_type}]}]
 
 
 # ---------------------------------------------------------------------------
@@ -1377,6 +1391,98 @@ async def create_custom_audience(
 # Phase 5: AI Campaign Builder
 # ---------------------------------------------------------------------------
 
+GENERATION_CREDIT_COST = 20
+
+
+def _build_campaign_response(campaign: AICampaign, adsets: list | None = None) -> AICampaignResponse:
+    """Build a standard AICampaignResponse from a campaign model."""
+    return AICampaignResponse(
+        id=str(campaign.id),
+        status=campaign.status,
+        name=campaign.name,
+        objective=campaign.objective,
+        daily_budget=campaign.daily_budget,
+        landing_page_url=campaign.landing_page_url,
+        conversion_event=campaign.conversion_event,
+        audience_strategy=campaign.audience_strategy,
+        creative_strategy=campaign.creative_strategy,
+        custom_instructions=campaign.custom_instructions,
+        ai_summary=campaign.ai_summary,
+        generation_progress=campaign.generation_progress,
+        credits_used=campaign.credits_used,
+        meta_campaign_id=campaign.meta_campaign_id,
+        published_at=campaign.published_at.isoformat() if campaign.published_at else None,
+        created_at=campaign.created_at.isoformat(),
+        adsets=adsets or [],
+    )
+
+
+async def _load_campaign_adsets(db: AsyncSession, campaign_id) -> list[AICampaignAdSetResponse]:
+    """Load ad sets and ads for a campaign."""
+    adsets_r = await db.execute(
+        select(AICampaignAdSet).where(AICampaignAdSet.campaign_id == campaign_id)
+    )
+    adsets = []
+    for adset in adsets_r.scalars().all():
+        ads_r = await db.execute(
+            select(AICampaignAd).where(AICampaignAd.adset_id == adset.id)
+        )
+        ads = [
+            AICampaignAdResponse(
+                id=str(ad.id),
+                name=ad.name,
+                headline=ad.headline,
+                primary_text=ad.primary_text,
+                description=ad.description,
+                creative_source=ad.creative_source,
+                cta_type=ad.cta_type,
+                destination_url=ad.destination_url,
+            )
+            for ad in ads_r.scalars().all()
+        ]
+        adsets.append(AICampaignAdSetResponse(
+            id=str(adset.id),
+            name=adset.name,
+            targeting=adset.targeting or {},
+            daily_budget=adset.daily_budget,
+            ads=ads,
+        ))
+    return adsets
+
+
+async def _check_credits(db: AsyncSession, tenant_id, required: int) -> CreditBalance:
+    """Check tenant has enough credits, raise 402 if not."""
+    balance_r = await db.execute(
+        select(CreditBalance).where(CreditBalance.tenant_id == tenant_id).with_for_update()
+    )
+    balance = balance_r.scalar_one_or_none()
+    if not balance or balance.balance < required:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Insufficient credits. Need {required}, have {balance.balance if balance else 0}.",
+        )
+    return balance
+
+
+async def _deduct_credits(
+    db: AsyncSession, balance: CreditBalance, amount: int,
+    user_id, description: str, ref_type: str, ref_id,
+):
+    """Deduct credits and record a transaction."""
+    balance.balance -= amount
+    balance.lifetime_used += amount
+    db.add(CreditTransaction(
+        tenant_id=balance.tenant_id,
+        user_id=user_id,
+        type="usage",
+        amount=-amount,
+        balance_after=balance.balance,
+        description=description,
+        reference_type=ref_type,
+        reference_id=ref_id,
+    ))
+
+
 @router.post("/launch")
 async def create_ai_campaign(
     body: CreateCampaignRequest,
@@ -1389,6 +1495,10 @@ async def create_ai_campaign(
         raise HTTPException(status_code=400, detail="No active Facebook connection.")
     if not account:
         raise HTTPException(status_code=400, detail="No ad account selected.")
+
+    # Validate budget
+    if body.daily_budget < 100:  # min $1.00
+        raise HTTPException(status_code=400, detail="Daily budget must be at least $1.00 (100 cents).")
 
     campaign = AICampaign(
         tenant_id=user.tenant_id,
@@ -1422,25 +1532,7 @@ async def list_ai_campaigns(
     result = await db.execute(
         select(AICampaign).where(AICampaign.tenant_id == user.tenant_id).order_by(AICampaign.created_at.desc())
     )
-    campaigns = result.scalars().all()
-    return [
-        AICampaignResponse(
-            id=str(c.id),
-            status=c.status,
-            name=c.name,
-            objective=c.objective,
-            daily_budget=c.daily_budget,
-            audience_strategy=c.audience_strategy,
-            creative_strategy=c.creative_strategy,
-            ai_summary=c.ai_summary,
-            generation_progress=c.generation_progress,
-            credits_used=c.credits_used,
-            meta_campaign_id=c.meta_campaign_id,
-            published_at=c.published_at.isoformat() if c.published_at else None,
-            created_at=c.created_at.isoformat(),
-        )
-        for c in campaigns
-    ]
+    return [_build_campaign_response(c) for c in result.scalars().all()]
 
 
 @router.get("/launch/{campaign_id}")
@@ -1460,52 +1552,83 @@ async def get_ai_campaign(
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found.")
 
-    # Load ad sets and ads
-    adsets_r = await db.execute(
-        select(AICampaignAdSet).where(AICampaignAdSet.campaign_id == campaign.id)
-    )
-    adsets = []
-    for adset in adsets_r.scalars().all():
-        ads_r = await db.execute(
-            select(AICampaignAd).where(AICampaignAd.adset_id == adset.id)
-        )
-        ads = [
-            AICampaignAdResponse(
-                id=str(ad.id),
-                name=ad.name,
-                headline=ad.headline,
-                primary_text=ad.primary_text,
-                description=ad.description,
-                creative_source=ad.creative_source,
-                cta_type=ad.cta_type,
-                destination_url=ad.destination_url,
-            )
-            for ad in ads_r.scalars().all()
-        ]
-        adsets.append(AICampaignAdSetResponse(
-            id=str(adset.id),
-            name=adset.name,
-            targeting=adset.targeting or {},
-            daily_budget=adset.daily_budget,
-            ads=ads,
-        ))
+    adsets = await _load_campaign_adsets(db, campaign.id)
+    return _build_campaign_response(campaign, adsets)
 
-    return AICampaignResponse(
-        id=str(campaign.id),
-        status=campaign.status,
-        name=campaign.name,
-        objective=campaign.objective,
-        daily_budget=campaign.daily_budget,
-        audience_strategy=campaign.audience_strategy,
-        creative_strategy=campaign.creative_strategy,
-        ai_summary=campaign.ai_summary,
-        generation_progress=campaign.generation_progress,
-        credits_used=campaign.credits_used,
-        meta_campaign_id=campaign.meta_campaign_id,
-        published_at=campaign.published_at.isoformat() if campaign.published_at else None,
-        created_at=campaign.created_at.isoformat(),
-        adsets=adsets,
+
+@router.put("/launch/{campaign_id}")
+async def update_ai_campaign(
+    campaign_id: str,
+    body: UpdateCampaignRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit AI campaign draft before publishing."""
+    result = await db.execute(
+        select(AICampaign).where(
+            AICampaign.id == uuid.UUID(campaign_id),
+            AICampaign.tenant_id == user.tenant_id,
+        )
     )
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.status not in ("ready", "draft"):
+        raise HTTPException(status_code=400, detail="Can only edit campaigns in draft or ready state.")
+
+    # Update campaign-level fields
+    if body.name is not None:
+        campaign.name = body.name
+    if body.daily_budget is not None:
+        campaign.daily_budget = body.daily_budget
+    if body.landing_page_url is not None:
+        campaign.landing_page_url = body.landing_page_url
+    if body.conversion_event is not None:
+        campaign.conversion_event = body.conversion_event
+    if body.custom_instructions is not None:
+        campaign.custom_instructions = body.custom_instructions
+
+    # Update ad sets and ads if provided
+    if body.adsets:
+        for adset_data in body.adsets:
+            adset_id = adset_data.get("id")
+            if not adset_id:
+                continue
+            adset_r = await db.execute(
+                select(AICampaignAdSet).where(AICampaignAdSet.id == uuid.UUID(adset_id))
+            )
+            adset = adset_r.scalar_one_or_none()
+            if not adset:
+                continue
+            if "name" in adset_data:
+                adset.name = adset_data["name"]
+            if "daily_budget" in adset_data:
+                adset.daily_budget = adset_data["daily_budget"]
+            if "targeting" in adset_data:
+                adset.targeting = adset_data["targeting"]
+
+            for ad_data in adset_data.get("ads", []):
+                ad_id = ad_data.get("id")
+                if not ad_id:
+                    continue
+                ad_r = await db.execute(
+                    select(AICampaignAd).where(AICampaignAd.id == uuid.UUID(ad_id))
+                )
+                ad = ad_r.scalar_one_or_none()
+                if not ad:
+                    continue
+                if "headline" in ad_data:
+                    ad.headline = ad_data["headline"]
+                if "primary_text" in ad_data:
+                    ad.primary_text = ad_data["primary_text"]
+                if "description" in ad_data:
+                    ad.description = ad_data["description"]
+                if "cta_type" in ad_data:
+                    ad.cta_type = ad_data["cta_type"]
+
+    await db.commit()
+    adsets = await _load_campaign_adsets(db, campaign.id)
+    return _build_campaign_response(campaign, adsets)
 
 
 @router.post("/launch/{campaign_id}/generate")
@@ -1527,9 +1650,33 @@ async def trigger_generation(
     if campaign.status not in ("draft", "failed"):
         raise HTTPException(status_code=400, detail=f"Campaign is in '{campaign.status}' state, cannot regenerate.")
 
-    from app.scraping.fb_sync_tasks import generate_ai_campaign
-    task = generate_ai_campaign.delay(str(campaign.id))
-    return {"detail": "Generation started.", "task_id": task.id}
+    # Check and deduct credits upfront
+    balance = await _check_credits(db, user.tenant_id, GENERATION_CREDIT_COST)
+    await _deduct_credits(
+        db, balance, GENERATION_CREDIT_COST, user.id,
+        f"AI campaign generation: {campaign.name}",
+        "ai_campaign", campaign.id,
+    )
+    await db.commit()
+
+    # Try Celery first, fall back to inline generation
+    try:
+        from app.scraping.fb_sync_tasks import generate_ai_campaign
+        task = generate_ai_campaign.delay(str(campaign.id))
+        return {"detail": "Generation started.", "task_id": task.id}
+    except Exception:
+        logger.info("Celery not available, running AI generation inline for campaign %s", campaign_id)
+
+    # Inline generation
+    try:
+        from app.services.ai_campaign_gen import generate_campaign
+        await generate_campaign(db, str(campaign.id))
+        await db.refresh(campaign)
+        adsets = await _load_campaign_adsets(db, campaign.id)
+        return {"detail": "Generation complete.", "campaign": _build_campaign_response(campaign, adsets).model_dump()}
+    except Exception as e:
+        logger.exception("Inline AI generation failed for campaign %s", campaign_id)
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 
 @router.post("/launch/{campaign_id}/publish")
@@ -1551,6 +1698,26 @@ async def publish_campaign(
     if campaign.status != "ready":
         raise HTTPException(status_code=400, detail=f"Campaign must be in 'ready' state to publish (current: {campaign.status}).")
 
-    from app.scraping.fb_sync_tasks import publish_ai_campaign
-    task = publish_ai_campaign.delay(str(campaign.id))
-    return {"detail": "Publishing started.", "task_id": task.id}
+    # Try Celery first, fall back to inline publish
+    try:
+        from app.scraping.fb_sync_tasks import publish_ai_campaign
+        task = publish_ai_campaign.delay(str(campaign.id))
+        return {"detail": "Publishing started.", "task_id": task.id}
+    except Exception:
+        logger.info("Celery not available, running publish inline for campaign %s", campaign_id)
+
+    # Inline publish
+    try:
+        from app.scraping.fb_sync_tasks import _run_publish
+        import asyncio
+        result_data = await _run_publish(str(campaign.id))
+        await db.refresh(campaign)
+        return {"detail": "Published successfully.", "meta_campaign_id": result_data.get("meta_campaign_id")}
+    except Exception as e:
+        logger.exception("Inline publish failed for campaign %s", campaign_id)
+        # Reset status if stuck in publishing
+        await db.refresh(campaign)
+        if campaign.status == "publishing":
+            campaign.status = "ready"
+            await db.commit()
+        raise HTTPException(status_code=500, detail=f"Publishing failed: {str(e)}")
