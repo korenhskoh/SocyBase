@@ -3,8 +3,6 @@
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -1647,7 +1645,7 @@ async def trigger_generation(
     campaign = result.scalar_one_or_none()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found.")
-    if campaign.status not in ("draft", "failed"):
+    if campaign.status not in ("draft", "failed", "ready"):
         raise HTTPException(status_code=400, detail=f"Campaign is in '{campaign.status}' state, cannot regenerate.")
 
     # Check and deduct credits upfront
@@ -1676,7 +1674,29 @@ async def trigger_generation(
         return {"detail": "Generation complete.", "campaign": _build_campaign_response(campaign, adsets).model_dump()}
     except Exception as e:
         logger.exception("Inline AI generation failed for campaign %s", campaign_id)
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+        # Refund credits on failure
+        try:
+            balance_r = await db.execute(
+                select(CreditBalance).where(CreditBalance.tenant_id == user.tenant_id).with_for_update()
+            )
+            balance = balance_r.scalar_one_or_none()
+            if balance:
+                balance.balance += GENERATION_CREDIT_COST
+                balance.lifetime_used -= GENERATION_CREDIT_COST
+                db.add(CreditTransaction(
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    type="refund",
+                    amount=GENERATION_CREDIT_COST,
+                    balance_after=balance.balance,
+                    description=f"Refund: AI campaign generation failed — {campaign.name}",
+                    reference_type="ai_campaign",
+                    reference_id=campaign.id,
+                ))
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to refund credits for campaign %s", campaign_id)
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}. Credits have been refunded.")
 
 
 @router.post("/launch/{campaign_id}/publish")
@@ -1721,3 +1741,194 @@ async def publish_campaign(
             campaign.status = "ready"
             await db.commit()
         raise HTTPException(status_code=500, detail=f"Publishing failed: {str(e)}")
+
+
+@router.delete("/launch/{campaign_id}")
+async def delete_ai_campaign(
+    campaign_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an AI campaign draft."""
+    result = await db.execute(
+        select(AICampaign).where(
+            AICampaign.id == uuid.UUID(campaign_id),
+            AICampaign.tenant_id == user.tenant_id,
+        )
+    )
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.status in ("generating", "publishing"):
+        raise HTTPException(status_code=400, detail="Cannot delete a campaign that is currently processing.")
+
+    await db.delete(campaign)
+    await db.commit()
+    return {"detail": "Campaign deleted."}
+
+
+class RegenerateAdRequest(BaseModel):
+    custom_instructions: str | None = None
+
+
+@router.post("/launch/{campaign_id}/ads/{ad_id}/regenerate")
+async def regenerate_single_ad(
+    campaign_id: str,
+    ad_id: str,
+    body: RegenerateAdRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Regenerate a single ad's copy using AI (free, no credit cost)."""
+    result = await db.execute(
+        select(AICampaign).where(
+            AICampaign.id == uuid.UUID(campaign_id),
+            AICampaign.tenant_id == user.tenant_id,
+        )
+    )
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.status != "ready":
+        raise HTTPException(status_code=400, detail="Campaign must be in 'ready' state.")
+
+    ad_r = await db.execute(select(AICampaignAd).where(AICampaignAd.id == uuid.UUID(ad_id)))
+    ad = ad_r.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found.")
+
+    # Get the ad set for targeting context
+    adset_r = await db.execute(select(AICampaignAdSet).where(AICampaignAdSet.id == ad.adset_id))
+    adset = adset_r.scalar_one_or_none()
+
+    settings = get_settings()
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured.")
+
+    from openai import AsyncOpenAI
+    import json
+
+    ai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+    targeting_summary = ""
+    if adset and adset.targeting:
+        t = adset.targeting
+        if t.get("age_min"):
+            targeting_summary += f"Age {t['age_min']}-{t.get('age_max', 65)}. "
+        if t.get("genders"):
+            g = t["genders"]
+            if isinstance(g, list):
+                targeting_summary += "Gender: " + ", ".join("Male" if x == 1 else "Female" for x in g) + ". "
+
+    response = await ai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": (
+                "You are an expert Facebook Ads copywriter. "
+                "Generate a fresh alternative version of an ad creative. "
+                "Keep it compelling and concise."
+            )},
+            {"role": "user", "content": f"""Generate one alternative Facebook ad creative.
+
+Current ad for reference (create something different):
+- Headline: {ad.headline}
+- Primary text: {ad.primary_text}
+- Description: {ad.description or 'None'}
+
+Campaign objective: {campaign.objective}
+Audience: {targeting_summary or 'Broad'}
+Landing page: {campaign.landing_page_url or 'Not specified'}
+{f'Instructions: {body.custom_instructions}' if body.custom_instructions else ''}
+
+Return a JSON object with: headline (max 40 chars), primary_text (max 125 chars), description (max 30 chars, optional), cta_type (one of LEARN_MORE, SIGN_UP, SHOP_NOW, GET_OFFER, CONTACT_US).
+Only return valid JSON, no markdown."""},
+        ],
+        temperature=0.8,
+        max_tokens=400,
+    )
+
+    from app.services.ai_campaign_gen import _parse_json_response
+    new_copy = _parse_json_response(
+        response.choices[0].message.content or "{}",
+        {"headline": ad.headline, "primary_text": ad.primary_text, "cta_type": ad.cta_type},
+    )
+
+    ad.headline = new_copy.get("headline", ad.headline)
+    ad.primary_text = new_copy.get("primary_text", ad.primary_text)
+    ad.description = new_copy.get("description", ad.description)
+    ad.cta_type = new_copy.get("cta_type", ad.cta_type)
+    await db.commit()
+
+    adsets = await _load_campaign_adsets(db, campaign.id)
+    return _build_campaign_response(campaign, adsets)
+
+
+@router.post("/launch/{campaign_id}/duplicate")
+async def duplicate_ai_campaign(
+    campaign_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Duplicate an existing AI campaign as a new draft."""
+    result = await db.execute(
+        select(AICampaign).where(
+            AICampaign.id == uuid.UUID(campaign_id),
+            AICampaign.tenant_id == user.tenant_id,
+        )
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+
+    new_campaign = AICampaign(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        ad_account_id=source.ad_account_id,
+        name=f"{source.name} (Copy)",
+        objective=source.objective,
+        daily_budget=source.daily_budget,
+        page_id=source.page_id,
+        pixel_id=source.pixel_id,
+        conversion_event=source.conversion_event,
+        landing_page_url=source.landing_page_url,
+        audience_strategy=source.audience_strategy,
+        creative_strategy=source.creative_strategy,
+        historical_data_range=source.historical_data_range,
+        custom_instructions=source.custom_instructions,
+    )
+    db.add(new_campaign)
+    await db.flush()
+
+    # Copy ad sets and ads
+    adsets_r = await db.execute(
+        select(AICampaignAdSet).where(AICampaignAdSet.campaign_id == source.id)
+    )
+    for src_adset in adsets_r.scalars().all():
+        new_adset = AICampaignAdSet(
+            campaign_id=new_campaign.id,
+            name=src_adset.name,
+            targeting=src_adset.targeting,
+            daily_budget=src_adset.daily_budget,
+        )
+        db.add(new_adset)
+        await db.flush()
+
+        ads_r = await db.execute(
+            select(AICampaignAd).where(AICampaignAd.adset_id == src_adset.id)
+        )
+        for src_ad in ads_r.scalars().all():
+            db.add(AICampaignAd(
+                adset_id=new_adset.id,
+                name=src_ad.name,
+                headline=src_ad.headline,
+                primary_text=src_ad.primary_text,
+                description=src_ad.description,
+                creative_source=src_ad.creative_source,
+                cta_type=src_ad.cta_type,
+                destination_url=src_ad.destination_url,
+            ))
+
+    await db.commit()
+    await db.refresh(new_campaign)
+    adsets = await _load_campaign_adsets(db, new_campaign.id)
+    return _build_campaign_response(new_campaign, adsets)

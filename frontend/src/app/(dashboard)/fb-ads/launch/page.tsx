@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { fbAdsApi } from "@/lib/api-client";
 import type { AICampaignItem, AICampaignAdSet, AICampaignAd, FBConnectionStatus, FBPageItem, FBPixelItem } from "@/types";
 
@@ -109,6 +109,10 @@ export default function FBAILaunchPage() {
   const [reviewStep, setReviewStep] = useState<ReviewStep>("summary");
   const [editingAdId, setEditingAdId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [regeneratingAdId, setRegeneratingAdId] = useState<string | null>(null);
+
+  // Polling ref for cleanup
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Form state
   const [name, setName] = useState("");
@@ -123,6 +127,13 @@ export default function FBAILaunchPage() {
   const [historicalRange, setHistoricalRange] = useState("90");
   const [instructions, setInstructions] = useState("");
   const [creating, setCreating] = useState(false);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -143,12 +154,36 @@ export default function FBAILaunchPage() {
         const selectedPixel = pxRes.data.find((p: FBPixelItem) => p.is_selected);
         if (selectedPixel) setPixelId(selectedPixel.id);
       } catch {
-        // error
+        // ignore
       } finally {
         setLoading(false);
       }
     };
     load();
+  }, []);
+
+  const refreshCampaign = useCallback(async (id: string) => {
+    const res = await fbAdsApi.getAICampaign(id);
+    setActiveCampaign(res.data);
+    return res.data;
+  }, []);
+
+  const startPolling = useCallback((campaignId: string, onComplete?: (data: AICampaignItem) => void) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fbAdsApi.getAICampaign(campaignId);
+        setActiveCampaign(res.data);
+        if (res.data.status === "ready" || res.data.status === "failed" || res.data.status === "published") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          onComplete?.(res.data);
+        }
+      } catch {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    }, 2000);
   }, []);
 
   const handleCreate = async () => {
@@ -180,28 +215,47 @@ export default function FBAILaunchPage() {
         return;
       }
 
+      // Set generating view and start polling
+      setActiveCampaign({ id: res.data.id, status: "generating", generation_progress: { stage: "analyze", pct: 0 } } as AICampaignItem);
       setView("generating");
-
-      // Poll for progress
-      const poll = setInterval(async () => {
-        try {
-          const campRes = await fbAdsApi.getAICampaign(res.data.id);
-          setActiveCampaign(campRes.data);
-          if (campRes.data.status === "ready" || campRes.data.status === "failed") {
-            clearInterval(poll);
-            if (campRes.data.status === "ready") {
-              setReviewStep("summary");
-              setView("review");
-            }
-          }
-        } catch {
-          clearInterval(poll);
+      startPolling(res.data.id, (data) => {
+        if (data.status === "ready") {
+          setReviewStep("summary");
+          setView("review");
         }
-      }, 2000);
+      });
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to create campaign.";
+      const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } };
+      const msg = axiosErr?.response?.data?.detail || "Failed to create campaign.";
       alert(msg);
     } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    if (!activeCampaign || !confirm("Regenerate this campaign? This will replace all existing ad sets and ads.\n\nCosts 20 credits.")) return;
+    setCreating(true);
+    try {
+      const genRes = await fbAdsApi.generateAICampaign(activeCampaign.id);
+      if (genRes.data.campaign) {
+        setActiveCampaign(genRes.data.campaign);
+        setReviewStep("summary");
+        setView("review");
+        setCreating(false);
+        return;
+      }
+      setView("generating");
+      startPolling(activeCampaign.id, (data) => {
+        setCreating(false);
+        if (data.status === "ready") {
+          setReviewStep("summary");
+          setView("review");
+        }
+      });
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      alert(axiosErr?.response?.data?.detail || "Failed to regenerate.");
       setCreating(false);
     }
   };
@@ -212,56 +266,82 @@ export default function FBAILaunchPage() {
     try {
       const pubRes = await fbAdsApi.publishAICampaign(activeCampaign.id);
       if (pubRes.data.meta_campaign_id) {
-        // Inline publish completed
-        const campRes = await fbAdsApi.getAICampaign(activeCampaign.id);
-        setActiveCampaign(campRes.data);
+        await refreshCampaign(activeCampaign.id);
         setPublishing(false);
         return;
       }
       // Poll for publish completion
-      const poll = setInterval(async () => {
-        try {
-          const res = await fbAdsApi.getAICampaign(activeCampaign.id);
-          setActiveCampaign(res.data);
-          if (res.data.status === "published" || res.data.status === "failed") {
-            clearInterval(poll);
-            setPublishing(false);
-          }
-        } catch {
-          clearInterval(poll);
-          setPublishing(false);
-        }
-      }, 2000);
+      startPolling(activeCampaign.id, () => setPublishing(false));
     } catch {
       alert("Failed to publish campaign.");
       setPublishing(false);
     }
   };
 
-  const handleSaveEdit = useCallback(async (adId: string, field: string, value: string) => {
+  // Batch save: send all changed fields in a single API call
+  const handleSaveEdit = useCallback(async (adId: string, changes: Record<string, string>) => {
     if (!activeCampaign) return;
     setSaving(true);
     try {
-      // Find the ad set containing this ad
-      const adsetWithAd = activeCampaign.adsets.find(as => as.ads.some(a => a.id === adId));
+      const adsetWithAd = activeCampaign.adsets.find(s => s.ads.some(a => a.id === adId));
       if (!adsetWithAd) return;
 
       await fbAdsApi.updateAICampaign(activeCampaign.id, {
         adsets: [{
           id: adsetWithAd.id,
-          ads: [{ id: adId, [field]: value }],
+          ads: [{ id: adId, ...changes }],
         }],
       });
-
-      // Refresh
-      const res = await fbAdsApi.getAICampaign(activeCampaign.id);
-      setActiveCampaign(res.data);
+      await refreshCampaign(activeCampaign.id);
     } catch {
       alert("Failed to save changes.");
     } finally {
       setSaving(false);
     }
+  }, [activeCampaign, refreshCampaign]);
+
+  const handleRegenerateAd = useCallback(async (adId: string) => {
+    if (!activeCampaign) return;
+    setRegeneratingAdId(adId);
+    try {
+      const res = await fbAdsApi.regenerateAd(activeCampaign.id, adId);
+      setActiveCampaign(res.data);
+    } catch {
+      alert("Failed to regenerate ad copy.");
+    } finally {
+      setRegeneratingAdId(null);
+    }
   }, [activeCampaign]);
+
+  const handleDuplicate = async () => {
+    if (!activeCampaign) return;
+    try {
+      const res = await fbAdsApi.duplicateAICampaign(activeCampaign.id);
+      setActiveCampaign(res.data);
+      setReviewStep("summary");
+      setView("review");
+      // Refresh history
+      const histRes = await fbAdsApi.listAICampaigns();
+      setCampaigns(histRes.data);
+    } catch {
+      alert("Failed to duplicate campaign.");
+    }
+  };
+
+  const handleDelete = async (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!confirm("Delete this campaign? This cannot be undone.")) return;
+    try {
+      await fbAdsApi.deleteAICampaign(id);
+      setCampaigns(prev => prev.filter(c => c.id !== id));
+      if (activeCampaign?.id === id) {
+        setActiveCampaign(null);
+        setView("config");
+      }
+    } catch {
+      alert("Failed to delete campaign.");
+    }
+  };
 
   const viewCampaign = async (id: string) => {
     try {
@@ -350,6 +430,7 @@ export default function FBAILaunchPage() {
         {stage === "error" && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
             <p className="text-red-400 text-sm">{progress?.error || "An error occurred during generation."}</p>
+            <p className="text-white/30 text-xs mt-1">Credits have been refunded.</p>
             <button
               onClick={() => { setView("config"); setActiveCampaign(null); }}
               className="mt-3 text-sm text-white/50 hover:text-white transition"
@@ -372,7 +453,7 @@ export default function FBAILaunchPage() {
       { key: "publish", label: "Publish" },
     ];
 
-    const totalAds = activeCampaign.adsets.reduce((sum, as) => sum + as.ads.length, 0);
+    const totalAds = activeCampaign.adsets.reduce((sum, adsetItem) => sum + adsetItem.ads.length, 0);
 
     return (
       <div className="flex gap-6">
@@ -395,6 +476,42 @@ export default function FBAILaunchPage() {
                 {step.label}
               </button>
             ))}
+
+            {/* Sidebar Actions */}
+            <div className="pt-3 mt-3 border-t border-white/5 space-y-1">
+              {activeCampaign.status === "ready" && (
+                <button
+                  onClick={handleRegenerate}
+                  disabled={creating}
+                  className="w-full text-left px-3 py-2 rounded-lg text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition flex items-center gap-2"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
+                  </svg>
+                  Regenerate
+                </button>
+              )}
+              <button
+                onClick={handleDuplicate}
+                className="w-full text-left px-3 py-2 rounded-lg text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition flex items-center gap-2"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5" />
+                </svg>
+                Duplicate
+              </button>
+              {activeCampaign.status !== "published" && (
+                <button
+                  onClick={() => handleDelete(activeCampaign.id)}
+                  className="w-full text-left px-3 py-2 rounded-lg text-xs text-red-400/50 hover:text-red-400 hover:bg-red-500/5 transition flex items-center gap-2"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916" />
+                  </svg>
+                  Delete
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -431,7 +548,7 @@ export default function FBAILaunchPage() {
             </div>
           </div>
 
-          {/* Mobile step tabs */}
+          {/* Mobile step tabs + actions */}
           <div className="lg:hidden flex gap-1 overflow-x-auto pb-1">
             {REVIEW_STEPS.map((step, i) => (
               <button
@@ -444,6 +561,23 @@ export default function FBAILaunchPage() {
                 {i + 1}. {step.label}
               </button>
             ))}
+          </div>
+
+          {/* Mobile action buttons */}
+          <div className="lg:hidden flex gap-2 flex-wrap">
+            {activeCampaign.status === "ready" && (
+              <button onClick={handleRegenerate} disabled={creating} className="text-xs px-3 py-1.5 rounded-lg bg-white/5 text-white/40 hover:text-white/60 border border-white/10 transition">
+                Regenerate
+              </button>
+            )}
+            <button onClick={handleDuplicate} className="text-xs px-3 py-1.5 rounded-lg bg-white/5 text-white/40 hover:text-white/60 border border-white/10 transition">
+              Duplicate
+            </button>
+            {activeCampaign.status !== "published" && (
+              <button onClick={() => handleDelete(activeCampaign.id)} className="text-xs px-3 py-1.5 rounded-lg bg-red-500/5 text-red-400/50 hover:text-red-400 border border-red-500/10 transition">
+                Delete
+              </button>
+            )}
           </div>
 
           {/* Step Content */}
@@ -576,8 +710,10 @@ export default function FBAILaunchPage() {
                       isEditing={editingAdId === ad.id}
                       saving={saving}
                       canEdit={activeCampaign.status === "ready"}
+                      regenerating={regeneratingAdId === ad.id}
                       onEdit={() => setEditingAdId(editingAdId === ad.id ? null : ad.id)}
                       onSave={handleSaveEdit}
+                      onRegenerate={handleRegenerateAd}
                     />
                   ))}
                 </div>
@@ -644,6 +780,13 @@ export default function FBAILaunchPage() {
                       </>
                     )}
                   </button>
+                ) : activeCampaign.status === "failed" ? (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-center space-y-2">
+                    <p className="text-red-400 text-sm">Publishing failed. You can try again.</p>
+                    <button onClick={handlePublish} className="text-sm text-white/50 hover:text-white transition">
+                      Retry Publish
+                    </button>
+                  </div>
                 ) : null}
               </div>
 
@@ -691,10 +834,10 @@ export default function FBAILaunchPage() {
       {view === "history" ? (
         <div className="space-y-3">
           {campaigns.map(c => (
-            <button
+            <div
               key={c.id}
               onClick={() => viewCampaign(c.id)}
-              className="w-full text-left glass-card p-4 hover:bg-white/[0.03] transition group"
+              className="w-full text-left glass-card p-4 hover:bg-white/[0.03] transition group cursor-pointer"
             >
               <div className="flex items-center justify-between">
                 <div>
@@ -707,17 +850,30 @@ export default function FBAILaunchPage() {
                     <span>{new Date(c.created_at).toLocaleDateString()}</span>
                   </p>
                 </div>
-                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                  c.status === "published" ? "bg-emerald-500/10 text-emerald-400" :
-                  c.status === "ready" ? "bg-blue-500/10 text-blue-400" :
-                  c.status === "failed" ? "bg-red-500/10 text-red-400" :
-                  c.status === "generating" ? "bg-amber-500/10 text-amber-400" :
-                  "bg-white/5 text-white/30"
-                }`}>
-                  {c.status}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                    c.status === "published" ? "bg-emerald-500/10 text-emerald-400" :
+                    c.status === "ready" ? "bg-blue-500/10 text-blue-400" :
+                    c.status === "failed" ? "bg-red-500/10 text-red-400" :
+                    c.status === "generating" ? "bg-amber-500/10 text-amber-400" :
+                    "bg-white/5 text-white/30"
+                  }`}>
+                    {c.status}
+                  </span>
+                  {c.status !== "published" && c.status !== "generating" && (
+                    <button
+                      onClick={(e) => handleDelete(c.id, e)}
+                      className="text-white/20 hover:text-red-400 transition p-1 opacity-0 group-hover:opacity-100"
+                      title="Delete"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       ) : (
@@ -911,21 +1067,25 @@ export default function FBAILaunchPage() {
 }
 
 
-// --- Ad Card with inline editing ---
+// --- Ad Card with inline editing + preview mockup + regenerate ---
 function AdCard({
   ad,
   isEditing,
   saving,
   canEdit,
+  regenerating,
   onEdit,
   onSave,
+  onRegenerate,
 }: {
   ad: AICampaignAd;
   isEditing: boolean;
   saving: boolean;
   canEdit: boolean;
+  regenerating: boolean;
   onEdit: () => void;
-  onSave: (adId: string, field: string, value: string) => void;
+  onSave: (adId: string, changes: Record<string, string>) => void;
+  onRegenerate: (adId: string) => void;
 }) {
   const [headline, setHeadline] = useState(ad.headline);
   const [primaryText, setPrimaryText] = useState(ad.primary_text);
@@ -938,41 +1098,62 @@ function AdCard({
     setPrimaryText(ad.primary_text);
     setDescription(ad.description || "");
     setCtaType(ad.cta_type);
-  }, [ad]);
+  }, [ad.headline, ad.primary_text, ad.description, ad.cta_type]);
 
   const hasChanges = headline !== ad.headline || primaryText !== ad.primary_text || description !== (ad.description || "") || ctaType !== ad.cta_type;
 
-  const handleSaveAll = async () => {
-    if (headline !== ad.headline) await onSave(ad.id, "headline", headline);
-    if (primaryText !== ad.primary_text) await onSave(ad.id, "primary_text", primaryText);
-    if (description !== (ad.description || "")) await onSave(ad.id, "description", description);
-    if (ctaType !== ad.cta_type) await onSave(ad.id, "cta_type", ctaType);
+  const handleSaveAll = () => {
+    const changes: Record<string, string> = {};
+    if (headline !== ad.headline) changes.headline = headline;
+    if (primaryText !== ad.primary_text) changes.primary_text = primaryText;
+    if (description !== (ad.description || "")) changes.description = description;
+    if (ctaType !== ad.cta_type) changes.cta_type = ctaType;
+    if (Object.keys(changes).length > 0) {
+      onSave(ad.id, changes);
+    }
     onEdit(); // close edit mode
   };
 
   return (
-    <div className="glass-card p-4 space-y-3">
-      <div className="flex items-center justify-between">
+    <div className="glass-card overflow-hidden">
+      {/* Ad header */}
+      <div className="px-4 pt-4 pb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <p className="text-white text-sm font-medium">{ad.name}</p>
           {ad.creative_source === "proven_winners" && (
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">Winner</span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/30">{isEditing ? ctaType : ad.cta_type}</span>
           {canEdit && (
-            <button onClick={onEdit} className="text-white/30 hover:text-white transition">
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-              </svg>
-            </button>
+            <>
+              <button
+                onClick={() => onRegenerate(ad.id)}
+                disabled={regenerating}
+                className="text-white/20 hover:text-blue-400 transition p-1"
+                title="Regenerate this ad copy with AI"
+              >
+                {regenerating ? (
+                  <div className="h-3.5 w-3.5 border border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
+                ) : (
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
+                  </svg>
+                )}
+              </button>
+              <button onClick={onEdit} className="text-white/20 hover:text-white transition p-1" title="Edit">
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
+                </svg>
+              </button>
+            </>
           )}
         </div>
       </div>
 
       {isEditing ? (
-        <div className="space-y-3">
+        <div className="px-4 pb-4 space-y-3">
           <div>
             <label className="text-[10px] text-white/30 block mb-0.5">Headline</label>
             <input
@@ -1021,11 +1202,33 @@ function AdCard({
           </div>
         </div>
       ) : (
-        <>
-          <p className="text-white/70 text-sm font-semibold">{ad.headline}</p>
-          <p className="text-white/50 text-sm">{ad.primary_text}</p>
-          {ad.description && <p className="text-white/30 text-xs">{ad.description}</p>}
-        </>
+        <div className="flex flex-col md:flex-row">
+          {/* Ad copy */}
+          <div className="flex-1 px-4 pb-4 space-y-2">
+            <p className="text-white/70 text-sm font-semibold">{ad.headline}</p>
+            <p className="text-white/50 text-sm">{ad.primary_text}</p>
+            {ad.description && <p className="text-white/30 text-xs">{ad.description}</p>}
+          </div>
+          {/* Facebook ad preview mockup */}
+          <div className="md:w-56 shrink-0 p-3">
+            <div className="border border-white/5 rounded-lg overflow-hidden bg-white/[0.02]">
+              <div className="h-20 bg-gradient-to-br from-blue-500/10 to-purple-500/10 flex items-center justify-center">
+                <svg className="h-6 w-6 text-white/10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.41a2.25 2.25 0 013.182 0l2.909 2.91M3.75 21h16.5" />
+                </svg>
+              </div>
+              <div className="p-2.5 space-y-1">
+                <p className="text-[10px] text-white/70 font-semibold truncate">{ad.headline}</p>
+                <p className="text-[9px] text-white/40 line-clamp-2">{ad.primary_text}</p>
+                <div className="pt-1">
+                  <span className="text-[8px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium">
+                    {(ad.cta_type || "LEARN_MORE").replace(/_/g, " ")}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

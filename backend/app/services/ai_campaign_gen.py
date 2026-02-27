@@ -96,14 +96,18 @@ async def generate_campaign(db: AsyncSession, campaign_id: str) -> dict:
         campaign.generation_progress = {"stage": "creative", "pct": 65}
         await db.flush()
 
-        ads_data = await _generate_creative(client, campaign, adsets_data, historical, business)
+        num_ads_per_adset = structure.get("ads_per_adset", 2)
+        ads_data = await _generate_creative(
+            client, campaign, adsets_data, historical, business,
+            ads_per_adset=num_ads_per_adset,
+        )
 
         # Stage 5: Finalize
         campaign.generation_progress = {"stage": "finalize", "pct": 85}
         await db.flush()
 
         total_ads = 0
-        for adset_data in adsets_data:
+        for i, adset_data in enumerate(adsets_data):
             adset = AICampaignAdSet(
                 campaign_id=campaign.id,
                 name=adset_data["name"],
@@ -113,7 +117,13 @@ async def generate_campaign(db: AsyncSession, campaign_id: str) -> dict:
             db.add(adset)
             await db.flush()
 
-            for ad_data in ads_data.get(adset_data["name"], []):
+            # Match ads by name first, fall back to index-based key
+            adset_ads = (
+                ads_data.get(adset_data["name"])
+                or ads_data.get(f"__adset_{i}")
+                or []
+            )
+            for ad_data in adset_ads:
                 db.add(AICampaignAd(
                     adset_id=adset.id,
                     name=ad_data.get("name", f"Ad {total_ads + 1}"),
@@ -358,7 +368,8 @@ Only return valid JSON array, no markdown."""},
 
 
 async def _generate_creative(
-    client: AsyncOpenAI, campaign: AICampaign, adsets: list[dict], historical: dict, business: dict,
+    client: AsyncOpenAI, campaign: AICampaign, adsets: list[dict],
+    historical: dict, business: dict, ads_per_adset: int = 2,
 ) -> dict[str, list[dict]]:
     """Generate ad creative for each ad set."""
     winners = historical.get("winning_ads", [])
@@ -371,7 +382,6 @@ async def _generate_creative(
         if headline or text:
             winner_creatives.append({"headline": headline, "text": text, "roas": w.get("roas", 0)})
 
-    ads_per_adset = max(2, min(structure_ads := len(adsets), 3)) if adsets else 2
     result: dict[str, list[dict]] = {}
 
     biz_context = ""
@@ -385,7 +395,7 @@ async def _generate_creative(
             parts.append(f"Target audience: {business['target_audience']}")
         biz_context = "\n".join(parts) if parts else ""
 
-    for adset in adsets:
+    for i, adset in enumerate(adsets):
         targeting_summary = ""
         t = adset.get("targeting", {})
         if t.get("age_min"):
@@ -444,6 +454,8 @@ Only return valid JSON array, no markdown."""},
         for ad in ads:
             ad["creative_source"] = campaign.creative_strategy
 
+        # Store under both name and index key for robust matching
         result[adset["name"]] = ads
+        result[f"__adset_{i}"] = ads
 
     return result

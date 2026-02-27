@@ -368,6 +368,10 @@ export const fbAdsApi = {
   updateAICampaign: (id: string, data: Record<string, unknown>) => api.put(`/fb-ads/launch/${id}`, data),
   generateAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/generate`),
   publishAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/publish`),
+  deleteAICampaign: (id: string) => api.delete(`/fb-ads/launch/${id}`),
+  regenerateAd: (campaignId: string, adId: string, instructions?: string) =>
+    api.post(`/fb-ads/launch/${campaignId}/ads/${adId}/regenerate`, { custom_instructions: instructions || null }),
+  duplicateAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/duplicate`),
 };
 
 export default api;
