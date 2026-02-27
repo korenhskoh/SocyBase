@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -17,17 +16,6 @@ logger = logging.getLogger(__name__)
 
 GRAPH_API_VERSION = "v22.0"
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
-
-# Facebook pagination URLs may return a different API version (e.g. v25.0)
-# which can cause 403 errors if the app isn't approved for that version.
-_VERSION_RE = re.compile(r"graph\.facebook\.com/v[\d.]+/")
-
-
-def _pin_api_version(url: str | None) -> str | None:
-    """Rewrite a Facebook pagination URL to use our pinned API version."""
-    if not url:
-        return None
-    return _VERSION_RE.sub(f"graph.facebook.com/{GRAPH_API_VERSION}/", url)
 
 REQUIRED_SCOPES = [
     "ads_management",
@@ -148,8 +136,12 @@ class MetaAPIService:
                         "timezone_name": acc.get("timezone_name", "UTC"),
                         "status": status_map.get(acc.get("account_status"), "UNKNOWN"),
                     })
-                url = _pin_api_version(data.get("paging", {}).get("next"))
-                params = {}  # next URL includes params
+                # Cursor-based pagination — never follow Facebook's "next" URL
+                after = data.get("paging", {}).get("cursors", {}).get("after")
+                if after and "next" in data.get("paging", {}):
+                    params["after"] = after
+                else:
+                    url = None
         return accounts
 
     # -- Pages -------------------------------------------------------------
@@ -176,8 +168,11 @@ class MetaAPIService:
                         "picture_url": pg.get("picture", {}).get("data", {}).get("url"),
                         "access_token": pg.get("access_token"),
                     })
-                url = _pin_api_version(data.get("paging", {}).get("next"))
-                params = {}
+                after = data.get("paging", {}).get("cursors", {}).get("after")
+                if after and "next" in data.get("paging", {}):
+                    params["after"] = after
+                else:
+                    url = None
         return pages
 
     # -- Pixels ------------------------------------------------------------
@@ -231,8 +226,11 @@ class MetaAPIService:
                         "updated_time": c.get("updated_time"),
                         "raw_data": c,
                     })
-                url = _pin_api_version(data.get("paging", {}).get("next"))
-                params = {}
+                after = data.get("paging", {}).get("cursors", {}).get("after")
+                if after and "next" in data.get("paging", {}):
+                    params["after"] = after
+                else:
+                    url = None
         return campaigns
 
     async def list_adsets(self, access_token: str, campaign_id: str) -> list[dict]:
@@ -263,8 +261,11 @@ class MetaAPIService:
                         "end_time": a.get("end_time"),
                         "raw_data": a,
                     })
-                url = _pin_api_version(data.get("paging", {}).get("next"))
-                params = {}
+                after = data.get("paging", {}).get("cursors", {}).get("after")
+                if after and "next" in data.get("paging", {}):
+                    params["after"] = after
+                else:
+                    url = None
         return adsets
 
     async def list_ads(self, access_token: str, adset_id: str) -> list[dict]:
@@ -291,8 +292,11 @@ class MetaAPIService:
                         "creative_data": creative,
                         "raw_data": ad,
                     })
-                url = _pin_api_version(data.get("paging", {}).get("next"))
-                params = {}
+                after = data.get("paging", {}).get("cursors", {}).get("after")
+                if after and "next" in data.get("paging", {}):
+                    params["after"] = after
+                else:
+                    url = None
         return ads
 
     async def get_insights(
@@ -363,8 +367,11 @@ class MetaAPIService:
                         "roas": roas,
                         "actions": actions,
                     })
-                url = _pin_api_version(data.get("paging", {}).get("next"))
-                params = {}
+                after = data.get("paging", {}).get("cursors", {}).get("after")
+                if after and "next" in data.get("paging", {}):
+                    params["after"] = after
+                else:
+                    url = None
         return insights
 
     # -- Campaign status management ----------------------------------------
