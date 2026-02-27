@@ -513,12 +513,44 @@ async def debug_token(
         except Exception as e:
             diag["4_insights"] = {"error": str(e)}
 
-        # Test 5: call list_campaigns through meta_api (uses _auth_params)
+    # -- Tests below run OUTSIDE the shared httpx client to avoid nested clients --
+
+    # Test 5: exact mirror of list_campaigns — fresh client, limit=200
+    try:
+        async with httpx.AsyncClient(timeout=30) as fresh_client:
+            r = await fresh_client.get(
+                f"{base}/{account.account_id}/campaigns",
+                params={"access_token": token, "fields": campaign_fields, "limit": 200},
+            )
+        diag["5_fresh_client_limit200"] = {"status": r.status_code, "count": len(r.json().get("data", []))}
+    except httpx.HTTPStatusError as e:
+        diag["5_fresh_client_limit200"] = {
+            "error": str(e),
+            "status_code": e.response.status_code,
+            "response_body": e.response.text[:2000],
+        }
+    except Exception as e:
+        diag["5_fresh_client_limit200"] = {"error": str(e), "type": type(e).__name__}
+
+    # Test 6: call meta.list_campaigns() — the actual method that fails
+    try:
+        result = await meta.list_campaigns(token, account.account_id)
+        diag["6_meta_api_list_campaigns"] = {"ok": True, "count": len(result)}
+    except httpx.HTTPStatusError as e:
+        resp_body = ""
         try:
-            result = await meta.list_campaigns(token, account.account_id)
-            diag["5_meta_api_list_campaigns"] = {"ok": True, "count": len(result)}
-        except Exception as e:
-            diag["5_meta_api_list_campaigns"] = {"error": str(e), "type": type(e).__name__}
+            resp_body = e.response.text[:2000]
+        except Exception:
+            resp_body = "(could not read body)"
+        diag["6_meta_api_list_campaigns"] = {
+            "error": str(e),
+            "type": type(e).__name__,
+            "status_code": e.response.status_code,
+            "response_body": resp_body,
+            "request_url": str(e.request.url)[:500],
+        }
+    except Exception as e:
+        diag["6_meta_api_list_campaigns"] = {"error": str(e), "type": type(e).__name__}
 
     return diag
 
