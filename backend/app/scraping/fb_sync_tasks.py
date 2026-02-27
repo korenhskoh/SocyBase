@@ -28,6 +28,7 @@ async def _sync_fb_data(tenant_id: str) -> dict:
     """Core async function to sync all FB data for a tenant."""
     meta = MetaAPIService()
     stats = {"campaigns": 0, "adsets": 0, "ads": 0, "insights": 0}
+    logger.info("[celery-sync] Starting FB sync for tenant %s", tenant_id)
 
     async with async_session() as db:
         # Load connection
@@ -39,12 +40,12 @@ async def _sync_fb_data(tenant_id: str) -> dict:
         )
         conn = result.scalar_one_or_none()
         if not conn:
-            logger.info("No active FB connection for tenant %s", tenant_id)
+            logger.info("[celery-sync] No active FB connection for tenant %s", tenant_id)
             return stats
 
         # Check token expiry
         if conn.token_expires_at and conn.token_expires_at < datetime.now(timezone.utc):
-            logger.warning("FB token expired for tenant %s", tenant_id)
+            logger.warning("[celery-sync] FB token expired for tenant %s", tenant_id)
             return stats
 
         token = meta.decrypt_token(conn.access_token_encrypted)
@@ -58,12 +59,15 @@ async def _sync_fb_data(tenant_id: str) -> dict:
         )
         account = result.scalar_one_or_none()
         if not account:
-            logger.info("No selected ad account for tenant %s", tenant_id)
+            logger.info("[celery-sync] No selected ad account for tenant %s", tenant_id)
             return stats
+
+        logger.info("[celery-sync] Syncing account %s for tenant %s", account.account_id, tenant_id)
 
         try:
             # 1. Sync campaigns
             campaigns = await meta.list_campaigns(token, account.account_id)
+            logger.info("[celery-sync] Fetched %d campaigns from Meta", len(campaigns))
             for c in campaigns:
                 existing = await db.execute(
                     select(FBCampaign).where(FBCampaign.campaign_id == c["campaign_id"])
@@ -208,12 +212,15 @@ async def _sync_fb_data(tenant_id: str) -> dict:
                         ))
                     stats["insights"] += 1
 
+            logger.info("[celery-sync] Synced structure: %d campaigns, %d adsets, %d ads, %d insights for tenant %s",
+                        stats["campaigns"], stats["adsets"], stats["ads"], stats["insights"], tenant_id)
+
             # Update last_synced_at
             conn.last_synced_at = datetime.now(timezone.utc)
             await db.commit()
 
         except Exception:
-            logger.exception("Failed to sync FB data for tenant %s", tenant_id)
+            logger.exception("[celery-sync] Failed to sync FB data for tenant %s", tenant_id)
             await db.rollback()
             raise
 

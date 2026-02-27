@@ -3,6 +3,8 @@
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -875,29 +877,28 @@ async def trigger_sync(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a manual FB data sync for the current tenant."""
+    """Trigger a manual FB data sync — always runs inline for immediate results."""
     conn, account = await _get_active_connection(db, user.tenant_id)
     if not conn:
         raise HTTPException(status_code=400, detail="No active Facebook connection.")
     if not account:
         raise HTTPException(status_code=400, detail="No ad account selected.")
 
-    # Try Celery first, fall back to inline sync
-    try:
-        from app.scraping.fb_sync_tasks import sync_fb_data
-        task = sync_fb_data.delay(str(user.tenant_id))
-        return {"detail": "Sync started.", "task_id": task.id}
-    except Exception:
-        logger.info("Celery not available, running sync inline for tenant %s", user.tenant_id)
-
-    # Inline sync: fetch data directly from Meta API
     meta = MetaAPIService()
-    token = meta.decrypt_token(conn.access_token_encrypted)
+    try:
+        token = meta.decrypt_token(conn.access_token_encrypted)
+    except Exception as e:
+        logger.error("Token decryption failed for tenant %s: %s", user.tenant_id, e)
+        raise HTTPException(status_code=400, detail="Facebook token invalid. Please reconnect your account.")
+
     stats = {"campaigns": 0, "adsets": 0, "ads": 0, "insights": 0}
+    logger.info("Starting inline sync for tenant %s, ad account %s", user.tenant_id, account.account_id)
 
     try:
         # 1. Sync campaigns
         campaigns = await meta.list_campaigns(token, account.account_id)
+        logger.info("Fetched %d campaigns from Meta for account %s", len(campaigns), account.account_id)
+
         for c in campaigns:
             existing = await db.execute(
                 select(FBCampaign).where(FBCampaign.campaign_id == c["campaign_id"])
@@ -991,62 +992,78 @@ async def trigger_sync(
                         ))
                     stats["ads"] += 1
 
-        # 4. Sync insights (last 90 days)
-        date_to = date.today().isoformat()
-        date_from = (date.today() - timedelta(days=90)).isoformat()
+        logger.info("Synced structure: %d campaigns, %d adsets, %d ads", stats["campaigns"], stats["adsets"], stats["ads"])
 
-        for level in ("campaign", "adset", "ad"):
-            rows = await meta.get_insights(
-                token, account.account_id, date_from, date_to, level=level
-            )
-            for row in rows:
-                row_date = date.fromisoformat(row["date"]) if isinstance(row["date"], str) else row["date"]
-                existing = await db.execute(
-                    select(FBInsight).where(
-                        FBInsight.object_type == row["object_type"],
-                        FBInsight.object_id == row["object_id"],
-                        FBInsight.date == row_date,
-                    )
+        # 4. Sync insights (last 90 days) — only if we have campaigns
+        if stats["campaigns"] > 0:
+            date_to = date.today().isoformat()
+            date_from = (date.today() - timedelta(days=90)).isoformat()
+
+            for level in ("campaign", "adset", "ad"):
+                rows = await meta.get_insights(
+                    token, account.account_id, date_from, date_to, level=level
                 )
-                insight = existing.scalar_one_or_none()
-                if insight:
-                    insight.spend = row["spend"]
-                    insight.impressions = row["impressions"]
-                    insight.clicks = row["clicks"]
-                    insight.ctr = row["ctr"]
-                    insight.cpc = row["cpc"]
-                    insight.cpm = row["cpm"]
-                    insight.results = row["results"]
-                    insight.cost_per_result = row["cost_per_result"]
-                    insight.purchase_value = row["purchase_value"]
-                    insight.roas = row["roas"]
-                    insight.actions = row["actions"]
-                    insight.synced_at = datetime.now(timezone.utc)
-                else:
-                    db.add(FBInsight(
-                        tenant_id=user.tenant_id,
-                        object_type=row["object_type"],
-                        object_id=row["object_id"],
-                        date=row_date,
-                        spend=row["spend"],
-                        impressions=row["impressions"],
-                        clicks=row["clicks"],
-                        ctr=row["ctr"],
-                        cpc=row["cpc"],
-                        cpm=row["cpm"],
-                        results=row["results"],
-                        cost_per_result=row["cost_per_result"],
-                        purchase_value=row["purchase_value"],
-                        roas=row["roas"],
-                        actions=row["actions"],
-                    ))
-                stats["insights"] += 1
+                logger.info("Fetched %d %s-level insight rows", len(rows), level)
+                for row in rows:
+                    row_date = date.fromisoformat(row["date"]) if isinstance(row["date"], str) else row["date"]
+                    existing = await db.execute(
+                        select(FBInsight).where(
+                            FBInsight.object_type == row["object_type"],
+                            FBInsight.object_id == row["object_id"],
+                            FBInsight.date == row_date,
+                        )
+                    )
+                    insight = existing.scalar_one_or_none()
+                    if insight:
+                        insight.spend = row["spend"]
+                        insight.impressions = row["impressions"]
+                        insight.clicks = row["clicks"]
+                        insight.ctr = row["ctr"]
+                        insight.cpc = row["cpc"]
+                        insight.cpm = row["cpm"]
+                        insight.results = row["results"]
+                        insight.cost_per_result = row["cost_per_result"]
+                        insight.purchase_value = row["purchase_value"]
+                        insight.roas = row["roas"]
+                        insight.actions = row["actions"]
+                        insight.synced_at = datetime.now(timezone.utc)
+                    else:
+                        db.add(FBInsight(
+                            tenant_id=user.tenant_id,
+                            object_type=row["object_type"],
+                            object_id=row["object_id"],
+                            date=row_date,
+                            spend=row["spend"],
+                            impressions=row["impressions"],
+                            clicks=row["clicks"],
+                            ctr=row["ctr"],
+                            cpc=row["cpc"],
+                            cpm=row["cpm"],
+                            results=row["results"],
+                            cost_per_result=row["cost_per_result"],
+                            purchase_value=row["purchase_value"],
+                            roas=row["roas"],
+                            actions=row["actions"],
+                        ))
+                    stats["insights"] += 1
 
         conn.last_synced_at = datetime.now(timezone.utc)
         await db.commit()
+        logger.info("Sync complete for tenant %s: %s", user.tenant_id, stats)
+
+    except httpx.HTTPStatusError as e:
+        logger.error("Meta API error during sync for tenant %s: %s — %s", user.tenant_id, e.response.status_code, e.response.text)
+        await db.rollback()
+        detail = "Meta API error"
+        try:
+            err_data = e.response.json()
+            detail = err_data.get("error", {}).get("message", str(e))
+        except Exception:
+            detail = str(e)
+        raise HTTPException(status_code=502, detail=f"Meta API: {detail}")
 
     except Exception as e:
-        logger.exception("Inline sync failed for tenant %s", user.tenant_id)
+        logger.exception("Sync failed for tenant %s", user.tenant_id)
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 

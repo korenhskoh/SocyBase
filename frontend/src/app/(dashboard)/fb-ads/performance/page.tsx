@@ -93,15 +93,27 @@ export default function FBPerformancePage() {
     }
   };
 
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncStats, setSyncStats] = useState<{campaigns: number; adsets: number; ads: number; insights: number} | null>(null);
+
   const handleSync = async () => {
     setSyncing(true);
+    setSyncError(null);
+    setSyncStats(null);
     try {
-      await fbAdsApi.triggerSync();
-      setTimeout(() => {
-        loadData();
-        setSyncing(false);
-      }, 3000);
-    } catch {
+      const res = await fbAdsApi.triggerSync();
+      const stats = res.data?.stats;
+      if (stats) {
+        setSyncStats(stats);
+        if (stats.campaigns === 0) {
+          setSyncError("No campaigns found in this ad account. Make sure you have campaigns in Meta Ads Manager.");
+        }
+      }
+      await loadData();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Sync failed. Please try again.";
+      setSyncError(msg);
+    } finally {
       setSyncing(false);
     }
   };
@@ -199,6 +211,24 @@ export default function FBPerformancePage() {
           </button>
         </div>
       </div>
+
+      {/* Sync feedback */}
+      {syncError && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-300 flex items-start gap-2">
+          <svg className="h-4 w-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+          {syncError}
+        </div>
+      )}
+      {syncStats && !syncError && (
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300 flex items-start gap-2">
+          <svg className="h-4 w-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Synced {syncStats.campaigns} campaigns, {syncStats.adsets} ad sets, {syncStats.ads} ads, {syncStats.insights} insight rows.
+        </div>
+      )}
 
       {/* Summary Cards */}
       {summary && (
