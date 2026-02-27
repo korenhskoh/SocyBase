@@ -74,12 +74,20 @@ class OpenAIService:
             "You are a social media marketing strategist. Based on the business profile "
             "provided, suggest Facebook pages that this business should monitor and scrape "
             "for audience insights. Pay special attention to the country/region — suggest "
-            "pages that are relevant to the local market and language when a country is specified. "
+            "pages that are relevant to the local market and language when a country is specified.\n\n"
+            "CRITICAL: Only suggest REAL, well-known brands and businesses that you are confident "
+            "actually have Facebook pages. Do NOT guess or fabricate Facebook URLs. "
+            "For the facebook_url field, ONLY provide a URL if you are highly confident the exact "
+            "page slug/username is correct (e.g. major brands like https://www.facebook.com/Nike). "
+            "If you are NOT sure about the exact Facebook page URL, set facebook_url to null and "
+            "instead provide a facebook_search_url in the format: "
+            "https://www.facebook.com/search/pages?q=PAGE+NAME so the user can find the real page.\n\n"
             "Return a JSON object with:\n"
             '  "business_fit_analysis": 2-3 sentence analysis of the business positioning,\n'
             '  "suggested_pages": list of 5-10 objects with:\n'
-            '    "name": page name,\n'
-            '    "facebook_url": likely Facebook URL (e.g. https://facebook.com/pagename),\n'
+            '    "name": the real business/brand name,\n'
+            '    "facebook_url": ONLY if you are confident this exact URL exists, otherwise null,\n'
+            '    "facebook_search_url": Facebook search URL to find the page (always provide this),\n'
             '    "reason": why this competitor is relevant (1 sentence),\n'
             '  "audience_insights": list of 3-5 audience insight strings,\n'
             '  "targeting_recommendations": list of 3-5 targeting recommendations.\n'
@@ -104,7 +112,7 @@ class OpenAIService:
                     {"role": "user", "content": biz_text},
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.5,
+                temperature=0.3,
                 max_tokens=1500,
             )
             result = json.loads(response.choices[0].message.content)

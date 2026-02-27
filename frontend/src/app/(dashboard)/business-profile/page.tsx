@@ -300,31 +300,51 @@ export default function BusinessProfilePage() {
             {aiSuggestions.suggested_pages?.length > 0 && (
               <div>
                 <p className="text-xs font-medium text-white/50 mb-2">Recommended Pages to Scrape</p>
+                <p className="text-[11px] text-amber-400/60 mb-2 flex items-center gap-1.5">
+                  <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                  URLs are AI-suggested and may not be accurate. Use &quot;Search on Facebook&quot; to verify the actual page before scraping.
+                </p>
                 <div className="space-y-2">
                   {aiSuggestions.suggested_pages.map((page, i) => (
                     <div key={i} className="p-3 rounded-lg bg-white/[0.03] border border-white/10 flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-white">{page.name}</p>
                         <p className="text-xs text-white/40 mt-0.5">{page.reason}</p>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          {page.facebook_url ? (
+                            <a
+                              href={page.facebook_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-purple-400/70 hover:text-purple-300 font-mono truncate underline decoration-purple-400/30 hover:decoration-purple-300/60 transition-colors"
+                            >
+                              {page.facebook_url}
+                            </a>
+                          ) : (
+                            <span className="text-xs text-white/30 italic">No direct URL available</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1.5 shrink-0">
+                        <a
+                          href={page.facebook_search_url || `https://www.facebook.com/search/pages?q=${encodeURIComponent(page.name)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs px-3 py-1.5 rounded-lg font-medium text-blue-300 bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 transition text-center"
+                        >
+                          Search on FB
+                        </a>
                         {page.facebook_url && (
                           <a
-                            href={page.facebook_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-purple-400/70 hover:text-purple-300 font-mono mt-1 truncate block underline decoration-purple-400/30 hover:decoration-purple-300/60 transition-colors"
+                            href={`/jobs/new?input=${encodeURIComponent(page.facebook_url)}&type=post_discovery`}
+                            className="text-xs px-3 py-1.5 rounded-lg font-medium text-purple-300 bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 transition text-center"
                           >
-                            {page.facebook_url}
+                            Scrape This
                           </a>
                         )}
                       </div>
-                      {page.facebook_url && (
-                        <a
-                          href={`/jobs/new?input=${encodeURIComponent(page.facebook_url)}&type=post_discovery`}
-                          className="shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium text-purple-300 bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 transition"
-                        >
-                          Scrape This
-                        </a>
-                      )}
                     </div>
                   ))}
                 </div>

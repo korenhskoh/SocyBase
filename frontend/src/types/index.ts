@@ -287,7 +287,8 @@ export interface AIAnalysisResult {
 
 export interface CompetitorSuggestion {
   name: string;
-  facebook_url: string;
+  facebook_url: string | null;
+  facebook_search_url?: string;
   reason: string;
 }
 
