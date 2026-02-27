@@ -313,6 +313,7 @@ async def _run_publish(campaign_id: str) -> dict:
             raise ValueError("No active FB connection")
 
         token = meta.decrypt_token(conn.access_token_encrypted)
+        auth = meta._auth_params(token)
 
         acc_r = await db.execute(select(FBAdAccount).where(FBAdAccount.id == campaign.ad_account_id))
         account = acc_r.scalar_one_or_none()
@@ -332,7 +333,7 @@ async def _run_publish(campaign_id: str) -> dict:
                 # 1. Create campaign
                 resp = await client.post(
                     f"{GRAPH_BASE}/{account.account_id}/campaigns",
-                    params={"access_token": token},
+                    params=auth,
                     data={
                         "name": campaign.name,
                         "objective": campaign.objective.upper(),
@@ -360,7 +361,7 @@ async def _run_publish(campaign_id: str) -> dict:
                     }
                     resp = await client.post(
                         f"{GRAPH_BASE}/{account.account_id}/adsets",
-                        params={"access_token": token},
+                        params=auth,
                         data=adset_data,
                     )
                     resp.raise_for_status()
@@ -387,7 +388,7 @@ async def _run_publish(campaign_id: str) -> dict:
                         }
                         resp = await client.post(
                             f"{GRAPH_BASE}/{account.account_id}/adcreatives",
-                            params={"access_token": token},
+                            params=auth,
                             data=creative_data,
                         )
                         resp.raise_for_status()
@@ -395,7 +396,7 @@ async def _run_publish(campaign_id: str) -> dict:
 
                         resp = await client.post(
                             f"{GRAPH_BASE}/{account.account_id}/ads",
-                            params={"access_token": token},
+                            params=auth,
                             data={
                                 "name": ad.name,
                                 "adset_id": meta_adset_id,

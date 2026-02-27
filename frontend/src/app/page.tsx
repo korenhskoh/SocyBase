@@ -961,6 +961,9 @@ export default function LandingPage() {
               <a href="#pricing" className="hover:text-white/60 transition">
                 {t("landing.pricing")}
               </a>
+              <Link href="/privacy" className="hover:text-white/60 transition">
+                Privacy Policy
+              </Link>
               <Link href="/login" className="hover:text-white/60 transition">
                 {t("auth.sign_in")}
               </Link>

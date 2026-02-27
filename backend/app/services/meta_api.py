@@ -1,6 +1,7 @@
 """Meta Marketing API client — OAuth, token management, account listing."""
 
 import hashlib
+import hmac
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,15 @@ class MetaAPIService:
         if not self._fernet:
             raise RuntimeError("TOKEN_ENCRYPTION_KEY not configured")
         return self._fernet.decrypt(encrypted.encode()).decode()
+
+    def _auth_params(self, access_token: str) -> dict:
+        """Return access_token + appsecret_proof params for API calls."""
+        proof = hmac.new(
+            self.app_secret.encode(),
+            access_token.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        return {"access_token": access_token, "appsecret_proof": proof}
 
     # -- OAuth flow --------------------------------------------------------
 
@@ -101,7 +111,7 @@ class MetaAPIService:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 f"{GRAPH_BASE}/me",
-                params={"access_token": access_token, "fields": "id,name"},
+                params={**self._auth_params(access_token), "fields": "id,name"},
             )
             resp.raise_for_status()
             return resp.json()
@@ -113,7 +123,7 @@ class MetaAPIService:
         accounts = []
         url = f"{GRAPH_BASE}/me/adaccounts"
         params = {
-            "access_token": access_token,
+            **self._auth_params(access_token),
             "fields": "id,name,account_id,currency,timezone_name,account_status",
             "limit": 100,
         }
@@ -142,7 +152,7 @@ class MetaAPIService:
         pages = []
         url = f"{GRAPH_BASE}/me/accounts"
         params = {
-            "access_token": access_token,
+            **self._auth_params(access_token),
             "fields": "id,name,category,picture{url},access_token",
             "limit": 100,
         }
@@ -170,7 +180,7 @@ class MetaAPIService:
         pixels = []
         url = f"{GRAPH_BASE}/{ad_account_id}/adspixels"
         params = {
-            "access_token": access_token,
+            **self._auth_params(access_token),
             "fields": "id,name",
             "limit": 100,
         }
@@ -192,7 +202,7 @@ class MetaAPIService:
         campaigns = []
         url = f"{GRAPH_BASE}/{ad_account_id}/campaigns"
         params = {
-            "access_token": access_token,
+            **self._auth_params(access_token),
             "fields": "id,name,objective,status,daily_budget,lifetime_budget,buying_type,created_time,updated_time",
             "limit": 200,
         }
@@ -223,7 +233,7 @@ class MetaAPIService:
         adsets = []
         url = f"{GRAPH_BASE}/{campaign_id}/adsets"
         params = {
-            "access_token": access_token,
+            **self._auth_params(access_token),
             "fields": "id,name,status,daily_budget,targeting,optimization_goal,billing_event,bid_strategy,start_time,end_time",
             "limit": 200,
         }
@@ -255,7 +265,7 @@ class MetaAPIService:
         ads = []
         url = f"{GRAPH_BASE}/{adset_id}/ads"
         params = {
-            "access_token": access_token,
+            **self._auth_params(access_token),
             "fields": "id,name,status,creative{id,title,body,image_url,video_id,call_to_action_type,object_story_spec,effective_object_story_id,thumbnail_url,link_url}",
             "limit": 200,
         }
@@ -291,7 +301,7 @@ class MetaAPIService:
         insights = []
         url = f"{GRAPH_BASE}/{ad_account_id}/insights"
         params = {
-            "access_token": access_token,
+            **self._auth_params(access_token),
             "level": level,
             "time_range": f'{{"since":"{date_from}","until":"{date_to}"}}',
             "time_increment": 1,  # daily breakdown
@@ -357,7 +367,7 @@ class MetaAPIService:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{GRAPH_BASE}/{campaign_id}",
-                params={"access_token": access_token},
+                params=self._auth_params(access_token),
                 data={"status": status},
             )
             resp.raise_for_status()
@@ -368,7 +378,7 @@ class MetaAPIService:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{GRAPH_BASE}/{adset_id}",
-                params={"access_token": access_token},
+                params=self._auth_params(access_token),
                 data={"status": status},
             )
             resp.raise_for_status()
@@ -379,7 +389,7 @@ class MetaAPIService:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{GRAPH_BASE}/{ad_id}",
-                params={"access_token": access_token},
+                params=self._auth_params(access_token),
                 data={"status": status},
             )
             resp.raise_for_status()
@@ -399,7 +409,7 @@ class MetaAPIService:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
-                params={"access_token": access_token},
+                params=self._auth_params(access_token),
                 data={
                     "name": name,
                     "subtype": "CUSTOM",
@@ -448,7 +458,7 @@ class MetaAPIService:
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.post(
                     f"{GRAPH_BASE}/{audience_id}/users",
-                    params={"access_token": access_token},
+                    params=self._auth_params(access_token),
                     data={"payload": payload},
                 )
                 resp.raise_for_status()
