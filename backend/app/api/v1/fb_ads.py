@@ -420,62 +420,105 @@ async def debug_token(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Debug endpoint: inspect stored FB token via Meta's /debug_token API."""
+    """Debug endpoint: test each Meta API call the sync makes, one by one."""
     conn, account = await _get_active_connection(db, user.tenant_id)
     if not conn:
         return {"error": "No active connection"}
 
     meta = MetaAPIService()
-    settings = get_settings()
 
     try:
         token = meta.decrypt_token(conn.access_token_encrypted)
     except Exception as e:
         return {"error": f"Token decryption failed: {e}"}
 
-    diag = {
-        "app_id_configured": settings.meta_app_id[:8] + "..." if settings.meta_app_id else "(empty)",
-        "app_secret_configured": bool(settings.meta_app_secret),
-        "token_first_chars": token[:12] + "..." if token else "(empty)",
-        "token_length": len(token) if token else 0,
+    # Verify what _auth_params actually returns (to confirm appsecret_proof is gone)
+    auth = meta._auth_params(token)
+    diag: dict = {
+        "auth_params_keys": list(auth.keys()),
         "ad_account_id": account.account_id if account else None,
     }
 
-    # Call Meta's debug_token endpoint (uses app token: app_id|app_secret)
-    app_token = f"{settings.meta_app_id}|{settings.meta_app_secret}"
-    async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            resp = await client.get(
-                f"https://graph.facebook.com/v22.0/debug_token",
-                params={"input_token": token, "access_token": app_token},
-            )
-            diag["debug_token_status"] = resp.status_code
-            diag["debug_token_response"] = resp.json()
-        except Exception as e:
-            diag["debug_token_error"] = str(e)
+    if not account:
+        return diag
 
-        # Also try a simple /me call to verify token works at all
-        try:
-            resp2 = await client.get(
-                f"https://graph.facebook.com/v22.0/me",
-                params={"access_token": token, "fields": "id,name"},
-            )
-            diag["me_status"] = resp2.status_code
-            diag["me_response"] = resp2.json()
-        except Exception as e:
-            diag["me_error"] = str(e)
+    base = "https://graph.facebook.com/v22.0"
+    campaign_fields = "id,name,objective,status,daily_budget,lifetime_budget,buying_type,created_time,updated_time"
+    adset_fields = "id,name,status,daily_budget,targeting,optimization_goal,billing_event,bid_strategy,start_time,end_time"
+    ad_fields = "id,name,status,creative{id,title,body,image_url,video_id,call_to_action_type,object_story_spec,effective_object_story_id,thumbnail_url,link_url}"
 
-        # Try the campaigns call that's failing
-        if account:
+    async with httpx.AsyncClient(timeout=20) as client:
+        # Test 1: campaigns with FULL fields (same as sync)
+        try:
+            r = await client.get(
+                f"{base}/{account.account_id}/campaigns",
+                params={"access_token": token, "fields": campaign_fields, "limit": 5},
+            )
+            diag["1_campaigns"] = {"status": r.status_code, "body": r.json()}
+        except Exception as e:
+            diag["1_campaigns"] = {"error": str(e)}
+
+        # Get first campaign ID for next tests
+        first_campaign_id = None
+        try:
+            first_campaign_id = diag["1_campaigns"]["body"]["data"][0]["id"]
+        except (KeyError, IndexError, TypeError):
+            pass
+
+        # Test 2: adsets with FULL fields
+        if first_campaign_id:
             try:
-                resp3 = await client.get(
-                    f"https://graph.facebook.com/v22.0/{account.account_id}/campaigns",
-                    params={"access_token": token, "fields": "id,name", "limit": 1},
+                r = await client.get(
+                    f"{base}/{first_campaign_id}/adsets",
+                    params={"access_token": token, "fields": adset_fields, "limit": 5},
                 )
-                diag["campaigns_status"] = resp3.status_code
-                diag["campaigns_response"] = resp3.json()
+                diag["2_adsets"] = {"status": r.status_code, "body": r.json()}
             except Exception as e:
-                diag["campaigns_error"] = str(e)
+                diag["2_adsets"] = {"error": str(e)}
+
+            # Get first adset ID
+            first_adset_id = None
+            try:
+                first_adset_id = diag["2_adsets"]["body"]["data"][0]["id"]
+            except (KeyError, IndexError, TypeError):
+                pass
+
+            # Test 3: ads with FULL fields
+            if first_adset_id:
+                try:
+                    r = await client.get(
+                        f"{base}/{first_adset_id}/ads",
+                        params={"access_token": token, "fields": ad_fields, "limit": 5},
+                    )
+                    diag["3_ads"] = {"status": r.status_code, "body": r.json()}
+                except Exception as e:
+                    diag["3_ads"] = {"error": str(e)}
+
+        # Test 4: insights
+        date_to = date.today().isoformat()
+        date_from = (date.today() - timedelta(days=7)).isoformat()
+        try:
+            r = await client.get(
+                f"{base}/{account.account_id}/insights",
+                params={
+                    "access_token": token,
+                    "level": "campaign",
+                    "time_range": f'{{"since":"{date_from}","until":"{date_to}"}}',
+                    "time_increment": 1,
+                    "fields": "campaign_id,spend,impressions,clicks,ctr,cpc,cpm,actions,action_values,date_start",
+                    "limit": 5,
+                },
+            )
+            diag["4_insights"] = {"status": r.status_code, "body": r.json()}
+        except Exception as e:
+            diag["4_insights"] = {"error": str(e)}
+
+        # Test 5: call list_campaigns through meta_api (uses _auth_params)
+        try:
+            result = await meta.list_campaigns(token, account.account_id)
+            diag["5_meta_api_list_campaigns"] = {"ok": True, "count": len(result)}
+        except Exception as e:
+            diag["5_meta_api_list_campaigns"] = {"error": str(e), "type": type(e).__name__}
 
     return diag
 
