@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -16,6 +17,17 @@ logger = logging.getLogger(__name__)
 
 GRAPH_API_VERSION = "v22.0"
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
+
+# Facebook pagination URLs may return a different API version (e.g. v25.0)
+# which can cause 403 errors if the app isn't approved for that version.
+_VERSION_RE = re.compile(r"graph\.facebook\.com/v[\d.]+/")
+
+
+def _pin_api_version(url: str | None) -> str | None:
+    """Rewrite a Facebook pagination URL to use our pinned API version."""
+    if not url:
+        return None
+    return _VERSION_RE.sub(f"graph.facebook.com/{GRAPH_API_VERSION}/", url)
 
 REQUIRED_SCOPES = [
     "ads_management",
@@ -136,7 +148,7 @@ class MetaAPIService:
                         "timezone_name": acc.get("timezone_name", "UTC"),
                         "status": status_map.get(acc.get("account_status"), "UNKNOWN"),
                     })
-                url = data.get("paging", {}).get("next")
+                url = _pin_api_version(data.get("paging", {}).get("next"))
                 params = {}  # next URL includes params
         return accounts
 
@@ -164,7 +176,7 @@ class MetaAPIService:
                         "picture_url": pg.get("picture", {}).get("data", {}).get("url"),
                         "access_token": pg.get("access_token"),
                     })
-                url = data.get("paging", {}).get("next")
+                url = _pin_api_version(data.get("paging", {}).get("next"))
                 params = {}
         return pages
 
@@ -219,7 +231,7 @@ class MetaAPIService:
                         "updated_time": c.get("updated_time"),
                         "raw_data": c,
                     })
-                url = data.get("paging", {}).get("next")
+                url = _pin_api_version(data.get("paging", {}).get("next"))
                 params = {}
         return campaigns
 
@@ -251,7 +263,7 @@ class MetaAPIService:
                         "end_time": a.get("end_time"),
                         "raw_data": a,
                     })
-                url = data.get("paging", {}).get("next")
+                url = _pin_api_version(data.get("paging", {}).get("next"))
                 params = {}
         return adsets
 
@@ -279,7 +291,7 @@ class MetaAPIService:
                         "creative_data": creative,
                         "raw_data": ad,
                     })
-                url = data.get("paging", {}).get("next")
+                url = _pin_api_version(data.get("paging", {}).get("next"))
                 params = {}
         return ads
 
@@ -351,7 +363,7 @@ class MetaAPIService:
                         "roas": roas,
                         "actions": actions,
                     })
-                url = data.get("paging", {}).get("next")
+                url = _pin_api_version(data.get("paging", {}).get("next"))
                 params = {}
         return insights
 
