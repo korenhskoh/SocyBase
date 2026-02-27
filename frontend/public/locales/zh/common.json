@@ -15,7 +15,13 @@
     "fb_ads_guide": "FB广告指南",
     "tenant_dashboard": "租户仪表盘",
     "admin": "管理面板",
-    "sign_out": "退出登录"
+    "sign_out": "退出登录",
+    "fb_ads_section": "FB广告",
+    "fb_connection": "FB连接",
+    "fb_performance": "效果数据",
+    "fb_insights": "AI洞察",
+    "fb_winning_ads": "优胜广告",
+    "fb_ai_launch": "AI投放"
   },
   "auth": {
     "sign_in": "登录",

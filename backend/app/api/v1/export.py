@@ -16,6 +16,32 @@ from app.schemas.export import ExportRequest, FacebookAdsExportRequest
 router = APIRouter()
 
 
+def _norm_gender(val: str | None) -> str:
+    """Normalize gender: male→m, female→f, else keep original or NA."""
+    if not val or val == "NA":
+        return "NA"
+    low = val.strip().lower()
+    if low in ("male", "m"):
+        return "m"
+    if low in ("female", "f"):
+        return "f"
+    return val
+
+
+def _format_birthday(val: str | None) -> str:
+    """Convert birthday to DD/MM/YYYY format for FB Ads compatibility."""
+    if not val or val == "NA":
+        return "NA"
+    # Try common formats
+    from datetime import datetime as _dt
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            return _dt.strptime(val.strip(), fmt).strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+    return val  # return as-is if no format matches
+
+
 async def _get_author(db: AsyncSession, job_id: UUID) -> PageAuthorProfile | None:
     result = await db.execute(
         select(PageAuthorProfile).where(PageAuthorProfile.job_id == job_id)
@@ -23,11 +49,11 @@ async def _get_author(db: AsyncSession, job_id: UUID) -> PageAuthorProfile | Non
     return result.scalar_one_or_none()
 
 
-# Standard 20-field format
+# Standard 20-field format (renamed: Last Name→Surname, Hometown→City, Location→Country)
 FIELDNAMES = [
-    "ID", "Name", "First Name", "Last Name",
+    "ID", "Name", "First Name", "Surname",
     "Gender", "Birthday", "Phone", "Relationship", "Education", "Work",
-    "Position", "Hometown", "Location", "Website", "Languages",
+    "Position", "City", "Country", "Website", "Languages",
     "UsernameLink", "Username", "About", "Picture URL", "Updated Time",
 ]
 
@@ -64,16 +90,6 @@ async def export_csv(
     # Generate CSV
     output = io.StringIO()
 
-    # Author info header
-    author = await _get_author(db, job_id)
-    if author:
-        output.write(f"# Page: {author.name or ''} ({author.platform_object_id})")
-        if author.category:
-            output.write(f" | Category: {author.category}")
-        if author.location:
-            output.write(f" | Location: {author.location}")
-        output.write("\n")
-
     writer = csv.DictWriter(output, fieldnames=FIELDNAMES)
     writer.writeheader()
 
@@ -82,16 +98,16 @@ async def export_csv(
             "ID": p.platform_user_id,
             "Name": p.name or "NA",
             "First Name": p.first_name or "NA",
-            "Last Name": p.last_name or "NA",
-            "Gender": p.gender or "NA",
-            "Birthday": p.birthday or "NA",
+            "Surname": p.last_name or "NA",
+            "Gender": _norm_gender(p.gender),
+            "Birthday": _format_birthday(p.birthday),
             "Phone": p.phone or "NA",
             "Relationship": p.relationship_status or "NA",
             "Education": p.education or "NA",
             "Work": p.work or "NA",
             "Position": p.position or "NA",
-            "Hometown": p.hometown or "NA",
-            "Location": p.location or "NA",
+            "City": p.hometown or "NA",
+            "Country": p.location or "NA",
             "Website": p.website or "NA",
             "Languages": p.languages or "NA",
             "UsernameLink": p.username_link or "NA",
@@ -134,16 +150,6 @@ async def export_facebook_ads(
 
     output = io.StringIO()
 
-    # Author info header
-    author = await _get_author(db, job_id)
-    if author:
-        output.write(f"# Page: {author.name or ''} ({author.platform_object_id})")
-        if author.category:
-            output.write(f" | Category: {author.category}")
-        if author.location:
-            output.write(f" | Location: {author.location}")
-        output.write("\n")
-
     writer = csv.DictWriter(output, fieldnames=FIELDNAMES)
     writer.writeheader()
 
@@ -152,16 +158,16 @@ async def export_facebook_ads(
             "ID": p.platform_user_id,
             "Name": p.name or "NA",
             "First Name": p.first_name or "NA",
-            "Last Name": p.last_name or "NA",
-            "Gender": p.gender or "NA",
-            "Birthday": p.birthday or "NA",
+            "Surname": p.last_name or "NA",
+            "Gender": _norm_gender(p.gender),
+            "Birthday": _format_birthday(p.birthday),
             "Phone": p.phone or "NA",
             "Relationship": p.relationship_status or "NA",
             "Education": p.education or "NA",
             "Work": p.work or "NA",
             "Position": p.position or "NA",
-            "Hometown": p.hometown or "NA",
-            "Location": p.location or "NA",
+            "City": p.hometown or "NA",
+            "Country": p.location or "NA",
             "Website": p.website or "NA",
             "Languages": p.languages or "NA",
             "UsernameLink": p.username_link or "NA",
@@ -260,8 +266,8 @@ async def export_xlsx(
             ws.cell(row=row_idx, column=2, value=p.name or "NA")
             ws.cell(row=row_idx, column=3, value=p.first_name or "NA")
             ws.cell(row=row_idx, column=4, value=p.last_name or "NA")
-            ws.cell(row=row_idx, column=5, value=p.gender or "NA")
-            ws.cell(row=row_idx, column=6, value=p.birthday or "NA")
+            ws.cell(row=row_idx, column=5, value=_norm_gender(p.gender))
+            ws.cell(row=row_idx, column=6, value=_format_birthday(p.birthday))
             ws.cell(row=row_idx, column=7, value=p.phone or "NA")
             ws.cell(row=row_idx, column=8, value=p.relationship_status or "NA")
             ws.cell(row=row_idx, column=9, value=p.education or "NA")
@@ -339,13 +345,6 @@ class BatchExportRequest(BaseModel):
 def _generate_csv_bytes(profiles, author) -> bytes:
     """Generate CSV content for a list of profiles."""
     output = io.StringIO()
-    if author:
-        output.write(f"# Page: {author.name or ''} ({author.platform_object_id})")
-        if author.category:
-            output.write(f" | Category: {author.category}")
-        if author.location:
-            output.write(f" | Location: {author.location}")
-        output.write("\n")
 
     writer = csv.DictWriter(output, fieldnames=FIELDNAMES)
     writer.writeheader()
@@ -354,16 +353,16 @@ def _generate_csv_bytes(profiles, author) -> bytes:
             "ID": p.platform_user_id,
             "Name": p.name or "NA",
             "First Name": p.first_name or "NA",
-            "Last Name": p.last_name or "NA",
-            "Gender": p.gender or "NA",
-            "Birthday": p.birthday or "NA",
+            "Surname": p.last_name or "NA",
+            "Gender": _norm_gender(p.gender),
+            "Birthday": _format_birthday(p.birthday),
             "Phone": p.phone or "NA",
             "Relationship": p.relationship_status or "NA",
             "Education": p.education or "NA",
             "Work": p.work or "NA",
             "Position": p.position or "NA",
-            "Hometown": p.hometown or "NA",
-            "Location": p.location or "NA",
+            "City": p.hometown or "NA",
+            "Country": p.location or "NA",
             "Website": p.website or "NA",
             "Languages": p.languages or "NA",
             "UsernameLink": p.username_link or "NA",
@@ -378,8 +377,6 @@ def _generate_csv_bytes(profiles, author) -> bytes:
 def _generate_post_csv_bytes(posts, author) -> bytes:
     """Generate CSV content for post discovery results."""
     output = io.StringIO()
-    if author:
-        output.write(f"# Page: {author.name or ''} ({author.platform_object_id})\n")
 
     writer = csv.DictWriter(output, fieldnames=POST_FIELDNAMES)
     writer.writeheader()

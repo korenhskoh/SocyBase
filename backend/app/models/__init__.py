@@ -7,6 +7,12 @@ from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment
 from app.models.audit import AuditLog
 from app.models.system import SystemSetting, NotificationTemplate
 from app.models.fan_analysis import FanAnalysisCache
+from app.models.fb_ads import (
+    FBConnection, FBAdAccount, FBPage, FBPixel,
+    FBCampaign, FBAdSet, FBAd, FBInsight,
+    FBInsightScore, FBWinningAd,
+    AICampaign, AICampaignAdSet, AICampaignAd,
+)
 
 __all__ = [
     "Tenant",
@@ -23,4 +29,18 @@ __all__ = [
     "SystemSetting",
     "NotificationTemplate",
     "FanAnalysisCache",
+    # FB Ads
+    "FBConnection",
+    "FBAdAccount",
+    "FBPage",
+    "FBPixel",
+    "FBCampaign",
+    "FBAdSet",
+    "FBAd",
+    "FBInsight",
+    "FBInsightScore",
+    "FBWinningAd",
+    "AICampaign",
+    "AICampaignAdSet",
+    "AICampaignAd",
 ]

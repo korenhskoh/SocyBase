@@ -319,4 +319,54 @@ export const businessProfileApi = {
   getSuggestions: () => api.post("/business-profile/suggest-pages"),
 };
 
+// Facebook Ads API
+export const fbAdsApi = {
+  // OAuth
+  getConnectUrl: () => api.get("/fb-ads/connect/url"),
+  getConnection: () => api.get("/fb-ads/connection"),
+  disconnect: () => api.delete("/fb-ads/connection"),
+  // Ad Accounts
+  listAdAccounts: () => api.get("/fb-ads/ad-accounts"),
+  selectAdAccount: (id: string) => api.post("/fb-ads/ad-accounts/select", { id }),
+  // Pages
+  listPages: () => api.get("/fb-ads/pages"),
+  selectPage: (id: string) => api.post("/fb-ads/pages/select", { id }),
+  // Pixels
+  listPixels: () => api.get("/fb-ads/pixels"),
+  selectPixel: (id: string) => api.post("/fb-ads/pixels/select", { id }),
+  // Performance (Phase 2)
+  listCampaigns: (dateFrom?: string, dateTo?: string) =>
+    api.get("/fb-ads/campaigns", { params: { date_from: dateFrom, date_to: dateTo } }),
+  listCampaignAdSets: (campaignId: string, dateFrom?: string, dateTo?: string) =>
+    api.get(`/fb-ads/campaigns/${campaignId}/adsets`, { params: { date_from: dateFrom, date_to: dateTo } }),
+  listAdSetAds: (adsetId: string, dateFrom?: string, dateTo?: string) =>
+    api.get(`/fb-ads/adsets/${adsetId}/ads`, { params: { date_from: dateFrom, date_to: dateTo } }),
+  getInsightsSummary: (dateFrom?: string, dateTo?: string) =>
+    api.get("/fb-ads/insights/summary", { params: { date_from: dateFrom, date_to: dateTo } }),
+  triggerSync: () => api.post("/fb-ads/sync"),
+  updateCampaignStatus: (id: string, status: string) =>
+    api.post(`/fb-ads/campaigns/${id}/status`, { status }),
+  updateAdSetStatus: (id: string, status: string) =>
+    api.post(`/fb-ads/adsets/${id}/status`, { status }),
+  updateAdStatus: (id: string, status: string) =>
+    api.post(`/fb-ads/ads/${id}/status`, { status }),
+  // AI Insights (Phase 3)
+  listInsightScores: (groupType: string, dateFrom?: string, dateTo?: string) =>
+    api.get("/fb-ads/insights/scores", { params: { group_type: groupType, date_from: dateFrom, date_to: dateTo } }),
+  runAIScoring: (groupType: string, dateFrom?: string, dateTo?: string) =>
+    api.post("/fb-ads/insights/score", { group_type: groupType, date_from: dateFrom, date_to: dateTo }),
+  // Winning Ads (Phase 4)
+  listWinningAds: () => api.get("/fb-ads/winning-ads"),
+  detectWinningAds: () => api.post("/fb-ads/winning-ads/detect"),
+  // Custom Audience
+  createCustomAudience: (jobId: string, audienceName?: string) =>
+    api.post("/fb-ads/custom-audience", { job_id: jobId, audience_name: audienceName }),
+  // AI Launch (Phase 5)
+  createAICampaign: (data: Record<string, unknown>) => api.post("/fb-ads/launch", data),
+  listAICampaigns: () => api.get("/fb-ads/launch/history"),
+  getAICampaign: (id: string) => api.get(`/fb-ads/launch/${id}`),
+  generateAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/generate`),
+  publishAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/publish`),
+};
+
 export default api;

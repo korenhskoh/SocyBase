@@ -82,6 +82,19 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = ""
 
+    # Meta Marketing API (Facebook Ads)
+    meta_app_id: str = ""
+    meta_app_secret: str = ""
+    meta_redirect_uri: str = ""
+    token_encryption_key: str = ""  # Fernet key for encrypting stored tokens
+
+    @property
+    def effective_meta_redirect_uri(self) -> str:
+        """Default to BACKEND_URL + callback path if not explicitly set."""
+        if self.meta_redirect_uri:
+            return self.meta_redirect_uri
+        return f"{self.backend_url}/api/v1/fb-ads/callback"
+
     # Stripe
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""

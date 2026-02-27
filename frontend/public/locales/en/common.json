@@ -15,7 +15,13 @@
     "fb_ads_guide": "FB Ads Guide",
     "tenant_dashboard": "Tenant Dashboard",
     "admin": "Admin Panel",
-    "sign_out": "Sign Out"
+    "sign_out": "Sign Out",
+    "fb_ads_section": "FB Ads",
+    "fb_connection": "FB Connection",
+    "fb_performance": "Performance",
+    "fb_insights": "AI Insights",
+    "fb_winning_ads": "Winning Ads",
+    "fb_ai_launch": "AI Launch"
   },
   "auth": {
     "sign_in": "Sign In",

@@ -32,10 +32,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.scraping.tasks.check_scheduled_jobs",
         "schedule": crontab(minute="*/1"),  # Every minute
     },
+    "sync-fb-data-all-tenants": {
+        "task": "app.scraping.fb_sync_tasks.sync_all_tenants",
+        "schedule": crontab(minute=0),  # Every hour
+    },
 }
 
 # Auto-discover tasks
 celery_app.autodiscover_tasks([
     "app.scraping.tasks",
+    "app.scraping.fb_sync_tasks",
     "app.services",
 ])

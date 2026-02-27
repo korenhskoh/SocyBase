@@ -356,3 +356,183 @@ export interface SourcePage {
   job_count: number;
   total_posts: number;
 }
+
+// Facebook Ads types
+export interface FBConnectionStatus {
+  connected: boolean;
+  fb_user_name: string | null;
+  fb_user_id: string | null;
+  connected_at: string | null;
+  last_synced_at: string | null;
+}
+
+export interface FBAdAccount {
+  id: string;
+  account_id: string;
+  name: string;
+  currency: string;
+  timezone_name: string;
+  status: string;
+  is_selected: boolean;
+}
+
+export interface FBPageItem {
+  id: string;
+  page_id: string;
+  name: string;
+  category: string | null;
+  picture_url: string | null;
+  is_selected: boolean;
+}
+
+export interface FBPixelItem {
+  id: string;
+  pixel_id: string;
+  name: string;
+  is_selected: boolean;
+}
+
+// Phase 2: Performance types
+export interface FBCampaignItem {
+  id: string;
+  campaign_id: string;
+  name: string;
+  objective: string | null;
+  status: string;
+  daily_budget: number | null;
+  lifetime_budget: number | null;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  results: number;
+  cost_per_result: number;
+  purchase_value: number;
+  roas: number;
+  synced_at: string | null;
+}
+
+export interface FBAdSetItem {
+  id: string;
+  adset_id: string;
+  campaign_id: string;
+  name: string;
+  status: string;
+  daily_budget: number | null;
+  targeting: Record<string, unknown>;
+  optimization_goal: string | null;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  results: number;
+  cost_per_result: number;
+  purchase_value: number;
+  roas: number;
+}
+
+export interface FBAdItem {
+  id: string;
+  ad_id: string;
+  adset_id: string;
+  name: string;
+  status: string;
+  creative_id: string | null;
+  creative_data: Record<string, unknown>;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  results: number;
+  cost_per_result: number;
+  purchase_value: number;
+  roas: number;
+}
+
+export interface FBInsightSummary {
+  total_spend: number;
+  total_impressions: number;
+  total_clicks: number;
+  avg_ctr: number;
+  total_results: number;
+  avg_cost_per_result: number;
+  total_purchase_value: number;
+  avg_roas: number;
+}
+
+// Phase 3: AI Insight Scores
+export interface FBInsightScoreItem {
+  id: string;
+  group_type: string;
+  group_value: string;
+  score: number;
+  metrics: {
+    spend: number;
+    impressions: number;
+    clicks: number;
+    ctr: number;
+    results: number;
+    cpr: number;
+    purchase_value: number;
+    roas: number;
+    ad_count: number;
+  };
+  date_range_start: string;
+  date_range_end: string;
+}
+
+// Phase 5: AI Campaign Builder
+export interface AICampaignAd {
+  id: string;
+  name: string;
+  headline: string;
+  primary_text: string;
+  description: string | null;
+  creative_source: string;
+  cta_type: string;
+  destination_url: string | null;
+}
+
+export interface AICampaignAdSet {
+  id: string;
+  name: string;
+  targeting: Record<string, unknown>;
+  daily_budget: number;
+  ads: AICampaignAd[];
+}
+
+export interface AICampaignItem {
+  id: string;
+  status: string;
+  name: string;
+  objective: string;
+  daily_budget: number;
+  audience_strategy: string;
+  creative_strategy: string;
+  ai_summary: Record<string, unknown> | null;
+  generation_progress: { stage: string; pct: number; error?: string } | null;
+  credits_used: number;
+  meta_campaign_id: string | null;
+  published_at: string | null;
+  created_at: string;
+  adsets: AICampaignAdSet[];
+}
+
+// Phase 4: Winning Ads
+export interface FBWinningAdItem {
+  id: string;
+  rank: number;
+  score: number;
+  ad_id: string;
+  ad_name: string;
+  ad_meta_id: string;
+  ad_status: string;
+  creative_data: Record<string, unknown>;
+  targeting: Record<string, unknown>;
+  total_spend: number;
+  total_results: number;
+  cost_per_result: number;
+  roas: number;
+  ctr: number;
+  detected_at: string;
+}

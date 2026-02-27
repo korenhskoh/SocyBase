@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { jobsApi, exportApi, fanAnalysisApi } from "@/lib/api-client";
+import { jobsApi, exportApi, fanAnalysisApi, fbAdsApi } from "@/lib/api-client";
 import { formatDate, formatNumber, getStatusColor } from "@/lib/utils";
 import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile, FanEngagementMetrics } from "@/types";
 
@@ -419,6 +419,20 @@ export default function JobDetailPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleCreateCustomAudience = async () => {
+    setCreatingAudience(true);
+    try {
+      const res = await fbAdsApi.createCustomAudience(jobId);
+      const d = res.data;
+      alert(`Custom Audience created!\n\nName: ${d.audience_name}\nProfiles uploaded: ${d.profiles_uploaded}\nAudience ID: ${d.audience_id}`);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to create Custom Audience";
+      alert(msg);
+    } finally {
+      setCreatingAudience(false);
+    }
+  };
+
   const handleResume = async () => {
     if (!job) return;
     setResuming(true);
@@ -504,6 +518,7 @@ export default function JobDetailPage() {
     (job?.status === "failed" || job?.status === "paused") && job?.error_details?.pipeline_state != null;
 
   const [continuingDiscovery, setContinuingDiscovery] = useState(false);
+  const [creatingAudience, setCreatingAudience] = useState(false);
 
   const handleContinueDiscovery = async (direction: "older" | "newer") => {
     if (!job) return;
@@ -1028,6 +1043,16 @@ export default function JobDetailPage() {
                 className="relative overflow-hidden rounded-lg bg-gradient-to-r from-[#1877F2] to-[#0d5bbd] px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(24,119,242,0.5)] hover:scale-105 text-center"
               >
                 Export for FB Ads Manager
+              </button>
+              <button
+                onClick={handleCreateCustomAudience}
+                disabled={creatingAudience}
+                className="relative overflow-hidden rounded-lg bg-gradient-to-r from-[#1877F2] to-[#42b72a] px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(66,183,42,0.5)] hover:scale-105 text-center disabled:opacity-50 flex items-center gap-2 justify-center"
+              >
+                {creatingAudience && (
+                  <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                )}
+                {creatingAudience ? "Creating..." : "Create Custom Audience"}
               </button>
               <Link
                 href={`/jobs/${jobId}/report`}

@@ -27,7 +27,12 @@ class FacebookProfileMapper(AbstractProfileMapper):
         result["Name"] = data.get("name", "NA")
         result["First Name"] = data.get("first_name", "NA")
         result["Last Name"] = data.get("last_name", "NA")
-        result["Gender"] = data.get("gender", "NA")
+        raw_gender = data.get("gender", "NA")
+        if raw_gender and raw_gender != "NA":
+            low = raw_gender.strip().lower()
+            result["Gender"] = "m" if low in ("male", "m") else "f" if low in ("female", "f") else raw_gender
+        else:
+            result["Gender"] = "NA"
         result["About"] = data.get("about", "NA")
         result["Username"] = data.get("username", "NA")
         result["Birthday"] = data.get("birthday", "NA")
