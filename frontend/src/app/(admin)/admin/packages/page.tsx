@@ -10,7 +10,7 @@ import type { CreditPackage } from "@/types";
 interface EditValues {
   name?: string;
   credits?: number;
-  price_cents?: number;
+  price?: number;
   bonus_credits?: number;
   billing_interval?: string;
   stripe_price_id?: string;
@@ -43,7 +43,7 @@ export default function AdminPackagesPage() {
   const [newPkg, setNewPkg] = useState({
     name: "",
     credits: 100,
-    price_cents: 999,
+    price: 9.99,
     bonus_credits: 0,
     billing_interval: "one_time",
     stripe_price_id: "",
@@ -65,12 +65,14 @@ export default function AdminPackagesPage() {
 
   const handleCreate = async () => {
     try {
+      const { price, ...rest } = newPkg;
       await adminApi.createPackage({
-        ...newPkg,
+        ...rest,
+        price_cents: Math.round(price * 100),
         stripe_price_id: newPkg.stripe_price_id || undefined,
       });
       setShowCreate(false);
-      setNewPkg({ name: "", credits: 100, price_cents: 999, bonus_credits: 0, billing_interval: "one_time", stripe_price_id: "", sort_order: 0 });
+      setNewPkg({ name: "", credits: 100, price: 9.99, bonus_credits: 0, billing_interval: "one_time", stripe_price_id: "", sort_order: 0 });
       fetchPackages();
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to create package");
@@ -82,7 +84,7 @@ export default function AdminPackagesPage() {
     setEditValues({
       name: pkg.name,
       credits: pkg.credits,
-      price_cents: pkg.price_cents,
+      price: pkg.price_cents / 100,
       bonus_credits: pkg.bonus_credits,
       billing_interval: pkg.billing_interval,
       stripe_price_id: pkg.stripe_price_id || "",
@@ -93,8 +95,10 @@ export default function AdminPackagesPage() {
   const saveEdit = async () => {
     if (!editingId) return;
     try {
+      const { price: editPrice, ...editRest } = editValues;
       await adminApi.updatePackage(editingId, {
-        ...editValues,
+        ...editRest,
+        price_cents: editPrice != null ? Math.round(editPrice * 100) : undefined,
         stripe_price_id: editValues.stripe_price_id || undefined,
       });
       setEditingId(null);
@@ -177,11 +181,12 @@ export default function AdminPackagesPage() {
               />
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1">Price (cents)</label>
+              <label className="block text-xs text-white/40 mb-1">Price (RM)</label>
               <input
                 type="number"
-                value={newPkg.price_cents}
-                onChange={(e) => setNewPkg({ ...newPkg, price_cents: parseInt(e.target.value) || 0 })}
+                step="0.01"
+                value={newPkg.price}
+                onChange={(e) => setNewPkg({ ...newPkg, price: parseFloat(e.target.value) || 0 })}
                 className="input-glass text-sm"
               />
             </div>
@@ -301,8 +306,9 @@ export default function AdminPackagesPage() {
                       <td className="px-6 py-3">
                         <input
                           type="number"
-                          value={editValues.price_cents ?? 0}
-                          onChange={(e) => setEditValues({ ...editValues, price_cents: parseInt(e.target.value) || 0 })}
+                          step="0.01"
+                          value={editValues.price ?? 0}
+                          onChange={(e) => setEditValues({ ...editValues, price: parseFloat(e.target.value) || 0 })}
                           className="input-glass text-sm w-24"
                         />
                       </td>

@@ -62,7 +62,7 @@ async def _seed_initial_data():
         ]:
             db.add(CreditPackage(
                 name=name, credits=credits, price_cents=price,
-                currency="USD", bonus_credits=bonus, sort_order=order,
+                currency="MYR", bonus_credits=bonus, sort_order=order,
             ))
 
         # Super admin tenant + user

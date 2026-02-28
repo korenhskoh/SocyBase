@@ -57,7 +57,7 @@ class CreateCreditPackageRequest(BaseModel):
     name: str
     credits: int = Field(gt=0)
     price_cents: int = Field(ge=0)
-    currency: str = "USD"
+    currency: str = "MYR"
     stripe_price_id: str | None = None
     billing_interval: str = "one_time"  # one_time, monthly, annual
     bonus_credits: int = Field(ge=0, default=0)
