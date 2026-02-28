@@ -195,6 +195,150 @@ export function MockupEngagementScoring() {
   );
 }
 
+/* AI Facebook Ads Manager — campaign builder + performance AI */
+export function MockupAIFBAds() {
+  const campaigns = [
+    { name: "Retarget Fans", status: "Active", roas: "4.2x", spend: "$127", color: "#10b981" },
+    { name: "Lookalike Cold", status: "Learning", roas: "2.1x", spend: "$84", color: "#f59e0b" },
+    { name: "Winner Scale", status: "Active", roas: "6.8x", spend: "$312", color: "#10b981" },
+  ];
+
+  return (
+    <div className="glass-card-soft p-4 w-full max-w-[300px]">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="h-2 w-2 rounded-full bg-[#1877F2] animate-pulse" />
+        <span className="text-[10px] text-white/30 uppercase tracking-wider">AI Campaign Builder</span>
+      </div>
+
+      {/* AI generating indicator */}
+      <motion.div
+        className="flex items-center gap-2 mb-3 px-2.5 py-2 rounded-lg bg-[#7C5CFF]/5 border border-[#7C5CFF]/10"
+        initial={{ opacity: 0, y: 6 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1, duration: 0.4 }}
+        viewport={{ once: true }}
+      >
+        <svg className="h-3.5 w-3.5 text-[#7C5CFF]/70 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+        </svg>
+        <span className="text-[9px] text-[#7C5CFF]/60">AI optimizing ad creatives...</span>
+      </motion.div>
+
+      {campaigns.map((c, i) => (
+        <motion.div
+          key={c.name}
+          className="flex items-center gap-2 py-2.5 border-t border-white/[0.04]"
+          initial={{ opacity: 0, x: -10 }}
+          whileInView={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.2 + i * 0.15, duration: 0.4 }}
+          viewport={{ once: true }}
+        >
+          <div className="flex-1 min-w-0">
+            <div className="text-[11px] text-white/60 truncate">{c.name}</div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <div className="h-1 w-1 rounded-full" style={{ background: c.color }} />
+              <span className="text-[8px]" style={{ color: `${c.color}99` }}>{c.status}</span>
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-[11px] font-bold text-emerald-400">{c.roas}</div>
+            <div className="text-[8px] text-white/30">{c.spend}</div>
+          </div>
+        </motion.div>
+      ))}
+
+      <motion.div
+        className="mt-2 pt-2 border-t border-white/[0.04] flex items-center justify-between"
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
+        transition={{ delay: 0.7, duration: 0.4 }}
+        viewport={{ once: true }}
+      >
+        <div className="flex items-center gap-1.5">
+          <svg className="h-3 w-3 text-emerald-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22" />
+          </svg>
+          <span className="text-[9px] text-emerald-400/50">Avg ROAS 4.4x</span>
+        </div>
+        <span className="text-[9px] text-white/20">3 active</span>
+      </motion.div>
+    </div>
+  );
+}
+
+/* Traffic Bot — engagement boost services marketplace */
+export function MockupTrafficBot() {
+  const services = [
+    { name: "FB Page Likes", qty: "10K", price: "$12.50", platform: "Facebook", color: "#1877F2" },
+    { name: "IG Followers", qty: "5K", price: "$8.75", platform: "Instagram", color: "#E4405F" },
+    { name: "Live Viewers", qty: "1K", price: "$15.00", platform: "TikTok", color: "#00F2EA" },
+    { name: "YT Views", qty: "50K", price: "$22.00", platform: "YouTube", color: "#FF0000" },
+  ];
+
+  return (
+    <div className="glass-card-soft p-4 w-full max-w-[300px]">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="h-2 w-2 rounded-full bg-[#00F2EA] animate-pulse" />
+          <span className="text-[10px] text-white/30 uppercase tracking-wider">Traffic Bot</span>
+        </div>
+        <span className="text-[9px] text-emerald-400/50">200+ services</span>
+      </div>
+
+      {services.map((s, i) => (
+        <motion.div
+          key={s.name}
+          className="flex items-center gap-2.5 py-2.5 border-t border-white/[0.04]"
+          initial={{ opacity: 0, y: 8 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ delay: i * 0.12, duration: 0.4 }}
+          viewport={{ once: true }}
+        >
+          <div
+            className="h-6 w-6 rounded-lg shrink-0 flex items-center justify-center"
+            style={{ background: `${s.color}12` }}
+          >
+            <div className="h-2.5 w-2.5 rounded-sm" style={{ background: `${s.color}60` }} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[11px] text-white/60 truncate">{s.name}</div>
+            <div className="text-[8px] text-white/25">{s.platform}</div>
+          </div>
+          <div className="text-right shrink-0">
+            <span className="text-[10px] text-white/40">{s.qty}</span>
+          </div>
+          <motion.div
+            className="text-[10px] font-semibold text-emerald-400 shrink-0"
+            initial={{ opacity: 0, scale: 0.8 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            transition={{ delay: i * 0.12 + 0.2, duration: 0.3 }}
+            viewport={{ once: true }}
+          >
+            {s.price}
+          </motion.div>
+        </motion.div>
+      ))}
+
+      <motion.div
+        className="mt-2 pt-2 border-t border-white/[0.04]"
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
+        transition={{ delay: 0.6, duration: 0.4 }}
+        viewport={{ once: true }}
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-[9px] text-white/25">Instant delivery</span>
+          <div className="flex gap-1.5">
+            {["#1877F2", "#E4405F", "#00F2EA", "#FF0000"].map((c) => (
+              <div key={c} className="h-3 w-3 rounded-full" style={{ background: `${c}20` }} />
+            ))}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 /* One-Click FB Ads Export — export pipeline visualization */
 export function MockupFBAdsExport() {
   return (

@@ -380,4 +380,40 @@ export const fbAdsApi = {
   duplicateAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/duplicate`),
 };
 
+// Traffic Bot API
+export const trafficBotApi = {
+  // Services
+  getServices: (category?: string) =>
+    api.get("/traffic-bot/services", { params: category ? { category } : {} }),
+  getCategories: () => api.get("/traffic-bot/services/categories"),
+  calculatePrice: (serviceId: string, quantity: number) =>
+    api.get(`/traffic-bot/services/${serviceId}/price`, { params: { quantity } }),
+  // Orders
+  createOrder: (data: { service_id: string; link: string; quantity: number }) =>
+    api.post("/traffic-bot/orders", data),
+  getOrders: (params?: { status?: string; limit?: number; offset?: number }) =>
+    api.get("/traffic-bot/orders", { params }),
+  getOrder: (id: string, refresh?: boolean) =>
+    api.get(`/traffic-bot/orders/${id}`, { params: refresh ? { refresh: true } : {} }),
+  cancelOrder: (id: string) => api.post(`/traffic-bot/orders/${id}/cancel`),
+  refillOrder: (id: string) => api.post(`/traffic-bot/orders/${id}/refill`),
+  // Wallet
+  getWallet: () => api.get("/traffic-bot/wallet"),
+  getTransactions: (params?: { limit?: number; offset?: number }) =>
+    api.get("/traffic-bot/wallet/transactions", { params }),
+  // Admin
+  syncServices: () => api.post("/admin/traffic-bot/services/sync"),
+  getAllServices: (category?: string) =>
+    api.get("/admin/traffic-bot/services", { params: category ? { category } : {} }),
+  updateService: (id: string, data: { fee_pct?: number; is_enabled?: boolean; sort_order?: number }) =>
+    api.patch(`/admin/traffic-bot/services/${id}`, data),
+  bulkUpdateFee: (data: { category: string; fee_pct: number }) =>
+    api.patch("/admin/traffic-bot/services/bulk-fee", data),
+  getAllOrders: (params?: { status?: string; limit?: number; offset?: number }) =>
+    api.get("/admin/traffic-bot/orders", { params }),
+  depositWallet: (data: { tenant_id: string; amount: number; description?: string }) =>
+    api.post("/admin/traffic-bot/wallet/deposit", data),
+  getApiBalance: () => api.get("/admin/traffic-bot/api-balance"),
+};
+
 export default api;

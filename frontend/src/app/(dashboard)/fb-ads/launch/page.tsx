@@ -21,6 +21,14 @@ const STAGE_LABELS: Record<string, string> = {
   complete: "Complete",
   error: "Failed",
 };
+const STAGE_DESCRIPTIONS: Record<string, string> = {
+  analyze: "Reviewing your historical ad performance and business context",
+  structure: "Determining optimal campaign architecture and budget allocation",
+  targeting: "Building audience segments based on proven winners",
+  creative: "Writing compelling ad copy and headlines",
+  finalize: "Assembling the complete campaign structure",
+  complete: "Your campaign is ready for review",
+};
 
 const CTA_OPTIONS = ["LEARN_MORE", "SIGN_UP", "SHOP_NOW", "GET_OFFER", "CONTACT_US"];
 
@@ -35,8 +43,11 @@ function formatTargeting(targeting: Record<string, unknown>): React.ReactNode {
   if (ageMin != null) {
     items.push(
       <div key="age" className="flex items-center gap-2">
-        <span className="text-white/30 w-20 shrink-0">Age</span>
-        <span className="text-white/70">{ageMin} - {ageMax ?? 65}+</span>
+        <svg className="h-3.5 w-3.5 text-white/20 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0" />
+        </svg>
+        <span className="text-white/40 w-16 shrink-0 text-xs">Age</span>
+        <span className="text-white/70 text-sm">{ageMin} - {ageMax ?? 65}+</span>
       </div>
     );
   }
@@ -46,8 +57,11 @@ function formatTargeting(targeting: Record<string, unknown>): React.ReactNode {
     const labels = genders.map((g: number) => g === 1 ? "Male" : g === 2 ? "Female" : "All");
     items.push(
       <div key="gender" className="flex items-center gap-2">
-        <span className="text-white/30 w-20 shrink-0">Gender</span>
-        <span className="text-white/70">{labels.join(", ")}</span>
+        <svg className="h-3.5 w-3.5 text-white/20 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+        </svg>
+        <span className="text-white/40 w-16 shrink-0 text-xs">Gender</span>
+        <span className="text-white/70 text-sm">{labels.join(", ")}</span>
       </div>
     );
   }
@@ -60,8 +74,12 @@ function formatTargeting(targeting: Record<string, unknown>): React.ReactNode {
     if (parts.length > 0) {
       items.push(
         <div key="geo" className="flex items-center gap-2">
-          <span className="text-white/30 w-20 shrink-0">Locations</span>
-          <span className="text-white/70">{parts.join(", ")}</span>
+          <svg className="h-3.5 w-3.5 text-white/20 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+          </svg>
+          <span className="text-white/40 w-16 shrink-0 text-xs">Location</span>
+          <span className="text-white/70 text-sm">{parts.join(", ")}</span>
         </div>
       );
     }
@@ -79,8 +97,17 @@ function formatTargeting(targeting: Record<string, unknown>): React.ReactNode {
     if (interests.length > 0) {
       items.push(
         <div key="interests" className="flex items-start gap-2">
-          <span className="text-white/30 w-20 shrink-0">Interests</span>
-          <span className="text-white/70">{interests.join(", ")}</span>
+          <svg className="h-3.5 w-3.5 text-white/20 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+          </svg>
+          <span className="text-white/40 w-16 shrink-0 text-xs">Interests</span>
+          <div className="flex flex-wrap gap-1">
+            {interests.map((interest, i) => (
+              <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400/70 border border-blue-500/10">
+                {interest}
+              </span>
+            ))}
+          </div>
         </div>
       );
     }
@@ -94,7 +121,27 @@ function formatTargeting(targeting: Record<string, unknown>): React.ReactNode {
     );
   }
 
-  return <div className="space-y-1.5 text-sm">{items}</div>;
+  return <div className="space-y-2.5">{items}</div>;
+}
+
+function statusColor(status: string) {
+  switch (status) {
+    case "published": return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+    case "ready": return "bg-blue-500/10 text-blue-400 border-blue-500/20";
+    case "failed": return "bg-red-500/10 text-red-400 border-red-500/20";
+    case "generating": return "bg-amber-500/10 text-amber-400 border-amber-500/20";
+    default: return "bg-white/5 text-white/40 border-white/10";
+  }
+}
+
+function statusDot(status: string) {
+  switch (status) {
+    case "published": return "bg-emerald-400";
+    case "ready": return "bg-blue-400";
+    case "failed": return "bg-red-400";
+    case "generating": return "bg-amber-400 animate-pulse";
+    default: return "bg-white/30";
+  }
 }
 
 export default function FBAILaunchPage() {
@@ -127,6 +174,7 @@ export default function FBAILaunchPage() {
   const [historicalRange, setHistoricalRange] = useState("90");
   const [instructions, setInstructions] = useState("");
   const [creating, setCreating] = useState(false);
+  const [configStep, setConfigStep] = useState<1 | 2 | 3>(1);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -365,15 +413,17 @@ export default function FBAILaunchPage() {
 
   if (!connection?.connected) {
     return (
-      <div className="max-w-2xl mx-auto text-center py-20 space-y-4">
-        <div className="h-16 w-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto">
-          <svg className="h-8 w-8 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <div className="max-w-2xl mx-auto text-center py-20 space-y-6">
+        <div className="h-20 w-20 rounded-3xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/15 flex items-center justify-center mx-auto">
+          <svg className="h-10 w-10 text-blue-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" />
           </svg>
         </div>
-        <h1 className="text-2xl font-bold text-white">AI Launch</h1>
-        <p className="text-white/40">Connect your Facebook account to start building AI-powered campaigns.</p>
-        <a href="/fb-ads/connect" className="btn-glow inline-block">Go to Connection</a>
+        <div>
+          <h1 className="text-2xl font-bold text-white">AI Campaign Builder</h1>
+          <p className="text-white/40 mt-2 max-w-md mx-auto">Connect your Facebook account to start building AI-powered campaigns that leverage your best-performing ads.</p>
+        </div>
+        <a href="/fb-ads/connect" className="btn-glow inline-block">Connect Facebook</a>
       </div>
     );
   }
@@ -385,55 +435,90 @@ export default function FBAILaunchPage() {
     const pct = progress?.pct || 0;
 
     return (
-      <div className="max-w-lg mx-auto py-20 text-center space-y-8">
-        <div className="h-20 w-20 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-blue-500/20 border border-emerald-500/20 flex items-center justify-center mx-auto">
-          <div className="h-10 w-10 border-2 border-emerald-400/30 border-t-emerald-400 rounded-full animate-spin" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-bold text-white">Generating Your Campaign</h2>
-          <p className="text-white/40 text-sm mt-2">AI is analyzing your data and building an optimized campaign structure.</p>
-        </div>
-
-        {/* Progress bar */}
-        <div className="space-y-3">
-          <div className="w-full bg-white/5 rounded-full h-2.5 overflow-hidden">
-            <div
-              className="bg-gradient-to-r from-emerald-500 to-blue-500 h-2.5 rounded-full transition-all duration-700 ease-out"
-              style={{ width: `${pct}%` }}
-            />
+      <div className="max-w-xl mx-auto py-16 space-y-10">
+        {/* Animated header */}
+        <div className="text-center space-y-4">
+          <div className="h-24 w-24 rounded-3xl bg-gradient-to-br from-emerald-500/20 via-blue-500/20 to-purple-500/20 border border-emerald-500/15 flex items-center justify-center mx-auto relative">
+            <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-emerald-500/10 to-blue-500/10 animate-pulse" />
+            <div className="h-12 w-12 border-2 border-emerald-400/30 border-t-emerald-400 rounded-full animate-spin" />
           </div>
-          <div className="flex justify-between text-xs text-white/30">
-            <span>{STAGE_LABELS[stage] || stage}</span>
-            <span>{pct}%</span>
+          <div>
+            <h2 className="text-2xl font-bold text-white">Building Your Campaign</h2>
+            <p className="text-white/40 text-sm mt-2 max-w-sm mx-auto">
+              AI is analyzing your data and creating an optimized campaign structure.
+            </p>
           </div>
         </div>
 
-        {/* Stage indicators */}
-        <div className="flex justify-center gap-4">
-          {STAGES.slice(0, 5).map((s, i) => {
-            const idx = STAGES.indexOf(stage);
-            const isActive = idx === i;
-            const isDone = idx > i;
-            return (
-              <div key={s} className="flex flex-col items-center gap-1.5">
-                <div className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${
-                  isDone ? "bg-emerald-500" : isActive ? "bg-emerald-400 animate-pulse" : "bg-white/10"
-                }`} />
-                <span className={`text-[10px] ${isActive ? "text-emerald-400" : isDone ? "text-white/40" : "text-white/20"}`}>
-                  {STAGE_LABELS[s]?.split(" ").pop()}
-                </span>
-              </div>
-            );
-          })}
+        {/* Progress section */}
+        <div className="glass-card p-6 space-y-6">
+          {/* Overall progress bar */}
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-white/60 font-medium">{STAGE_LABELS[stage] || stage}</span>
+              <span className="text-white/40">{pct}%</span>
+            </div>
+            <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-gradient-to-r from-emerald-500 via-blue-500 to-purple-500 h-2 rounded-full transition-all duration-700 ease-out"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <p className="text-xs text-white/30">{STAGE_DESCRIPTIONS[stage] || ""}</p>
+          </div>
+
+          {/* Stage steps */}
+          <div className="space-y-2">
+            {STAGES.slice(0, 5).map((s, i) => {
+              const idx = STAGES.indexOf(stage);
+              const isActive = idx === i;
+              const isDone = idx > i;
+              return (
+                <div key={s} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
+                  isActive ? "bg-emerald-500/5 border border-emerald-500/10" : "border border-transparent"
+                }`}>
+                  <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 transition-all ${
+                    isDone ? "bg-emerald-500/20" : isActive ? "bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-white/5"
+                  }`}>
+                    {isDone ? (
+                      <svg className="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    ) : isActive ? (
+                      <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                    ) : (
+                      <span className="text-[10px] text-white/20 font-medium">{i + 1}</span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-medium ${isDone ? "text-emerald-400/70" : isActive ? "text-white" : "text-white/30"}`}>
+                      {STAGE_LABELS[s]}
+                    </p>
+                  </div>
+                  {isActive && <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {stage === "error" && (
-          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
-            <p className="text-red-400 text-sm">{progress?.error || "An error occurred during generation."}</p>
-            <p className="text-white/30 text-xs mt-1">Credits have been refunded.</p>
+          <div className="glass-card p-6 border-red-500/20 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-xl bg-red-500/10 flex items-center justify-center shrink-0">
+                <svg className="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-red-400 font-medium">Generation Failed</p>
+                <p className="text-white/40 text-sm mt-1">{progress?.error || "An unexpected error occurred during generation."}</p>
+                <p className="text-white/30 text-xs mt-2">Credits have been refunded to your account.</p>
+              </div>
+            </div>
             <button
               onClick={() => { setView("config"); setActiveCampaign(null); }}
-              className="mt-3 text-sm text-white/50 hover:text-white transition"
+              className="w-full text-sm py-2.5 rounded-lg text-white/50 bg-white/5 border border-white/10 hover:bg-white/10 transition"
             >
               Back to Configuration
             </button>
@@ -445,40 +530,52 @@ export default function FBAILaunchPage() {
 
   // --- Review View ---
   if (view === "review" && activeCampaign) {
-    const REVIEW_STEPS: { key: ReviewStep; label: string }[] = [
-      { key: "summary", label: "AI Summary" },
-      { key: "campaign", label: "Campaign" },
-      { key: "adsets", label: "Ad Sets" },
-      { key: "ads", label: "Ads" },
-      { key: "publish", label: "Publish" },
+    const REVIEW_STEPS: { key: ReviewStep; label: string; icon: string }[] = [
+      { key: "summary", label: "AI Summary", icon: "M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" },
+      { key: "campaign", label: "Campaign", icon: "M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5" },
+      { key: "adsets", label: "Ad Sets", icon: "M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6a1.125 1.125 0 01-1.125-1.125v-3.75zM14.25 8.625c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v8.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-8.25zM3.75 16.125c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v2.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-2.25z" },
+      { key: "ads", label: "Ads", icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" },
+      { key: "publish", label: "Publish", icon: "M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" },
     ];
 
     const totalAds = activeCampaign.adsets.reduce((sum, adsetItem) => sum + adsetItem.ads.length, 0);
+    const stepIdx = REVIEW_STEPS.findIndex(s => s.key === reviewStep);
 
     return (
       <div className="flex gap-6">
         {/* Sidebar Steps */}
-        <div className="hidden lg:block w-48 shrink-0">
+        <div className="hidden lg:block w-52 shrink-0">
           <div className="sticky top-6 space-y-1">
+            <p className="text-[10px] text-white/30 uppercase tracking-wider font-semibold mb-3 px-3">Review Steps</p>
             {REVIEW_STEPS.map((step, i) => (
               <button
                 key={step.key}
                 onClick={() => setReviewStep(step.key)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 ${
+                className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition flex items-center gap-2.5 ${
                   reviewStep === step.key
                     ? "bg-white/10 text-white font-medium"
-                    : "text-white/40 hover:text-white/60 hover:bg-white/5"
+                    : i < stepIdx ? "text-white/50 hover:text-white/70 hover:bg-white/5" : "text-white/30 hover:text-white/50 hover:bg-white/5"
                 }`}
               >
-                <span className={`h-5 w-5 rounded-full text-[10px] flex items-center justify-center shrink-0 ${
-                  reviewStep === step.key ? "bg-blue-500 text-white" : "bg-white/10 text-white/30"
-                }`}>{i + 1}</span>
+                <div className={`h-6 w-6 rounded-lg flex items-center justify-center shrink-0 ${
+                  reviewStep === step.key ? "bg-blue-500/20" : i < stepIdx ? "bg-emerald-500/10" : "bg-white/5"
+                }`}>
+                  {i < stepIdx ? (
+                    <svg className="h-3 w-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                  ) : (
+                    <svg className={`h-3 w-3 ${reviewStep === step.key ? "text-blue-400" : "text-white/20"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d={step.icon} />
+                    </svg>
+                  )}
+                </div>
                 {step.label}
               </button>
             ))}
 
             {/* Sidebar Actions */}
-            <div className="pt-3 mt-3 border-t border-white/5 space-y-1">
+            <div className="pt-4 mt-4 border-t border-white/5 space-y-1">
               {activeCampaign.status === "ready" && (
                 <button
                   onClick={handleRegenerate}
@@ -519,46 +616,54 @@ export default function FBAILaunchPage() {
         <div className="flex-1 min-w-0 space-y-6">
           {/* Header */}
           <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h1 className="text-2xl font-bold text-white">{activeCampaign.name}</h1>
-              <p className="text-white/40 text-sm mt-1 flex items-center gap-2 flex-wrap">
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
-                  activeCampaign.status === "published" ? "bg-emerald-500/10 text-emerald-400" :
-                  activeCampaign.status === "ready" ? "bg-blue-500/10 text-blue-400" :
-                  activeCampaign.status === "failed" ? "bg-red-500/10 text-red-400" :
-                  "bg-white/5 text-white/40"
-                }`}>
-                  {activeCampaign.status === "published" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
-                  {activeCampaign.status}
-                </span>
-                <span>{activeCampaign.objective}</span>
-                <span>&middot;</span>
-                <span>{formatCents(activeCampaign.daily_budget)}/day</span>
-                <span>&middot;</span>
-                <span>{activeCampaign.adsets.length} ad sets, {totalAds} ads</span>
-              </p>
+            <div className="flex items-center gap-4">
+              <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/15 flex items-center justify-center shrink-0">
+                <svg className="h-5 w-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-white">{activeCampaign.name}</h1>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${statusColor(activeCampaign.status)}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${statusDot(activeCampaign.status)}`} />
+                    {activeCampaign.status}
+                  </span>
+                  <span className="text-xs text-white/30">{activeCampaign.objective}</span>
+                  <span className="text-white/10">&middot;</span>
+                  <span className="text-xs text-white/30">{formatCents(activeCampaign.daily_budget)}/day</span>
+                  <span className="text-white/10">&middot;</span>
+                  <span className="text-xs text-white/30">{activeCampaign.adsets.length} ad sets, {totalAds} ads</span>
+                </div>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setView("config"); setActiveCampaign(null); }}
-                className="text-sm px-4 py-2 rounded-lg text-white/50 bg-white/5 border border-white/10 hover:bg-white/10 transition"
-              >
-                New Campaign
-              </button>
-            </div>
+            <button
+              onClick={() => { setView("config"); setActiveCampaign(null); setConfigStep(1); }}
+              className="text-sm px-4 py-2 rounded-lg text-white/50 bg-white/5 border border-white/10 hover:bg-white/10 transition flex items-center gap-1.5"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New Campaign
+            </button>
           </div>
 
-          {/* Mobile step tabs + actions */}
+          {/* Mobile step tabs */}
           <div className="lg:hidden flex gap-1 overflow-x-auto pb-1">
             {REVIEW_STEPS.map((step, i) => (
               <button
                 key={step.key}
                 onClick={() => setReviewStep(step.key)}
-                className={`px-3 py-1.5 rounded-full text-xs whitespace-nowrap transition ${
+                className={`px-3 py-1.5 rounded-full text-xs whitespace-nowrap transition flex items-center gap-1.5 ${
                   reviewStep === step.key ? "bg-blue-500/20 text-blue-400" : "bg-white/5 text-white/40"
                 }`}
               >
-                {i + 1}. {step.label}
+                {i < stepIdx && (
+                  <svg className="h-2.5 w-2.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                )}
+                {step.label}
               </button>
             ))}
           </div>
@@ -584,40 +689,40 @@ export default function FBAILaunchPage() {
           {reviewStep === "summary" && (
             <div className="space-y-4">
               {activeCampaign.ai_summary && (
-                <div className="glass-card p-6 space-y-4">
+                <div className="glass-card p-6 space-y-5">
                   <div className="flex items-start gap-3">
                     <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0">
                       <svg className="h-5 w-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
                       </svg>
                     </div>
-                    <div>
+                    <div className="flex-1">
                       <h3 className="text-white font-semibold">AI Strategy</h3>
-                      <p className="text-white/50 text-sm mt-1 leading-relaxed">{String(activeCampaign.ai_summary.strategy || "Campaign generated successfully.")}</p>
+                      <p className="text-white/50 text-sm mt-1.5 leading-relaxed">{String(activeCampaign.ai_summary.strategy || "Campaign generated successfully.")}</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     {[
-                      { label: "Ad Sets", value: String(activeCampaign.ai_summary.num_adsets || activeCampaign.adsets.length) },
-                      { label: "Total Ads", value: String(activeCampaign.ai_summary.num_ads || totalAds) },
-                      { label: "Daily Budget", value: formatCents(activeCampaign.daily_budget) },
-                      { label: "Credits Used", value: String(activeCampaign.credits_used) },
+                      { label: "Ad Sets", value: String(activeCampaign.ai_summary.num_adsets || activeCampaign.adsets.length), icon: "M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6a1.125 1.125 0 01-1.125-1.125v-3.75z", color: "text-blue-400" },
+                      { label: "Total Ads", value: String(activeCampaign.ai_summary.num_ads || totalAds), icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227", color: "text-purple-400" },
+                      { label: "Daily Budget", value: formatCents(activeCampaign.daily_budget), icon: "M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0", color: "text-emerald-400" },
+                      { label: "Credits Used", value: String(activeCampaign.credits_used), icon: "M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12", color: "text-amber-400" },
                     ].map(stat => (
-                      <div key={stat.label} className="bg-white/[0.03] rounded-lg p-3 text-center">
-                        <p className="text-lg font-bold text-white">{stat.value}</p>
-                        <p className="text-[10px] text-white/30 uppercase tracking-wider mt-0.5">{stat.label}</p>
+                      <div key={stat.label} className="bg-white/[0.03] rounded-xl p-3.5 border border-white/5">
+                        <p className="text-[10px] text-white/30 uppercase tracking-wider">{stat.label}</p>
+                        <p className={`text-lg font-bold mt-1 ${stat.color}`}>{stat.value}</p>
                       </div>
                     ))}
                   </div>
 
                   {activeCampaign.ai_summary.historical_winners_used != null && activeCampaign.ai_summary.historical_winners_used > 0 && (
-                    <p className="text-xs text-white/30 flex items-center gap-1">
-                      <svg className="h-3.5 w-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                      <svg className="h-4 w-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                       </svg>
-                      Based on {activeCampaign.ai_summary.historical_winners_used} proven winning ads from your account
-                    </p>
+                      <p className="text-xs text-amber-400/80">Based on {activeCampaign.ai_summary.historical_winners_used} proven winning ads from your account</p>
+                    </div>
                   )}
                 </div>
               )}
@@ -635,18 +740,32 @@ export default function FBAILaunchPage() {
 
           {reviewStep === "campaign" && (
             <div className="space-y-4">
-              <div className="glass-card p-5 space-y-4">
+              <div className="glass-card p-6 space-y-5">
                 <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider">Campaign Details</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div className="space-y-3">
-                    <div><span className="text-white/30 block text-xs">Name</span><span className="text-white">{activeCampaign.name}</span></div>
-                    <div><span className="text-white/30 block text-xs">Objective</span><span className="text-white">{activeCampaign.objective}</span></div>
-                    <div><span className="text-white/30 block text-xs">Daily Budget</span><span className="text-white">{formatCents(activeCampaign.daily_budget)}</span></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="space-y-4">
+                    {[
+                      { label: "Campaign Name", value: activeCampaign.name },
+                      { label: "Objective", value: activeCampaign.objective },
+                      { label: "Daily Budget", value: formatCents(activeCampaign.daily_budget) },
+                    ].map(item => (
+                      <div key={item.label}>
+                        <span className="text-white/30 block text-xs mb-0.5">{item.label}</span>
+                        <span className="text-white font-medium text-sm">{item.value}</span>
+                      </div>
+                    ))}
                   </div>
-                  <div className="space-y-3">
-                    <div><span className="text-white/30 block text-xs">Landing Page</span><span className="text-white/70 break-all">{activeCampaign.landing_page_url || "Not set"}</span></div>
-                    <div><span className="text-white/30 block text-xs">Conversion Event</span><span className="text-white">{activeCampaign.conversion_event || "Not set"}</span></div>
-                    <div><span className="text-white/30 block text-xs">Audience Strategy</span><span className="text-white capitalize">{activeCampaign.audience_strategy}</span></div>
+                  <div className="space-y-4">
+                    {[
+                      { label: "Landing Page", value: activeCampaign.landing_page_url || "Not set" },
+                      { label: "Conversion Event", value: activeCampaign.conversion_event || "Not set" },
+                      { label: "Strategy", value: `${activeCampaign.audience_strategy} audience \u00B7 ${activeCampaign.creative_strategy} creative` },
+                    ].map(item => (
+                      <div key={item.label}>
+                        <span className="text-white/30 block text-xs mb-0.5">{item.label}</span>
+                        <span className="text-white/70 text-sm break-all">{item.value}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -668,16 +787,18 @@ export default function FBAILaunchPage() {
               {activeCampaign.adsets.map((adset, i) => (
                 <div key={adset.id} className="glass-card p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium">Set {i + 1}</span>
-                        <h3 className="text-white font-semibold">{adset.name}</h3>
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-lg bg-blue-500/10 border border-blue-500/15 flex items-center justify-center shrink-0">
+                        <span className="text-xs text-blue-400 font-bold">{i + 1}</span>
                       </div>
-                      <p className="text-xs text-white/40 mt-1">{formatCents(adset.daily_budget)}/day &middot; {adset.ads.length} ad{adset.ads.length !== 1 ? "s" : ""}</p>
+                      <div>
+                        <h3 className="text-white font-semibold text-sm">{adset.name}</h3>
+                        <p className="text-xs text-white/40 mt-0.5">{formatCents(adset.daily_budget)}/day &middot; {adset.ads.length} ad{adset.ads.length !== 1 ? "s" : ""}</p>
+                      </div>
                     </div>
                   </div>
-                  <div className="bg-white/[0.02] rounded-lg p-4 border border-white/5">
-                    <p className="text-xs text-white/40 uppercase tracking-wider font-semibold mb-2">Targeting</p>
+                  <div className="bg-white/[0.02] rounded-xl p-4 border border-white/5">
+                    <p className="text-[10px] text-white/30 uppercase tracking-wider font-semibold mb-3">Targeting</p>
                     {formatTargeting(adset.targeting)}
                   </div>
                 </div>
@@ -699,10 +820,12 @@ export default function FBAILaunchPage() {
             <div className="space-y-5">
               {activeCampaign.adsets.map((adset, i) => (
                 <div key={adset.id} className="space-y-3">
-                  <p className="text-xs text-white/30 uppercase tracking-wider font-semibold flex items-center gap-2">
-                    <span className="h-4 w-4 rounded bg-blue-500/10 text-blue-400 flex items-center justify-center text-[9px]">{i + 1}</span>
-                    {adset.name}
-                  </p>
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-5 w-5 rounded bg-blue-500/10 flex items-center justify-center">
+                      <span className="text-[9px] text-blue-400 font-bold">{i + 1}</span>
+                    </div>
+                    <p className="text-xs text-white/40 uppercase tracking-wider font-semibold">{adset.name}</p>
+                  </div>
                   {adset.ads.map((ad) => (
                     <AdCard
                       key={ad.id}
@@ -735,7 +858,7 @@ export default function FBAILaunchPage() {
             <div className="space-y-4">
               <div className="glass-card p-6 space-y-5">
                 <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                  <div className="h-11 w-11 rounded-xl bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center">
                     <svg className="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" />
                     </svg>
@@ -746,19 +869,31 @@ export default function FBAILaunchPage() {
                   </div>
                 </div>
 
-                <div className="bg-white/[0.02] rounded-lg p-4 border border-white/5 space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-white/40">Campaign</span><span className="text-white">{activeCampaign.name}</span></div>
-                  <div className="flex justify-between"><span className="text-white/40">Objective</span><span className="text-white">{activeCampaign.objective}</span></div>
-                  <div className="flex justify-between"><span className="text-white/40">Daily Budget</span><span className="text-white">{formatCents(activeCampaign.daily_budget)}</span></div>
-                  <div className="flex justify-between"><span className="text-white/40">Ad Sets</span><span className="text-white">{activeCampaign.adsets.length}</span></div>
-                  <div className="flex justify-between"><span className="text-white/40">Total Ads</span><span className="text-white">{totalAds}</span></div>
+                <div className="bg-white/[0.02] rounded-xl p-4 border border-white/5 space-y-2.5 text-sm">
+                  {[
+                    { label: "Campaign", value: activeCampaign.name },
+                    { label: "Objective", value: activeCampaign.objective },
+                    { label: "Daily Budget", value: formatCents(activeCampaign.daily_budget) },
+                    { label: "Ad Sets", value: String(activeCampaign.adsets.length) },
+                    { label: "Total Ads", value: String(totalAds) },
+                  ].map(row => (
+                    <div key={row.label} className="flex justify-between">
+                      <span className="text-white/40">{row.label}</span>
+                      <span className="text-white font-medium">{row.value}</span>
+                    </div>
+                  ))}
                 </div>
 
                 {activeCampaign.status === "published" ? (
-                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 text-center">
-                    <p className="text-emerald-400 font-medium">Campaign Published Successfully</p>
-                    <p className="text-white/40 text-xs mt-1">Campaign ID: {activeCampaign.meta_campaign_id}</p>
-                    <p className="text-white/30 text-xs mt-0.5">Published: {activeCampaign.published_at ? new Date(activeCampaign.published_at).toLocaleString() : ""}</p>
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-5 text-center space-y-2">
+                    <div className="h-10 w-10 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto">
+                      <svg className="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    </div>
+                    <p className="text-emerald-400 font-semibold">Campaign Published Successfully</p>
+                    <p className="text-white/40 text-xs">Campaign ID: {activeCampaign.meta_campaign_id}</p>
+                    <p className="text-white/30 text-xs">{activeCampaign.published_at ? new Date(activeCampaign.published_at).toLocaleString() : ""}</p>
                   </div>
                 ) : activeCampaign.status === "ready" ? (
                   <button
@@ -781,9 +916,9 @@ export default function FBAILaunchPage() {
                     )}
                   </button>
                 ) : activeCampaign.status === "failed" ? (
-                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-center space-y-2">
-                    <p className="text-red-400 text-sm">Publishing failed. You can try again.</p>
-                    <button onClick={handlePublish} className="text-sm text-white/50 hover:text-white transition">
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-5 text-center space-y-3">
+                    <p className="text-red-400 text-sm font-medium">Publishing failed. You can try again.</p>
+                    <button onClick={handlePublish} className="text-sm text-white/50 hover:text-white transition px-4 py-2 rounded-lg bg-white/5 border border-white/10">
                       Retry Publish
                     </button>
                   </div>
@@ -806,10 +941,18 @@ export default function FBAILaunchPage() {
   // --- Config + History View ---
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white">AI Launch</h1>
-          <p className="text-white/40 text-sm mt-1">Configure and generate AI-powered Facebook ad campaigns</p>
+        <div className="flex items-center gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-blue-500/20 via-purple-500/20 to-pink-500/20 border border-blue-500/15 flex items-center justify-center shrink-0">
+            <svg className="h-6 w-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold text-white">AI Campaign Builder</h1>
+            <p className="text-white/40 text-sm mt-0.5">Generate optimized Facebook ad campaigns with AI</p>
+          </div>
         </div>
         {campaigns.length > 0 && (
           <button
@@ -833,31 +976,37 @@ export default function FBAILaunchPage() {
 
       {view === "history" ? (
         <div className="space-y-3">
-          {campaigns.map(c => (
+          {campaigns.length === 0 ? (
+            <div className="glass-card p-12 text-center">
+              <p className="text-white/30">No campaigns created yet.</p>
+            </div>
+          ) : campaigns.map(c => (
             <div
               key={c.id}
               onClick={() => viewCampaign(c.id)}
-              className="w-full text-left glass-card p-4 hover:bg-white/[0.03] transition group cursor-pointer"
+              className="glass-card p-4 hover:bg-white/[0.03] transition group cursor-pointer"
             >
               <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-white font-medium group-hover:text-blue-400 transition">{c.name}</p>
-                  <p className="text-xs text-white/40 mt-0.5 flex items-center gap-2">
-                    <span>{c.objective}</span>
-                    <span>&middot;</span>
-                    <span>{formatCents(c.daily_budget)}/day</span>
-                    <span>&middot;</span>
-                    <span>{new Date(c.created_at).toLocaleDateString()}</span>
-                  </p>
+                <div className="flex items-center gap-3">
+                  <div className={`h-9 w-9 rounded-lg border flex items-center justify-center shrink-0 ${statusColor(c.status)}`}>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-white font-medium group-hover:text-blue-400 transition">{c.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs text-white/30">{c.objective}</span>
+                      <span className="text-white/10">&middot;</span>
+                      <span className="text-xs text-white/30">{formatCents(c.daily_budget)}/day</span>
+                      <span className="text-white/10">&middot;</span>
+                      <span className="text-xs text-white/30">{new Date(c.created_at).toLocaleDateString()}</span>
+                    </div>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                    c.status === "published" ? "bg-emerald-500/10 text-emerald-400" :
-                    c.status === "ready" ? "bg-blue-500/10 text-blue-400" :
-                    c.status === "failed" ? "bg-red-500/10 text-red-400" :
-                    c.status === "generating" ? "bg-amber-500/10 text-amber-400" :
-                    "bg-white/5 text-white/30"
-                  }`}>
+                  <span className={`text-[10px] px-2.5 py-1 rounded-full font-medium border inline-flex items-center gap-1.5 ${statusColor(c.status)}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${statusDot(c.status)}`} />
                     {c.status}
                   </span>
                   {c.status !== "published" && c.status !== "generating" && (
@@ -877,189 +1026,344 @@ export default function FBAILaunchPage() {
           ))}
         </div>
       ) : (
-        /* Campaign Configuration Form */
+        /* Campaign Configuration Form - Multi-step */
         <div className="space-y-6">
-          {/* Basic Config */}
-          <div className="glass-card p-5 space-y-4">
-            <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider">Campaign Setup</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs text-white/40 block mb-1">Campaign Name *</label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="My AI Campaign"
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-white/40 block mb-1">Max Daily Budget ($)</label>
-                <input
-                  type="number"
-                  value={dailyBudget}
-                  onChange={e => setDailyBudget(e.target.value)}
-                  min="1"
-                  step="1"
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50"
-                />
-              </div>
-            </div>
-
-            {/* Objective */}
-            <div>
-              <label className="text-xs text-white/40 block mb-2">Campaign Objective</label>
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { value: "LEADS", label: "Leads", desc: "Collect leads from forms", icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" },
-                  { value: "SALES", label: "Sales", desc: "Drive purchases on your site", icon: "M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" },
-                ].map(o => (
-                  <button
-                    key={o.value}
-                    onClick={() => setObjective(o.value)}
-                    className={`p-3 rounded-lg border text-left transition flex items-start gap-3 ${
-                      objective === o.value
-                        ? "bg-blue-500/10 border-blue-500/30 text-white"
-                        : "bg-white/[0.02] border-white/10 text-white/60 hover:bg-white/[0.05]"
-                    }`}
-                  >
-                    <svg className="h-5 w-5 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d={o.icon} />
+          {/* Step indicator */}
+          <div className="flex items-center gap-3">
+            {[
+              { step: 1 as const, label: "Campaign Setup" },
+              { step: 2 as const, label: "AI Strategy" },
+              { step: 3 as const, label: "Generate" },
+            ].map((s, i) => (
+              <button
+                key={s.step}
+                onClick={() => setConfigStep(s.step)}
+                className="flex items-center gap-2"
+              >
+                <div className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium transition ${
+                  configStep === s.step ? "bg-blue-500/20 text-blue-400 ring-2 ring-blue-500/30" :
+                  configStep > s.step ? "bg-emerald-500/20 text-emerald-400" : "bg-white/5 text-white/30"
+                }`}>
+                  {configStep > s.step ? (
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                     </svg>
-                    <div>
-                      <p className="text-sm font-medium">{o.label}</p>
-                      <p className="text-xs text-white/40 mt-0.5">{o.desc}</p>
+                  ) : s.step}
+                </div>
+                <span className={`text-sm font-medium hidden sm:inline ${
+                  configStep === s.step ? "text-white" : configStep > s.step ? "text-white/50" : "text-white/30"
+                }`}>{s.label}</span>
+                {i < 2 && <div className="h-px w-8 bg-white/10 hidden sm:block" />}
+              </button>
+            ))}
+          </div>
+
+          {/* Step 1: Campaign Setup */}
+          {configStep === 1 && (
+            <div className="space-y-6">
+              <div className="glass-card p-6 space-y-5">
+                <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider flex items-center gap-2">
+                  <svg className="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                  </svg>
+                  Campaign Setup
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1.5">Campaign Name *</label>
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={e => setName(e.target.value)}
+                      placeholder="My AI Campaign"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1.5">Max Daily Budget ($)</label>
+                    <input
+                      type="number"
+                      value={dailyBudget}
+                      onChange={e => setDailyBudget(e.target.value)}
+                      min="1"
+                      step="1"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition"
+                    />
+                  </div>
+                </div>
+
+                {/* Objective */}
+                <div>
+                  <label className="text-xs text-white/40 block mb-2">Campaign Objective</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { value: "LEADS", label: "Leads", desc: "Collect leads from forms", icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" },
+                      { value: "SALES", label: "Sales", desc: "Drive purchases on your site", icon: "M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" },
+                    ].map(o => (
+                      <button
+                        key={o.value}
+                        onClick={() => setObjective(o.value)}
+                        className={`p-4 rounded-xl border text-left transition flex items-start gap-3 ${
+                          objective === o.value
+                            ? "bg-blue-500/10 border-blue-500/30"
+                            : "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10"
+                        }`}
+                      >
+                        <div className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 ${
+                          objective === o.value ? "bg-blue-500/20" : "bg-white/5"
+                        }`}>
+                          <svg className={`h-4.5 w-4.5 ${objective === o.value ? "text-blue-400" : "text-white/30"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d={o.icon} />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className={`text-sm font-medium ${objective === o.value ? "text-white" : "text-white/60"}`}>{o.label}</p>
+                          <p className="text-xs text-white/30 mt-0.5">{o.desc}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1.5">Facebook Page</label>
+                    <select value={pageId} onChange={e => setPageId(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition">
+                      <option value="">Select a page...</option>
+                      {pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1.5">Meta Pixel</label>
+                    <select value={pixelId} onChange={e => setPixelId(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition">
+                      <option value="">Select a pixel...</option>
+                      {pixels.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1.5">Landing Page URL</label>
+                    <input type="url" value={landingPage} onChange={e => setLandingPage(e.target.value)} placeholder="https://yoursite.com/offer" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1.5">Conversion Event</label>
+                    <select value={conversionEvent} onChange={e => setConversionEvent(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition">
+                      <option value="Lead">Lead</option>
+                      <option value="Purchase">Purchase</option>
+                      <option value="AddToCart">Add to Cart</option>
+                      <option value="InitiateCheckout">Initiate Checkout</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button onClick={() => setConfigStep(2)} className="btn-glow flex items-center gap-1.5">
+                  Next: AI Strategy
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: AI Strategy */}
+          {configStep === 2 && (
+            <div className="space-y-6">
+              <div className="glass-card p-6 space-y-5">
+                <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider flex items-center gap-2">
+                  <svg className="h-4 w-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                  </svg>
+                  AI Strategy
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className="text-xs text-white/40 block mb-2">Audience Strategy</label>
+                    <div className="space-y-2">
+                      {[
+                        { value: "conservative", label: "Conservative", desc: "Use proven targeting from winning ads", icon: "M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" },
+                        { value: "experimental", label: "Experimental", desc: "Test new audiences with AI suggestions", icon: "M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" },
+                      ].map(s => (
+                        <button
+                          key={s.value}
+                          onClick={() => setAudienceStrategy(s.value)}
+                          className={`w-full p-3.5 rounded-xl border text-left transition flex items-start gap-3 ${
+                            audienceStrategy === s.value
+                              ? "bg-purple-500/10 border-purple-500/30"
+                              : "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10"
+                          }`}
+                        >
+                          <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                            audienceStrategy === s.value ? "bg-purple-500/20" : "bg-white/5"
+                          }`}>
+                            <svg className={`h-4 w-4 ${audienceStrategy === s.value ? "text-purple-400" : "text-white/30"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d={s.icon} />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className={`text-sm font-medium ${audienceStrategy === s.value ? "text-white" : "text-white/60"}`}>{s.label}</p>
+                            <p className="text-xs text-white/30 mt-0.5">{s.desc}</p>
+                          </div>
+                        </button>
+                      ))}
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/40 block mb-2">Creative Strategy</label>
+                    <div className="space-y-2">
+                      {[
+                        { value: "proven_winners", label: "Proven Winners", desc: "Reuse copy from your best-performing ads", icon: "M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602" },
+                        { value: "ai_generated", label: "All New", desc: "Generate entirely new ad copy with AI", icon: "M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846" },
+                      ].map(s => (
+                        <button
+                          key={s.value}
+                          onClick={() => setCreativeStrategy(s.value)}
+                          className={`w-full p-3.5 rounded-xl border text-left transition flex items-start gap-3 ${
+                            creativeStrategy === s.value
+                              ? "bg-purple-500/10 border-purple-500/30"
+                              : "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10"
+                          }`}
+                        >
+                          <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                            creativeStrategy === s.value ? "bg-purple-500/20" : "bg-white/5"
+                          }`}>
+                            <svg className={`h-4 w-4 ${creativeStrategy === s.value ? "text-purple-400" : "text-white/30"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d={s.icon} />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className={`text-sm font-medium ${creativeStrategy === s.value ? "text-white" : "text-white/60"}`}>{s.label}</p>
+                            <p className="text-xs text-white/30 mt-0.5">{s.desc}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-white/40 block mb-1.5">Historical Data Range</label>
+                  <select value={historicalRange} onChange={e => setHistoricalRange(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition md:w-64">
+                    <option value="30">Last 30 days</option>
+                    <option value="60">Last 60 days</option>
+                    <option value="90">Last 90 days</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs text-white/40 block mb-1.5">Custom AI Instructions (optional)</label>
+                  <textarea
+                    value={instructions}
+                    onChange={e => setInstructions(e.target.value)}
+                    placeholder="e.g., Focus on women aged 25-45 interested in skincare. Use a friendly, conversational tone."
+                    rows={3}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 resize-none transition"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-between">
+                <button onClick={() => setConfigStep(1)} className="text-sm text-white/40 hover:text-white transition flex items-center gap-1">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
+                  Back
+                </button>
+                <button onClick={() => setConfigStep(3)} className="btn-glow flex items-center gap-1.5">
+                  Next: Review &amp; Generate
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Review & Generate */}
+          {configStep === 3 && (
+            <div className="space-y-6">
+              <div className="glass-card p-6 space-y-5">
+                <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider flex items-center gap-2">
+                  <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Review Configuration
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { label: "Campaign Name", value: name || "Not set", highlight: !name },
+                    { label: "Daily Budget", value: `$${dailyBudget}`, highlight: false },
+                    { label: "Objective", value: objective, highlight: false },
+                    { label: "Conversion Event", value: conversionEvent, highlight: false },
+                    { label: "Audience Strategy", value: audienceStrategy === "conservative" ? "Conservative" : "Experimental", highlight: false },
+                    { label: "Creative Strategy", value: creativeStrategy === "proven_winners" ? "Proven Winners" : "All New", highlight: false },
+                    { label: "Historical Range", value: `Last ${historicalRange} days`, highlight: false },
+                    { label: "Landing Page", value: landingPage || "Not set", highlight: false },
+                  ].map(item => (
+                    <div key={item.label} className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
+                      <span className="text-xs text-white/40">{item.label}</span>
+                      <span className={`text-sm font-medium ${item.highlight ? "text-red-400" : "text-white"}`}>{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {instructions && (
+                  <div className="bg-white/[0.02] rounded-xl p-4 border border-white/5">
+                    <p className="text-[10px] text-white/30 uppercase tracking-wider font-semibold mb-1.5">Custom Instructions</p>
+                    <p className="text-sm text-white/60">{instructions}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* What AI will do */}
+              <div className="glass-card p-5 space-y-3">
+                <p className="text-xs text-white/40 font-semibold uppercase tracking-wider">What AI will do</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { icon: "M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75z", label: "Analyze your historical ad data" },
+                    { icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07", label: "Build optimized audience targeting" },
+                    { icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227", label: "Generate compelling ad copy" },
+                  ].map(item => (
+                    <div key={item.label} className="flex items-start gap-2.5 p-2">
+                      <svg className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
+                      </svg>
+                      <p className="text-xs text-white/50">{item.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button onClick={() => setConfigStep(2)} className="text-sm text-white/40 hover:text-white transition flex items-center gap-1">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
+                  Back
+                </button>
+                <div className="flex items-center gap-4">
+                  <p className="text-xs text-white/30">Costs 20 credits</p>
+                  <button
+                    onClick={handleCreate}
+                    disabled={creating || !name.trim()}
+                    className="btn-glow disabled:opacity-50 flex items-center gap-2 px-6"
+                  >
+                    {creating ? (
+                      <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                      </svg>
+                    )}
+                    {creating ? "Generating..." : "Generate Campaign"}
                   </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs text-white/40 block mb-1">Facebook Page</label>
-                <select value={pageId} onChange={e => setPageId(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
-                  <option value="">Select a page...</option>
-                  {pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-white/40 block mb-1">Meta Pixel</label>
-                <select value={pixelId} onChange={e => setPixelId(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
-                  <option value="">Select a pixel...</option>
-                  {pixels.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs text-white/40 block mb-1">Landing Page URL</label>
-                <input type="url" value={landingPage} onChange={e => setLandingPage(e.target.value)} placeholder="https://yoursite.com/offer" className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50" />
-              </div>
-              <div>
-                <label className="text-xs text-white/40 block mb-1">Conversion Event</label>
-                <select value={conversionEvent} onChange={e => setConversionEvent(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
-                  <option value="Lead">Lead</option>
-                  <option value="Purchase">Purchase</option>
-                  <option value="AddToCart">Add to Cart</option>
-                  <option value="InitiateCheckout">Initiate Checkout</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* AI Strategy */}
-          <div className="glass-card p-5 space-y-4">
-            <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider">AI Strategy</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs text-white/40 block mb-2">Audience Strategy</label>
-                <div className="space-y-2">
-                  {[
-                    { value: "conservative", label: "Conservative", desc: "Use proven targeting from winning ads" },
-                    { value: "experimental", label: "Experimental", desc: "Test new audiences with AI suggestions" },
-                  ].map(s => (
-                    <button
-                      key={s.value}
-                      onClick={() => setAudienceStrategy(s.value)}
-                      className={`w-full p-3 rounded-lg border text-left transition ${
-                        audienceStrategy === s.value
-                          ? "bg-purple-500/10 border-purple-500/30 text-white"
-                          : "bg-white/[0.02] border-white/10 text-white/60 hover:bg-white/[0.05]"
-                      }`}
-                    >
-                      <p className="text-sm font-medium">{s.label}</p>
-                      <p className="text-xs text-white/40 mt-0.5">{s.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-white/40 block mb-2">Creative Strategy</label>
-                <div className="space-y-2">
-                  {[
-                    { value: "proven_winners", label: "Proven Winners", desc: "Reuse copy from your best-performing ads" },
-                    { value: "ai_generated", label: "All New", desc: "Generate entirely new ad copy with AI" },
-                  ].map(s => (
-                    <button
-                      key={s.value}
-                      onClick={() => setCreativeStrategy(s.value)}
-                      className={`w-full p-3 rounded-lg border text-left transition ${
-                        creativeStrategy === s.value
-                          ? "bg-purple-500/10 border-purple-500/30 text-white"
-                          : "bg-white/[0.02] border-white/10 text-white/60 hover:bg-white/[0.05]"
-                      }`}
-                    >
-                      <p className="text-sm font-medium">{s.label}</p>
-                      <p className="text-xs text-white/40 mt-0.5">{s.desc}</p>
-                    </button>
-                  ))}
                 </div>
               </div>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs text-white/40 block mb-1">Historical Data Range</label>
-                <select value={historicalRange} onChange={e => setHistoricalRange(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
-                  <option value="30">Last 30 days</option>
-                  <option value="60">Last 60 days</option>
-                  <option value="90">Last 90 days</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs text-white/40 block mb-1">Custom AI Instructions (optional)</label>
-              <textarea
-                value={instructions}
-                onChange={e => setInstructions(e.target.value)}
-                placeholder="e.g., Focus on women aged 25-45 interested in skincare. Use a friendly, conversational tone."
-                rows={3}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50 resize-none"
-              />
-            </div>
-          </div>
-
-          {/* Generate Button */}
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-white/30">Costs 20 credits per generation</p>
-            <button
-              onClick={handleCreate}
-              disabled={creating || !name.trim()}
-              className="btn-glow disabled:opacity-50 flex items-center gap-2 px-6"
-            >
-              {creating ? (
-                <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                </svg>
-              )}
-              {creating ? "Generating..." : "Generate Campaign"}
-            </button>
-          </div>
+          )}
         </div>
       )}
     </div>
@@ -1117,21 +1421,26 @@ function AdCard({
   return (
     <div className="glass-card overflow-hidden">
       {/* Ad header */}
-      <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="px-5 pt-4 pb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="h-7 w-7 rounded-lg bg-white/5 flex items-center justify-center">
+            <svg className="h-3.5 w-3.5 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+            </svg>
+          </div>
           <p className="text-white text-sm font-medium">{ad.name}</p>
           {ad.creative_source === "proven_winners" && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">Winner</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/15 font-medium">Winner</span>
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/30">{isEditing ? ctaType : ad.cta_type}</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-white/30 border border-white/5">{isEditing ? ctaType.replace(/_/g, " ") : ad.cta_type.replace(/_/g, " ")}</span>
           {canEdit && (
             <>
               <button
                 onClick={() => onRegenerate(ad.id)}
                 disabled={regenerating}
-                className="text-white/20 hover:text-blue-400 transition p-1"
+                className="text-white/20 hover:text-blue-400 transition p-1.5 rounded-lg hover:bg-blue-500/5"
                 title="Regenerate this ad copy with AI"
               >
                 {regenerating ? (
@@ -1142,7 +1451,7 @@ function AdCard({
                   </svg>
                 )}
               </button>
-              <button onClick={onEdit} className="text-white/20 hover:text-white transition p-1" title="Edit">
+              <button onClick={onEdit} className="text-white/20 hover:text-white transition p-1.5 rounded-lg hover:bg-white/5" title="Edit">
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
                 </svg>
@@ -1153,7 +1462,7 @@ function AdCard({
       </div>
 
       {isEditing ? (
-        <div className="px-4 pb-4 space-y-3">
+        <div className="px-5 pb-5 space-y-3">
           <div>
             <label className="text-[10px] text-white/30 block mb-0.5">Headline</label>
             <input
@@ -1161,7 +1470,7 @@ function AdCard({
               value={headline}
               onChange={e => setHeadline(e.target.value)}
               maxLength={40}
-              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50"
             />
             <span className="text-[9px] text-white/20">{headline.length}/40</span>
           </div>
@@ -1172,7 +1481,7 @@ function AdCard({
               onChange={e => setPrimaryText(e.target.value)}
               maxLength={125}
               rows={2}
-              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50 resize-none"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50 resize-none"
             />
             <span className="text-[9px] text-white/20">{primaryText.length}/125</span>
           </div>
@@ -1183,20 +1492,20 @@ function AdCard({
               value={description}
               onChange={e => setDescription(e.target.value)}
               maxLength={30}
-              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50"
             />
           </div>
           <div>
             <label className="text-[10px] text-white/30 block mb-0.5">CTA</label>
-            <select value={ctaType} onChange={e => setCtaType(e.target.value)} className="bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50">
+            <select value={ctaType} onChange={e => setCtaType(e.target.value)} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
               {CTA_OPTIONS.map(c => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
             </select>
           </div>
-          <div className="flex gap-2 justify-end">
-            <button onClick={onEdit} className="text-xs text-white/40 hover:text-white transition px-3 py-1">Cancel</button>
+          <div className="flex gap-2 justify-end pt-1">
+            <button onClick={onEdit} className="text-xs text-white/40 hover:text-white transition px-4 py-1.5 rounded-lg">Cancel</button>
             {hasChanges && (
-              <button onClick={handleSaveAll} disabled={saving} className="text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition px-3 py-1 rounded disabled:opacity-50">
-                {saving ? "Saving..." : "Save"}
+              <button onClick={handleSaveAll} disabled={saving} className="text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition px-4 py-1.5 rounded-lg disabled:opacity-50 font-medium">
+                {saving ? "Saving..." : "Save Changes"}
               </button>
             )}
           </div>
@@ -1204,24 +1513,24 @@ function AdCard({
       ) : (
         <div className="flex flex-col md:flex-row">
           {/* Ad copy */}
-          <div className="flex-1 px-4 pb-4 space-y-2">
-            <p className="text-white/70 text-sm font-semibold">{ad.headline}</p>
-            <p className="text-white/50 text-sm">{ad.primary_text}</p>
+          <div className="flex-1 px-5 pb-4 space-y-2">
+            <p className="text-white font-semibold text-sm">{ad.headline}</p>
+            <p className="text-white/50 text-sm leading-relaxed">{ad.primary_text}</p>
             {ad.description && <p className="text-white/30 text-xs">{ad.description}</p>}
           </div>
           {/* Facebook ad preview mockup */}
           <div className="md:w-56 shrink-0 p-3">
-            <div className="border border-white/5 rounded-lg overflow-hidden bg-white/[0.02]">
+            <div className="border border-white/5 rounded-xl overflow-hidden bg-white/[0.02]">
               <div className="h-20 bg-gradient-to-br from-blue-500/10 to-purple-500/10 flex items-center justify-center">
                 <svg className="h-6 w-6 text-white/10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.41a2.25 2.25 0 013.182 0l2.909 2.91M3.75 21h16.5" />
                 </svg>
               </div>
-              <div className="p-2.5 space-y-1">
+              <div className="p-3 space-y-1.5">
                 <p className="text-[10px] text-white/70 font-semibold truncate">{ad.headline}</p>
-                <p className="text-[9px] text-white/40 line-clamp-2">{ad.primary_text}</p>
+                <p className="text-[9px] text-white/40 line-clamp-2 leading-relaxed">{ad.primary_text}</p>
                 <div className="pt-1">
-                  <span className="text-[8px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium">
+                  <span className="text-[8px] px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-medium">
                     {(ad.cta_type || "LEARN_MORE").replace(/_/g, " ")}
                   </span>
                 </div>

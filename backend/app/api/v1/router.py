@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, jobs, credits, payments, admin, export, platforms, uploads, telegram, tenant_settings, sse, tenant_dashboard, fan_analysis, business_profile, trends, fb_ads
+from app.api.v1 import auth, jobs, credits, payments, admin, export, platforms, uploads, telegram, tenant_settings, sse, tenant_dashboard, fan_analysis, business_profile, trends, fb_ads, traffic_bot, admin_traffic_bot
 
 api_router = APIRouter()
 
@@ -19,3 +19,5 @@ api_router.include_router(fan_analysis.router, prefix="/fan-analysis", tags=["Fa
 api_router.include_router(business_profile.router, prefix="/business-profile", tags=["AI Business Profile"])
 api_router.include_router(trends.router, prefix="/trends", tags=["Trends"])
 api_router.include_router(fb_ads.router, prefix="/fb-ads", tags=["Facebook Ads"])
+api_router.include_router(traffic_bot.router, prefix="/traffic-bot", tags=["Traffic Bot"])
+api_router.include_router(admin_traffic_bot.router, prefix="/admin/traffic-bot", tags=["Admin Traffic Bot"])

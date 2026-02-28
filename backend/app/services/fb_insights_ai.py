@@ -248,46 +248,201 @@ Only return the JSON array, nothing else."""
     return result
 
 
+def _percentile_ranks(values: list[float], higher_is_better: bool = True) -> list[float]:
+    """Return 0-1 percentile rank for each value in the list."""
+    n = len(values)
+    if n <= 1:
+        return [0.5] * n
+    indexed = sorted(enumerate(values), key=lambda x: x[1])
+    ranks = [0.0] * n
+    for rank_pos, (orig_idx, _) in enumerate(indexed):
+        ranks[orig_idx] = rank_pos / (n - 1)
+    if not higher_is_better:
+        ranks = [1.0 - r for r in ranks]
+    return ranks
+
+
 def _fallback_score(g: dict) -> float:
-    """Simple metric-based score when AI fails."""
-    if g["spend"] == 0:
-        return 0
-    score = 0
-    if g["ctr"] > 2:
-        score += 3
-    elif g["ctr"] > 1:
-        score += 2
-    elif g["ctr"] > 0.5:
-        score += 1
-    if g["results"] > 0:
-        score += 3
-    if g["roas"] > 2:
-        score += 4
-    elif g["roas"] > 1:
-        score += 2
-    return min(score, 10)
+    """Single-group metric-based score (used when AI fails for one item)."""
+    score = 0.0
+    has_data = False
+
+    # Impressions: any visibility is worth something
+    imp = g.get("impressions", 0) or 0
+    if imp > 0:
+        has_data = True
+        if imp >= 10000:
+            score += 1.5
+        elif imp >= 1000:
+            score += 1.0
+        elif imp > 0:
+            score += 0.5
+
+    # Clicks
+    clicks = g.get("clicks", 0) or 0
+    if clicks > 0:
+        has_data = True
+        score += min(clicks / 100, 1.5)
+
+    # CTR
+    ctr = g.get("ctr", 0) or 0
+    if ctr > 2:
+        score += 2.0
+    elif ctr > 1:
+        score += 1.5
+    elif ctr > 0.5:
+        score += 1.0
+    elif ctr > 0:
+        score += 0.5
+
+    # Results (conversions)
+    results = g.get("results", 0) or 0
+    if results > 0:
+        has_data = True
+        score += min(results / 10, 2.0)
+
+    # ROAS
+    roas = g.get("roas", 0) or 0
+    if roas > 3:
+        score += 2.5
+    elif roas > 2:
+        score += 2.0
+    elif roas > 1:
+        score += 1.5
+    elif roas > 0:
+        score += 0.5
+
+    # Ad count (more tested = more confidence)
+    ad_count = g.get("ad_count", 0) or 0
+    if ad_count >= 5:
+        score += 0.5
+
+    if not has_data:
+        return 1.0  # base score for existing components with no data yet
+
+    return round(min(score, 10.0), 1)
 
 
 def _fallback_score_all(groups: list[dict]) -> list[dict]:
-    """Score all groups using metric-based fallback when OpenAI is unavailable."""
-    return [
-        {
+    """Score all groups using percentile-based ranking across available metrics.
+
+    Uses relative comparison so components are ranked against each other,
+    producing differentiated scores even when absolute values are small.
+    Weights: CTR 25%, ROAS 20%, Results 20%, CPR 15% (lower better),
+             Impressions 10%, Clicks 10%.
+    """
+    n = len(groups)
+    if n == 0:
+        return []
+
+    # If only 1 group, use absolute scoring
+    if n == 1:
+        g = groups[0]
+        return [{
             "name": g["name"],
             "score": round(float(_fallback_score(g)), 1),
-            "metrics": {
-                "spend": g["spend"],
-                "impressions": g["impressions"],
-                "clicks": g["clicks"],
-                "ctr": g["ctr"],
-                "results": g["results"],
-                "cpr": g["cpr"],
-                "purchase_value": g["purchase_value"],
-                "roas": g["roas"],
-                "ad_count": g["ad_count"],
-            },
-        }
-        for g in groups
-    ]
+            "metrics": _build_metrics(g),
+        }]
+
+    # Check if ALL metrics are zero (no data synced yet)
+    total_impressions = sum(g.get("impressions", 0) or 0 for g in groups)
+    total_clicks = sum(g.get("clicks", 0) or 0 for g in groups)
+    total_spend = sum(g.get("spend", 0) or 0 for g in groups)
+    total_results = sum(g.get("results", 0) or 0 for g in groups)
+
+    if total_impressions == 0 and total_clicks == 0 and total_spend == 0 and total_results == 0:
+        # No performance data at all — score by ad count (more ads = more tested)
+        ad_counts = [g.get("ad_count", 0) or 0 for g in groups]
+        ad_pcts = _percentile_ranks(ad_counts, higher_is_better=True)
+        return [{
+            "name": g["name"],
+            "score": round(1.0 + ad_pcts[i] * 4.0, 1),  # 1.0 to 5.0 range
+            "metrics": _build_metrics(g),
+        } for i, g in enumerate(groups)]
+
+    # Build metric arrays
+    impressions = [float(g.get("impressions", 0) or 0) for g in groups]
+    clicks = [float(g.get("clicks", 0) or 0) for g in groups]
+    ctrs = [float(g.get("ctr", 0) or 0) for g in groups]
+    results_list = [float(g.get("results", 0) or 0) for g in groups]
+    cprs = [float(g.get("cpr", 0) or 0) for g in groups]
+    roases = [float(g.get("roas", 0) or 0) for g in groups]
+
+    # Calculate percentile ranks
+    imp_pct = _percentile_ranks(impressions, higher_is_better=True)
+    click_pct = _percentile_ranks(clicks, higher_is_better=True)
+    ctr_pct = _percentile_ranks(ctrs, higher_is_better=True)
+    results_pct = _percentile_ranks(results_list, higher_is_better=True)
+    cpr_pct = _percentile_ranks(cprs, higher_is_better=False)  # lower CPR is better
+    roas_pct = _percentile_ranks(roases, higher_is_better=True)
+
+    # Determine active weights based on which metrics have variance
+    weights = {}
+    if max(ctrs) > 0:
+        weights["ctr"] = 0.25
+    if max(roases) > 0:
+        weights["roas"] = 0.20
+    if max(results_list) > 0:
+        weights["results"] = 0.20
+    if max(cprs) > 0:
+        weights["cpr"] = 0.15
+    if max(impressions) > 0:
+        weights["impressions"] = 0.10
+    if max(clicks) > 0:
+        weights["clicks"] = 0.10
+
+    # If no weights active, fall back to individual scoring
+    if not weights:
+        return [{
+            "name": g["name"],
+            "score": round(float(_fallback_score(g)), 1),
+            "metrics": _build_metrics(g),
+        } for g in groups]
+
+    # Normalize weights to sum to 1.0
+    total_w = sum(weights.values())
+    weights = {k: v / total_w for k, v in weights.items()}
+
+    result = []
+    for i, g in enumerate(groups):
+        weighted = 0.0
+        if "ctr" in weights:
+            weighted += weights["ctr"] * ctr_pct[i]
+        if "roas" in weights:
+            weighted += weights["roas"] * roas_pct[i]
+        if "results" in weights:
+            weighted += weights["results"] * results_pct[i]
+        if "cpr" in weights:
+            weighted += weights["cpr"] * cpr_pct[i]
+        if "impressions" in weights:
+            weighted += weights["impressions"] * imp_pct[i]
+        if "clicks" in weights:
+            weighted += weights["clicks"] * click_pct[i]
+
+        # Scale 0-1 percentile to 1-10 score (minimum 1.0)
+        final_score = round(1.0 + weighted * 9.0, 1)
+        result.append({
+            "name": g["name"],
+            "score": final_score,
+            "metrics": _build_metrics(g),
+        })
+
+    return result
+
+
+def _build_metrics(g: dict) -> dict:
+    """Build the metrics dict for a scored group."""
+    return {
+        "spend": g["spend"],
+        "impressions": g["impressions"],
+        "clicks": g["clicks"],
+        "ctr": g["ctr"],
+        "results": g["results"],
+        "cpr": g["cpr"],
+        "purchase_value": g["purchase_value"],
+        "roas": g["roas"],
+        "ad_count": g["ad_count"],
+    }
 
 
 # ---------------------------------------------------------------------------

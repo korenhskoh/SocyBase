@@ -557,3 +557,64 @@ export interface FBWinningAdItem {
   ctr: number;
   detected_at: string;
 }
+
+// Traffic Bot types
+export interface TrafficBotService {
+  id: string;
+  external_service_id: number;
+  name: string;
+  category: string;
+  type: string;
+  rate: number;
+  min_quantity: number;
+  max_quantity: number;
+  fee_pct: number;
+  is_enabled: boolean;
+  sort_order: number;
+}
+
+export interface TrafficBotOrder {
+  id: string;
+  service_id: string;
+  service_name: string | null;
+  external_order_id: number | null;
+  link: string;
+  quantity: number;
+  base_cost: number;
+  fee_amount: number;
+  total_cost: number;
+  status: string;
+  start_count: number | null;
+  remains: number | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrafficBotOrderList {
+  items: TrafficBotOrder[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface TrafficBotWallet {
+  balance: number;
+  updated_at: string | null;
+}
+
+export interface TrafficBotTransaction {
+  id: string;
+  type: string;
+  amount: number;
+  balance_after: number;
+  description: string | null;
+  reference_id: string | null;
+  created_at: string;
+}
+
+export interface TrafficBotPriceCalc {
+  base_cost: number;
+  fee_amount: number;
+  total_cost: number;
+}

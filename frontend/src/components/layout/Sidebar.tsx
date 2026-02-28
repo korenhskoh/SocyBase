@@ -30,8 +30,16 @@ const fbAdsNavigation = [
   { nameKey: "nav.fb_ai_launch", href: "/fb-ads/launch", icon: "M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" },
 ];
 
+const trafficBotNavigation = [
+  { nameKey: "nav.tb_services", href: "/traffic-bot/services", icon: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" },
+  { nameKey: "nav.tb_new_order", href: "/traffic-bot/order", icon: "M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" },
+  { nameKey: "nav.tb_orders", href: "/traffic-bot/orders", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" },
+  { nameKey: "nav.tb_wallet", href: "/traffic-bot/wallet", icon: "M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 013 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 013 6v3" },
+];
+
 const adminNavigation = [
   { nameKey: "nav.admin", href: "/admin", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
+  { nameKey: "nav.tb_admin", href: "/admin/traffic-bot", icon: "M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" },
 ];
 
 export function Sidebar() {
@@ -93,6 +101,26 @@ export function Sidebar() {
           <p className="text-xs font-semibold text-white/30 uppercase tracking-wider">{t("nav.fb_ads_section")}</p>
         </div>
         {fbAdsNavigation.map((item) => {
+          const isActive = pathname === item.href || pathname.startsWith(item.href);
+          return (
+            <Link
+              key={item.nameKey}
+              href={item.href}
+              className={cn("sidebar-link", isActive && "active")}
+            >
+              <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
+              </svg>
+              {t(item.nameKey)}
+            </Link>
+          );
+        })}
+
+        {/* Traffic Bot section */}
+        <div className="pt-4 pb-2 px-3">
+          <p className="text-xs font-semibold text-white/30 uppercase tracking-wider">{t("nav.tb_section")}</p>
+        </div>
+        {trafficBotNavigation.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href);
           return (
             <Link
