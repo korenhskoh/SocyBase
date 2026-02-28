@@ -335,8 +335,13 @@ export const fbAdsApi = {
   listPixels: () => api.get("/fb-ads/pixels"),
   selectPixel: (id: string) => api.post("/fb-ads/pixels/select", { id }),
   // Performance (Phase 2)
-  listCampaigns: (dateFrom?: string, dateTo?: string) =>
-    api.get("/fb-ads/campaigns", { params: { date_from: dateFrom, date_to: dateTo } }),
+  listCampaigns: (params: {
+    date_from?: string; date_to?: string;
+    page?: number; per_page?: number;
+    sort_by?: string; sort_order?: string;
+    status_filter?: string;
+  } = {}) =>
+    api.get("/fb-ads/campaigns", { params }),
   listCampaignAdSets: (campaignId: string, dateFrom?: string, dateTo?: string) =>
     api.get(`/fb-ads/campaigns/${campaignId}/adsets`, { params: { date_from: dateFrom, date_to: dateTo } }),
   listAdSetAds: (adsetId: string, dateFrom?: string, dateTo?: string) =>

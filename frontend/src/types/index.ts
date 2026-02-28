@@ -412,6 +412,14 @@ export interface FBCampaignItem {
   synced_at: string | null;
 }
 
+export interface PaginatedCampaigns {
+  items: FBCampaignItem[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
 export interface FBAdSetItem {
   id: string;
   adset_id: string;

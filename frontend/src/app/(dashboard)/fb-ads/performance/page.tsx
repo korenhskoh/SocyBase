@@ -2,10 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { fbAdsApi } from "@/lib/api-client";
-import type { FBCampaignItem, FBAdSetItem, FBAdItem, FBInsightSummary, FBConnectionStatus } from "@/types";
+import type { FBCampaignItem, FBAdSetItem, FBAdItem, FBInsightSummary, FBConnectionStatus, PaginatedCampaigns } from "@/types";
 
 type Tab = "campaigns" | "adsets" | "ads";
 type DateRange = "7d" | "14d" | "28d" | "90d";
+type SortBy = "spend" | "clicks" | "results" | "roas" | "ctr" | "name";
+type StatusFilter = "ALL" | "ACTIVE" | "PAUSED";
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -35,7 +37,7 @@ function getDateRange(range: DateRange): [string, string] {
 
 export default function FBPerformancePage() {
   const [tab, setTab] = useState<Tab>("campaigns");
-  const [dateRange, setDateRange] = useState<DateRange>("28d");
+  const [dateRange, setDateRange] = useState<DateRange>("90d");
   const [connection, setConnection] = useState<FBConnectionStatus | null>(null);
   const [summary, setSummary] = useState<FBInsightSummary | null>(null);
   const [campaigns, setCampaigns] = useState<FBCampaignItem[]>([]);
@@ -45,6 +47,15 @@ export default function FBPerformancePage() {
   const [syncing, setSyncing] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState<FBCampaignItem | null>(null);
   const [selectedAdSet, setSelectedAdSet] = useState<FBAdSetItem | null>(null);
+
+  // Pagination & sort state
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
+  const [totalCampaigns, setTotalCampaigns] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [sortBy, setSortBy] = useState<SortBy>("spend");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
   const [df, dt] = getDateRange(dateRange);
 
@@ -56,18 +67,29 @@ export default function FBPerformancePage() {
 
       const [summRes, campRes] = await Promise.all([
         fbAdsApi.getInsightsSummary(df, dt),
-        fbAdsApi.listCampaigns(df, dt),
+        fbAdsApi.listCampaigns({
+          date_from: df, date_to: dt,
+          page, per_page: perPage,
+          sort_by: sortBy, sort_order: sortOrder,
+          status_filter: statusFilter,
+        }),
       ]);
       setSummary(summRes.data);
-      setCampaigns(campRes.data);
+      const data = campRes.data as PaginatedCampaigns;
+      setCampaigns(data.items);
+      setTotalCampaigns(data.total);
+      setTotalPages(data.total_pages);
     } catch {
       // not connected or error
     } finally {
       setLoading(false);
     }
-  }, [df, dt]);
+  }, [df, dt, page, perPage, sortBy, sortOrder, statusFilter]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [dateRange, sortBy, sortOrder, statusFilter, perPage]);
 
   const loadAdSets = async (campaign: FBCampaignItem) => {
     setSelectedCampaign(campaign);
@@ -95,8 +117,6 @@ export default function FBPerformancePage() {
 
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncStats, setSyncStats] = useState<{campaigns: number; adsets: number; ads: number; insights: number} | null>(null);
-  const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
-  const [debugging, setDebugging] = useState(false);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -104,12 +124,16 @@ export default function FBPerformancePage() {
     setSyncStats(null);
     try {
       const res = await fbAdsApi.triggerSync();
-      const stats = res.data?.stats;
+      const data = res.data as { detail?: string; stats?: typeof syncStats };
+      const stats = data?.stats;
       if (stats) {
         setSyncStats(stats);
         if (stats.campaigns === 0) {
           setSyncError("No campaigns found in this ad account. Make sure you have campaigns in Meta Ads Manager.");
         }
+      }
+      if (data?.detail && data.detail !== "Sync complete.") {
+        setSyncError(data.detail);
       }
       await loadData();
     } catch (err: unknown) {
@@ -143,6 +167,20 @@ export default function FBPerformancePage() {
     }
   };
 
+  const handleSort = (col: SortBy) => {
+    if (sortBy === col) {
+      setSortOrder(prev => prev === "desc" ? "asc" : "desc");
+    } else {
+      setSortBy(col);
+      setSortOrder("desc");
+    }
+  };
+
+  const sortIcon = (col: SortBy) => {
+    if (sortBy !== col) return null;
+    return sortOrder === "desc" ? " \u25BE" : " \u25B4";
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -168,6 +206,14 @@ export default function FBPerformancePage() {
     { label: "90 Days", value: "90d" },
   ];
 
+  const statusFilters: { label: string; value: StatusFilter }[] = [
+    { label: "All", value: "ALL" },
+    { label: "Active", value: "ACTIVE" },
+    { label: "Paused", value: "PAUSED" },
+  ];
+
+  const perPageOptions = [10, 25, 50, 100];
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -178,6 +224,7 @@ export default function FBPerformancePage() {
             {connection.last_synced_at
               ? `Last synced ${new Date(connection.last_synced_at).toLocaleString()}`
               : "Not synced yet"}
+            {totalCampaigns > 0 && ` \u00B7 ${totalCampaigns} campaigns`}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -211,23 +258,6 @@ export default function FBPerformancePage() {
             )}
             {syncing ? "Syncing..." : "Sync Now"}
           </button>
-          <button
-            onClick={async () => {
-              setDebugging(true);
-              try {
-                const res = await fbAdsApi.debugToken();
-                setDebugInfo(res.data);
-              } catch (err: unknown) {
-                setDebugInfo({ error: (err as { message?: string })?.message || "Failed" });
-              } finally {
-                setDebugging(false);
-              }
-            }}
-            disabled={debugging}
-            className="text-xs px-3 py-2 rounded-lg font-medium bg-white/5 border border-white/10 text-white/40 hover:text-white/60 hover:bg-white/10 transition disabled:opacity-50"
-          >
-            {debugging ? "..." : "Debug"}
-          </button>
         </div>
       </div>
 
@@ -249,19 +279,6 @@ export default function FBPerformancePage() {
         </div>
       )}
 
-      {/* Debug info */}
-      {debugInfo && (
-        <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wider">Token Diagnostics</h3>
-            <button onClick={() => setDebugInfo(null)} className="text-white/30 hover:text-white/60 text-xs">Close</button>
-          </div>
-          <pre className="text-xs text-white/50 whitespace-pre-wrap overflow-auto max-h-80 font-mono">
-            {JSON.stringify(debugInfo, null, 2)}
-          </pre>
-        </div>
-      )}
-
       {/* Summary Cards */}
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -280,41 +297,64 @@ export default function FBPerformancePage() {
         </div>
       )}
 
-      {/* Tabs + Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm">
-        <button
-          onClick={() => { setTab("campaigns"); setSelectedCampaign(null); setSelectedAdSet(null); }}
-          className={`px-3 py-1.5 rounded-lg transition ${
-            tab === "campaigns" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"
-          }`}
-        >
-          Campaigns
-        </button>
-        {selectedCampaign && (
-          <>
-            <svg className="h-4 w-4 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-            </svg>
-            <button
-              onClick={() => { setTab("adsets"); setSelectedAdSet(null); }}
-              className={`px-3 py-1.5 rounded-lg transition truncate max-w-[200px] ${
-                tab === "adsets" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"
-              }`}
-              title={selectedCampaign.name}
-            >
-              {selectedCampaign.name}
-            </button>
-          </>
-        )}
-        {selectedAdSet && (
-          <>
-            <svg className="h-4 w-4 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-            </svg>
-            <span className="px-3 py-1.5 bg-white/10 text-white rounded-lg truncate max-w-[200px]" title={selectedAdSet.name}>
-              {selectedAdSet.name}
-            </span>
-          </>
+      {/* Tabs + Breadcrumb + Filters */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm">
+          <button
+            onClick={() => { setTab("campaigns"); setSelectedCampaign(null); setSelectedAdSet(null); }}
+            className={`px-3 py-1.5 rounded-lg transition ${
+              tab === "campaigns" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"
+            }`}
+          >
+            Campaigns
+          </button>
+          {selectedCampaign && (
+            <>
+              <svg className="h-4 w-4 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+              <button
+                onClick={() => { setTab("adsets"); setSelectedAdSet(null); }}
+                className={`px-3 py-1.5 rounded-lg transition truncate max-w-[200px] ${
+                  tab === "adsets" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"
+                }`}
+                title={selectedCampaign.name}
+              >
+                {selectedCampaign.name}
+              </button>
+            </>
+          )}
+          {selectedAdSet && (
+            <>
+              <svg className="h-4 w-4 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+              <span className="px-3 py-1.5 bg-white/10 text-white rounded-lg truncate max-w-[200px]" title={selectedAdSet.name}>
+                {selectedAdSet.name}
+              </span>
+            </>
+          )}
+        </div>
+
+        {/* Status filter (only on campaigns tab) */}
+        {tab === "campaigns" && (
+          <div className="flex items-center gap-2">
+            <div className="flex bg-white/[0.03] rounded-lg border border-white/10 p-0.5">
+              {statusFilters.map(f => (
+                <button
+                  key={f.value}
+                  onClick={() => setStatusFilter(f.value)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition ${
+                    statusFilter === f.value
+                      ? "bg-white/10 text-white"
+                      : "text-white/40 hover:text-white/60"
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
@@ -324,15 +364,45 @@ export default function FBPerformancePage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10">
-                <th className="text-left py-3 px-4 text-white/50 font-medium">Name</th>
+                <th
+                  className="text-left py-3 px-4 text-white/50 font-medium cursor-pointer hover:text-white/70 transition select-none"
+                  onClick={() => tab === "campaigns" && handleSort("name")}
+                >
+                  Name{tab === "campaigns" && sortIcon("name")}
+                </th>
                 <th className="text-center py-3 px-2 text-white/50 font-medium w-20">Status</th>
-                <th className="text-right py-3 px-4 text-white/50 font-medium">Spend</th>
-                <th className="text-right py-3 px-4 text-white/50 font-medium">Clicks</th>
-                <th className="text-right py-3 px-4 text-white/50 font-medium">CTR</th>
-                <th className="text-right py-3 px-4 text-white/50 font-medium">Results</th>
+                <th
+                  className="text-right py-3 px-4 text-white/50 font-medium cursor-pointer hover:text-white/70 transition select-none"
+                  onClick={() => tab === "campaigns" && handleSort("spend")}
+                >
+                  Spend{tab === "campaigns" && sortIcon("spend")}
+                </th>
+                <th
+                  className="text-right py-3 px-4 text-white/50 font-medium cursor-pointer hover:text-white/70 transition select-none"
+                  onClick={() => tab === "campaigns" && handleSort("clicks")}
+                >
+                  Clicks{tab === "campaigns" && sortIcon("clicks")}
+                </th>
+                <th
+                  className="text-right py-3 px-4 text-white/50 font-medium cursor-pointer hover:text-white/70 transition select-none"
+                  onClick={() => tab === "campaigns" && handleSort("ctr")}
+                >
+                  CTR{tab === "campaigns" && sortIcon("ctr")}
+                </th>
+                <th
+                  className="text-right py-3 px-4 text-white/50 font-medium cursor-pointer hover:text-white/70 transition select-none"
+                  onClick={() => tab === "campaigns" && handleSort("results")}
+                >
+                  Results{tab === "campaigns" && sortIcon("results")}
+                </th>
                 <th className="text-right py-3 px-4 text-white/50 font-medium">CPR</th>
                 <th className="text-right py-3 px-4 text-white/50 font-medium">Revenue</th>
-                <th className="text-right py-3 px-4 text-white/50 font-medium">ROAS</th>
+                <th
+                  className="text-right py-3 px-4 text-white/50 font-medium cursor-pointer hover:text-white/70 transition select-none"
+                  onClick={() => tab === "campaigns" && handleSort("roas")}
+                >
+                  ROAS{tab === "campaigns" && sortIcon("roas")}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -443,6 +513,82 @@ export default function FBPerformancePage() {
             </div>
           )}
         </div>
+
+        {/* Pagination (only for campaigns tab) */}
+        {tab === "campaigns" && totalPages > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-white/10">
+            <div className="flex items-center gap-3 text-xs text-white/40">
+              <span>
+                Showing {Math.min((page - 1) * perPage + 1, totalCampaigns)}-{Math.min(page * perPage, totalCampaigns)} of {totalCampaigns}
+              </span>
+              <select
+                value={perPage}
+                onChange={(e) => setPerPage(Number(e.target.value))}
+                className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white/60 outline-none"
+              >
+                {perPageOptions.map(n => (
+                  <option key={n} value={n}>{n} / page</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(1)}
+                disabled={page === 1}
+                className="px-2 py-1 rounded text-xs text-white/40 hover:text-white/70 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              >
+                First
+              </button>
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="px-2 py-1 rounded text-xs text-white/40 hover:text-white/70 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              >
+                Prev
+              </button>
+              {/* Page number buttons */}
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum: number;
+                if (totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (page <= 3) {
+                  pageNum = i + 1;
+                } else if (page >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i;
+                } else {
+                  pageNum = page - 2 + i;
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setPage(pageNum)}
+                    className={`w-7 h-7 rounded text-xs transition ${
+                      page === pageNum
+                        ? "bg-white/10 text-white font-medium"
+                        : "text-white/40 hover:text-white/70 hover:bg-white/5"
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="px-2 py-1 rounded text-xs text-white/40 hover:text-white/70 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              >
+                Next
+              </button>
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={page === totalPages}
+                className="px-2 py-1 rounded text-xs text-white/40 hover:text-white/70 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              >
+                Last
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

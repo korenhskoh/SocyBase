@@ -92,6 +92,14 @@ class CampaignResponse(BaseModel):
     synced_at: str | None = None
 
 
+class PaginatedCampaigns(BaseModel):
+    items: list[CampaignResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+
 class AdSetResponse(BaseModel):
     id: str
     adset_id: str
@@ -762,59 +770,74 @@ async def _get_active_connection(db: AsyncSession, tenant_id) -> tuple[FBConnect
 async def list_campaigns(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=5, le=100),
+    sort_by: str = Query("spend", regex="^(spend|clicks|results|roas|ctr|name|created_at)$"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
+    status_filter: str | None = Query(None, regex="^(ACTIVE|PAUSED|ALL)$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[CampaignResponse]:
-    """List campaigns with aggregated insights."""
+) -> PaginatedCampaigns:
+    """List campaigns with aggregated insights, pagination, and sorting."""
     conn, account = await _get_active_connection(db, user.tenant_id)
     if not account:
-        return []
+        return PaginatedCampaigns(items=[], total=0, page=1, per_page=per_page, total_pages=0)
 
     df, dt = _default_date_range(date_from, date_to)
 
+    # Build campaign query with optional status filter
+    campaign_where = [
+        FBCampaign.tenant_id == user.tenant_id,
+        FBCampaign.ad_account_id == account.id,
+    ]
+    if status_filter and status_filter != "ALL":
+        campaign_where.append(FBCampaign.status == status_filter)
+
     result = await db.execute(
-        select(FBCampaign).where(
-            FBCampaign.tenant_id == user.tenant_id,
-            FBCampaign.ad_account_id == account.id,
-        ).order_by(FBCampaign.created_at.desc())
+        select(FBCampaign).where(*campaign_where)
     )
     campaigns = result.scalars().all()
+    total = len(campaigns)
 
     # Aggregate insights per campaign
-    insight_r = await db.execute(
-        select(
-            FBInsight.object_id,
-            func.sum(FBInsight.spend).label("spend"),
-            func.sum(FBInsight.impressions).label("impressions"),
-            func.sum(FBInsight.clicks).label("clicks"),
-            func.sum(FBInsight.results).label("results"),
-            func.sum(FBInsight.purchase_value).label("purchase_value"),
-        ).where(
-            FBInsight.tenant_id == user.tenant_id,
-            FBInsight.object_type == "campaign",
-            FBInsight.date >= df,
-            FBInsight.date <= dt,
-        ).group_by(FBInsight.object_id)
-    )
-    insights_map = {}
-    for row in insight_r.all():
-        spend = row.spend or 0
-        clicks = row.clicks or 0
-        impressions = row.impressions or 0
-        results = row.results or 0
-        pv = row.purchase_value or 0
-        insights_map[row.object_id] = {
-            "spend": spend,
-            "impressions": impressions,
-            "clicks": clicks,
-            "ctr": round((clicks / impressions * 100) if impressions > 0 else 0, 2),
-            "results": results,
-            "cost_per_result": (spend // results) if results > 0 else 0,
-            "purchase_value": pv,
-            "roas": round(pv / spend, 2) if spend > 0 else 0,
-        }
+    campaign_meta_ids = [c.campaign_id for c in campaigns]
+    insights_map: dict[str, dict] = {}
+    if campaign_meta_ids:
+        insight_r = await db.execute(
+            select(
+                FBInsight.object_id,
+                func.sum(FBInsight.spend).label("spend"),
+                func.sum(FBInsight.impressions).label("impressions"),
+                func.sum(FBInsight.clicks).label("clicks"),
+                func.sum(FBInsight.results).label("results"),
+                func.sum(FBInsight.purchase_value).label("purchase_value"),
+            ).where(
+                FBInsight.tenant_id == user.tenant_id,
+                FBInsight.object_type == "campaign",
+                FBInsight.object_id.in_(campaign_meta_ids),
+                FBInsight.date >= df,
+                FBInsight.date <= dt,
+            ).group_by(FBInsight.object_id)
+        )
+        for row in insight_r.all():
+            spend = row.spend or 0
+            clicks = row.clicks or 0
+            impressions = row.impressions or 0
+            results = row.results or 0
+            pv = row.purchase_value or 0
+            insights_map[row.object_id] = {
+                "spend": spend,
+                "impressions": impressions,
+                "clicks": clicks,
+                "ctr": round((clicks / impressions * 100) if impressions > 0 else 0, 2),
+                "results": results,
+                "cost_per_result": (spend // results) if results > 0 else 0,
+                "purchase_value": pv,
+                "roas": round(pv / spend, 2) if spend > 0 else 0,
+            }
 
-    return [
+    # Build response items with insights merged
+    items = [
         CampaignResponse(
             id=str(c.id),
             campaign_id=c.campaign_id,
@@ -828,6 +851,29 @@ async def list_campaigns(
         )
         for c in campaigns
     ]
+
+    # Sort
+    reverse = sort_order == "desc"
+    if sort_by == "name":
+        items.sort(key=lambda x: x.name.lower(), reverse=reverse)
+    elif sort_by == "created_at":
+        items.sort(key=lambda x: x.synced_at or "", reverse=reverse)
+    else:
+        items.sort(key=lambda x: getattr(x, sort_by, 0), reverse=reverse)
+
+    # Paginate
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = items[start:end]
+
+    return PaginatedCampaigns(
+        items=page_items,
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/campaigns/{campaign_db_id}/adsets")
