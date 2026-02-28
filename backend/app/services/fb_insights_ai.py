@@ -118,8 +118,8 @@ async def _aggregate_by_group(
             FBInsight.tenant_id == tenant_id,
             FBInsight.object_type == "ad",
             FBInsight.object_id.in_(ad_ids),
-            FBInsight.date >= date_from,
-            FBInsight.date <= date_to,
+            FBInsight.date >= date.fromisoformat(date_from),
+            FBInsight.date <= date.fromisoformat(date_to),
         ).group_by(FBInsight.object_id)
     )
     insights_map = {row.object_id: row for row in insight_r.all()}
