@@ -896,6 +896,8 @@ async def list_campaign_adsets(
     adsets = result.scalars().all()
 
     adset_meta_ids = [a.adset_id for a in adsets]
+
+    # Try adset-level insights first
     insight_r = await db.execute(
         select(
             FBInsight.object_id,
@@ -912,7 +914,7 @@ async def list_campaign_adsets(
             FBInsight.date <= dt,
         ).group_by(FBInsight.object_id)
     )
-    insights_map = {}
+    insights_map: dict[str, dict] = {}
     for row in insight_r.all():
         spend = row.spend or 0
         clicks = row.clicks or 0
@@ -927,6 +929,61 @@ async def list_campaign_adsets(
             "purchase_value": pv,
             "roas": round(pv / spend, 2) if spend > 0 else 0,
         }
+
+    # Fallback: if no adset-level insights, aggregate from ad-level insights
+    if not insights_map:
+        # Build a map of adset_meta_id → [ad_meta_ids]
+        adset_db_ids = [a.id for a in adsets]
+        ads_r = await db.execute(
+            select(FBAd.adset_id, FBAd.ad_id).where(FBAd.adset_id.in_(adset_db_ids))
+        )
+        adset_id_to_meta = {a.id: a.adset_id for a in adsets}
+        ad_to_adset_meta: dict[str, str] = {}
+        for row in ads_r.all():
+            adset_meta = adset_id_to_meta.get(row.adset_id, "")
+            if adset_meta:
+                ad_to_adset_meta[row.ad_id] = adset_meta
+
+        if ad_to_adset_meta:
+            ad_insight_r = await db.execute(
+                select(
+                    FBInsight.object_id,
+                    func.sum(FBInsight.spend).label("spend"),
+                    func.sum(FBInsight.impressions).label("impressions"),
+                    func.sum(FBInsight.clicks).label("clicks"),
+                    func.sum(FBInsight.results).label("results"),
+                    func.sum(FBInsight.purchase_value).label("purchase_value"),
+                ).where(
+                    FBInsight.tenant_id == user.tenant_id,
+                    FBInsight.object_type == "ad",
+                    FBInsight.object_id.in_(list(ad_to_adset_meta.keys())),
+                    FBInsight.date >= df,
+                    FBInsight.date <= dt,
+                ).group_by(FBInsight.object_id)
+            )
+            # Aggregate ad-level insights up to adset level
+            for row in ad_insight_r.all():
+                adset_meta = ad_to_adset_meta.get(row.object_id, "")
+                if not adset_meta:
+                    continue
+                if adset_meta not in insights_map:
+                    insights_map[adset_meta] = {
+                        "spend": 0, "impressions": 0, "clicks": 0,
+                        "results": 0, "purchase_value": 0,
+                    }
+                m = insights_map[adset_meta]
+                m["spend"] += row.spend or 0
+                m["impressions"] += row.impressions or 0
+                m["clicks"] += row.clicks or 0
+                m["results"] += row.results or 0
+                m["purchase_value"] += row.purchase_value or 0
+
+            # Calculate derived metrics
+            for m in insights_map.values():
+                imp = m["impressions"]
+                m["ctr"] = round((m["clicks"] / imp * 100) if imp > 0 else 0, 2)
+                m["cost_per_result"] = (m["spend"] // m["results"]) if m["results"] > 0 else 0
+                m["roas"] = round(m["purchase_value"] / m["spend"], 2) if m["spend"] > 0 else 0
 
     return [
         AdSetResponse(
@@ -964,6 +1021,8 @@ async def list_adset_ads(
     ads = result.scalars().all()
 
     ad_meta_ids = [a.ad_id for a in ads]
+
+    # Try ad-level insights first
     insight_r = await db.execute(
         select(
             FBInsight.object_id,
@@ -980,7 +1039,7 @@ async def list_adset_ads(
             FBInsight.date <= dt,
         ).group_by(FBInsight.object_id)
     )
-    insights_map = {}
+    insights_map: dict[str, dict] = {}
     for row in insight_r.all():
         spend = row.spend or 0
         clicks = row.clicks or 0
@@ -995,6 +1054,47 @@ async def list_adset_ads(
             "purchase_value": pv,
             "roas": round(pv / spend, 2) if spend > 0 else 0,
         }
+
+    # Fallback: if no ad-level insights, try adset-level insights as parent totals
+    if not insights_map and ads:
+        adset = await db.execute(
+            select(FBAdSet).where(FBAdSet.id == uuid.UUID(adset_db_id))
+        )
+        adset_obj = adset.scalar_one_or_none()
+        if adset_obj:
+            adset_insight_r = await db.execute(
+                select(
+                    func.sum(FBInsight.spend).label("spend"),
+                    func.sum(FBInsight.impressions).label("impressions"),
+                    func.sum(FBInsight.clicks).label("clicks"),
+                    func.sum(FBInsight.results).label("results"),
+                    func.sum(FBInsight.purchase_value).label("purchase_value"),
+                ).where(
+                    FBInsight.tenant_id == user.tenant_id,
+                    FBInsight.object_type == "adset",
+                    FBInsight.object_id == adset_obj.adset_id,
+                    FBInsight.date >= df,
+                    FBInsight.date <= dt,
+                )
+            )
+            parent = adset_insight_r.one_or_none()
+            if parent and (parent.spend or 0) > 0:
+                # Distribute adset totals evenly across ads (best approximation)
+                n = len(ads)
+                spend = (parent.spend or 0) // n
+                impressions = (parent.impressions or 0) // n
+                clicks = (parent.clicks or 0) // n
+                results = (parent.results or 0) // n
+                pv = (parent.purchase_value or 0) // n
+                for a in ads:
+                    insights_map[a.ad_id] = {
+                        "spend": spend, "impressions": impressions, "clicks": clicks,
+                        "ctr": round((clicks / impressions * 100) if impressions > 0 else 0, 2),
+                        "results": results,
+                        "cost_per_result": (spend // results) if results > 0 else 0,
+                        "purchase_value": pv,
+                        "roas": round(pv / spend, 2) if spend > 0 else 0,
+                    }
 
     return [
         AdResponse(
@@ -1197,12 +1297,12 @@ async def trigger_sync(
             warnings.append("Ad sets/ads partially synced (rate limit). Try again in a few minutes.")
 
         # ── Phase 3: Insights ─────────────────────────────────────────────
-        try:
-            if stats["campaigns"] > 0:
-                date_to = date.today().isoformat()
-                date_from = (date.today() - timedelta(days=90)).isoformat()
+        if stats["campaigns"] > 0:
+            date_to = date.today().isoformat()
+            date_from = (date.today() - timedelta(days=90)).isoformat()
 
-                for level in ("campaign", "adset", "ad"):
+            for level in ("campaign", "adset", "ad"):
+                try:
                     rows = await meta.get_insights(
                         token, account.account_id, date_from, date_to, level=level
                     )
@@ -1249,12 +1349,12 @@ async def trigger_sync(
                                 actions=row["actions"],
                             ))
                         stats["insights"] += 1
-                await db.commit()
-                logger.info("Phase 3 committed: %d insights", stats["insights"])
-        except httpx.HTTPStatusError as e:
-            logger.warning("Rate limit during insights sync: %s", e)
-            await db.commit()
-            warnings.append("Insights partially synced (rate limit). Try again in a few minutes.")
+                    await db.commit()
+                    logger.info("Phase 3 committed %s-level: %d total insights so far", level, stats["insights"])
+                except httpx.HTTPStatusError as e:
+                    logger.warning("Rate limit during %s insights sync: %s", level, e)
+                    await db.commit()  # save whatever we got so far
+                    warnings.append(f"{level.title()}-level insights partially synced (rate limit).")
 
         logger.info("Sync complete for tenant %s: %s", user.tenant_id, stats)
 
