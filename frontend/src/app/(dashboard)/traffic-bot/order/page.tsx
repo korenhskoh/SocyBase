@@ -197,7 +197,7 @@ export default function TrafficBotOrderPage() {
                 <option value="" className="bg-navy-900">Choose a service...</option>
                 {categoryServices.map((svc) => (
                   <option key={svc.id} value={svc.id} className="bg-navy-900">
-                    {svc.name} — ${(svc.rate * (1 + svc.fee_pct / 100)).toFixed(2)}/1K
+                    {svc.name} — RM{(svc.rate * (1 + svc.fee_pct / 100)).toFixed(2)}/1K
                   </option>
                 ))}
               </select>
@@ -281,7 +281,7 @@ export default function TrafficBotOrderPage() {
                   Placing Order...
                 </span>
               ) : (
-                `Place Order — $${priceCalc.total_cost.toFixed(2)}`
+                `Place Order — RM${priceCalc.total_cost.toFixed(2)}`
               )}
             </button>
           )}
@@ -297,7 +297,7 @@ export default function TrafficBotOrderPage() {
               </svg>
               <span className="text-xs text-white/40 font-medium">Wallet Balance</span>
             </div>
-            <p className="text-2xl font-bold text-white">${wallet?.balance?.toFixed(2) || "0.00"}</p>
+            <p className="text-2xl font-bold text-white">RM{wallet?.balance?.toFixed(2) || "0.00"}</p>
             {priceCalc && wallet && priceCalc.total_cost > wallet.balance && (
               <p className="text-xs text-red-400 mt-2">Insufficient balance. Contact admin to top up.</p>
             )}
@@ -310,15 +310,15 @@ export default function TrafficBotOrderPage() {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-white/50">Base cost</span>
-                  <span className="text-white">${priceCalc.base_cost.toFixed(4)}</span>
+                  <span className="text-white">RM{priceCalc.base_cost.toFixed(4)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/50">Service fee ({selectedService.fee_pct}%)</span>
-                  <span className="text-white">${priceCalc.fee_amount.toFixed(4)}</span>
+                  <span className="text-white">RM{priceCalc.fee_amount.toFixed(4)}</span>
                 </div>
                 <div className="border-t border-white/10 pt-2 flex justify-between font-semibold">
                   <span className="text-white/70">Total</span>
-                  <span className="text-primary-400">${priceCalc.total_cost.toFixed(4)}</span>
+                  <span className="text-primary-400">RM{priceCalc.total_cost.toFixed(4)}</span>
                 </div>
               </div>
             </div>
@@ -339,7 +339,7 @@ export default function TrafficBotOrderPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/50">Rate per 1K</span>
-                  <span className="text-white">${(selectedService.rate * (1 + selectedService.fee_pct / 100)).toFixed(2)}</span>
+                  <span className="text-white">RM{(selectedService.rate * (1 + selectedService.fee_pct / 100)).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/50">Min order</span>

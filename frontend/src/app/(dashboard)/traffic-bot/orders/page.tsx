@@ -165,7 +165,7 @@ export default function TrafficBotOrdersPage() {
                         <div className="text-white/50 text-xs truncate max-w-[200px]">{order.link}</div>
                       </td>
                       <td className="py-3 px-4 text-right text-white/70">{order.quantity.toLocaleString()}</td>
-                      <td className="py-3 px-4 text-right text-primary-400 font-medium">${order.total_cost.toFixed(2)}</td>
+                      <td className="py-3 px-4 text-right text-primary-400 font-medium">RM{order.total_cost.toFixed(2)}</td>
                       <td className="py-3 px-4 text-center">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${statusColor(order.status)}`}>
                           <span className="h-1.5 w-1.5 rounded-full bg-current"></span>
@@ -195,11 +195,11 @@ export default function TrafficBotOrdersPage() {
                             </div>
                             <div>
                               <span className="text-white/30">Base Cost</span>
-                              <p className="text-white/70 mt-0.5">${order.base_cost.toFixed(4)}</p>
+                              <p className="text-white/70 mt-0.5">RM{order.base_cost.toFixed(4)}</p>
                             </div>
                             <div>
                               <span className="text-white/30">Fee</span>
-                              <p className="text-white/70 mt-0.5">${order.fee_amount.toFixed(4)}</p>
+                              <p className="text-white/70 mt-0.5">RM{order.fee_amount.toFixed(4)}</p>
                             </div>
                           </div>
                           {order.error_message && (

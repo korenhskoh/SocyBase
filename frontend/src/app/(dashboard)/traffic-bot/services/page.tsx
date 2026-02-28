@@ -174,7 +174,7 @@ export default function TrafficBotServicesPage() {
                         <span className="text-xs text-white/40 bg-white/5 px-2 py-0.5 rounded">{svc.type}</span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <span className="text-primary-400 font-semibold">${getPrice(svc)}</span>
+                        <span className="text-primary-400 font-semibold">RM{getPrice(svc)}</span>
                       </td>
                       <td className="py-3 px-4 text-center text-white/50 hidden md:table-cell">{svc.min_quantity.toLocaleString()}</td>
                       <td className="py-3 px-4 text-center text-white/50 hidden md:table-cell">{svc.max_quantity.toLocaleString()}</td>

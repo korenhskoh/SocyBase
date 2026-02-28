@@ -13,6 +13,8 @@ export default function AdminTrafficBotPage() {
   const [apiBalance, setApiBalance] = useState<{ balance: string; currency: string } | null>(null);
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const ITEMS_PER_PAGE = 50;
 
   // Deposit modal
   const [showDeposit, setShowDeposit] = useState(false);
@@ -66,6 +68,14 @@ export default function AdminTrafficBotPage() {
     }
     return list;
   }, [services, categoryFilter, search]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [categoryFilter, search]);
+
+  const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
+  const paginated = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
   async function handleSync() {
     setSyncing(true);
@@ -138,7 +148,7 @@ export default function AdminTrafficBotPage() {
           {apiBalance && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10">
               <span className="text-xs text-white/40">API Balance:</span>
-              <span className="text-sm font-semibold text-primary-400">${apiBalance.balance}</span>
+              <span className="text-sm font-semibold text-primary-400">RM{apiBalance.balance}</span>
             </div>
           )}
           <button
@@ -264,14 +274,14 @@ export default function AdminTrafficBotPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.slice(0, 100).map((svc) => (
+                  {paginated.map((svc) => (
                     <tr key={svc.id} className="border-b border-white/5 hover:bg-white/[0.02]">
                       <td className="py-2 px-4 text-white/30 text-xs">{svc.external_service_id}</td>
                       <td className="py-2 px-4">
                         <div className="text-white text-xs font-medium truncate max-w-[250px]">{svc.name}</div>
                       </td>
                       <td className="py-2 px-4 text-white/40 text-xs hidden lg:table-cell">{svc.category}</td>
-                      <td className="py-2 px-4 text-right text-white/50 text-xs">${svc.rate.toFixed(4)}</td>
+                      <td className="py-2 px-4 text-right text-white/50 text-xs">RM{svc.rate.toFixed(4)}</td>
                       <td className="py-2 px-4 text-center">
                         <input
                           type="number"
@@ -281,7 +291,7 @@ export default function AdminTrafficBotPage() {
                         />
                       </td>
                       <td className="py-2 px-4 text-right text-primary-400 text-xs font-medium">
-                        ${(svc.rate * (1 + svc.fee_pct / 100)).toFixed(4)}
+                        RM{(svc.rate * (1 + svc.fee_pct / 100)).toFixed(4)}
                       </td>
                       <td className="py-2 px-4 text-center">
                         <button
@@ -300,9 +310,51 @@ export default function AdminTrafficBotPage() {
                 </tbody>
               </table>
             </div>
-            {filtered.length > 100 && (
-              <div className="px-4 py-2 text-xs text-white/30 border-t border-white/5">
-                Showing first 100 of {filtered.length} services. Use search to narrow down.
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 border-t border-white/5">
+                <span className="text-xs text-white/30">
+                  Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, filtered.length)} of {filtered.length} services
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium transition border border-white/10 bg-white/5 text-white/50 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    Prev
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+                    .reduce<(number | string)[]>((acc, p, idx, arr) => {
+                      if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push("...");
+                      acc.push(p);
+                      return acc;
+                    }, [])
+                    .map((item, idx) =>
+                      item === "..." ? (
+                        <span key={`dots-${idx}`} className="px-1 text-xs text-white/20">...</span>
+                      ) : (
+                        <button
+                          key={item}
+                          onClick={() => setPage(item as number)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition border ${
+                            page === item
+                              ? "bg-primary-500/20 text-primary-400 border-primary-500/30"
+                              : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10"
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      )
+                    )}
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium transition border border-white/10 bg-white/5 text-white/50 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -342,7 +394,7 @@ export default function AdminTrafficBotPage() {
                         <td className="py-2 px-4 text-white text-xs font-medium truncate max-w-[200px]">{o.service_name || "—"}</td>
                         <td className="py-2 px-4 text-white/40 text-xs truncate max-w-[150px] hidden md:table-cell">{o.link}</td>
                         <td className="py-2 px-4 text-right text-white/60 text-xs">{o.quantity.toLocaleString()}</td>
-                        <td className="py-2 px-4 text-right text-primary-400 text-xs font-medium">${o.total_cost.toFixed(2)}</td>
+                        <td className="py-2 px-4 text-right text-primary-400 text-xs font-medium">RM{o.total_cost.toFixed(2)}</td>
                         <td className="py-2 px-4 text-center">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
                             o.status === "completed" ? "text-green-400 bg-green-400/10" :
@@ -383,7 +435,7 @@ export default function AdminTrafficBotPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-white/40 mb-1.5">Amount ($)</label>
+                <label className="block text-xs text-white/40 mb-1.5">Amount (RM)</label>
                 <input
                   type="number"
                   value={depositAmount}

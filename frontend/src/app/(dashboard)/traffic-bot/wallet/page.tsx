@@ -62,7 +62,7 @@ export default function TrafficBotWalletPage() {
           </div>
           <div>
             <p className="text-xs text-white/40 font-medium">Available Balance</p>
-            <p className="text-3xl font-bold text-white">${wallet?.balance?.toFixed(2) || "0.00"}</p>
+            <p className="text-3xl font-bold text-white">RM{wallet?.balance?.toFixed(2) || "0.00"}</p>
           </div>
         </div>
         <p className="text-xs text-white/30">
@@ -100,7 +100,7 @@ export default function TrafficBotWalletPage() {
                   </div>
                   <div className="text-right shrink-0">
                     <p className={`text-sm font-semibold ${txn.amount > 0 ? "text-green-400" : "text-red-400"}`}>
-                      {txn.amount > 0 ? "+" : ""}${Math.abs(txn.amount).toFixed(2)}
+                      {txn.amount > 0 ? "+" : ""}RM{Math.abs(txn.amount).toFixed(2)}
                     </p>
                     <p className="text-xs text-white/20">{new Date(txn.created_at).toLocaleDateString()}</p>
                   </div>
