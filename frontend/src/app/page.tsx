@@ -7,9 +7,10 @@ import { motion } from "framer-motion";
 import { LogoFull } from "@/components/ui/Logo";
 import { HeroDataCards } from "@/components/landing/HeroDataCards";
 import { creditsApi } from "@/lib/api-client";
-import { formatCurrency } from "@/lib/utils";
 import type { CreditPackage } from "@/types";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useCurrency } from "@/hooks/useCurrency";
+import { CurrencySelector } from "@/components/ui/CurrencySelector";
 import {
   MockupCompetitorDiscovery,
   MockupAudienceExtraction,
@@ -135,6 +136,7 @@ export default function LandingPage() {
   const [packagesLoading, setPackagesLoading] = useState(true);
   const [paymentModel, setPaymentModel] = useState("one_time");
   const { t, lang, setLang } = useTranslation();
+  const { formatPrice } = useCurrency();
 
   useEffect(() => {
     if (localStorage.getItem("access_token")) setIsAuth(true);
@@ -177,6 +179,7 @@ export default function LandingPage() {
             </div>
 
             <div className="hidden md:flex items-center gap-3">
+              <CurrencySelector />
               <button
                 onClick={() => setLang(lang === "en" ? "zh" : "en")}
                 className="px-3 py-1.5 text-xs font-medium text-white/50 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition"
@@ -234,12 +237,15 @@ export default function LandingPage() {
               <a href="#pricing" className="block text-sm text-white/60 py-2">
                 {t("landing.pricing")}
               </a>
-              <button
-                onClick={() => setLang(lang === "en" ? "zh" : "en")}
-                className="block text-sm text-white/60 py-2"
-              >
-                {lang === "en" ? "中文" : "English"}
-              </button>
+              <div className="flex gap-2 py-2">
+                <CurrencySelector />
+                <button
+                  onClick={() => setLang(lang === "en" ? "zh" : "en")}
+                  className="px-3 py-1.5 text-xs font-medium text-white/50 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition"
+                >
+                  {lang === "en" ? "中文" : "English"}
+                </button>
+              </div>
               <div className="pt-3 border-t border-white/5 flex gap-3">
                 <Link href="/login" className="flex-1 text-center btn-ghost !py-2 text-sm">
                   {t("auth.sign_in")}
@@ -841,7 +847,7 @@ export default function LandingPage() {
             >
               {visiblePackages.map((pkg, idx) => {
                 const isPopular = idx === 1;
-                const priceStr = formatCurrency(pkg.price_cents, pkg.currency);
+                const priceStr = formatPrice(pkg.price_cents, pkg.currency);
                 const [whole, decimal] = priceStr.split(".");
                 const isSubscription = pkg.billing_interval !== "one_time";
                 const intervalLabel = pkg.billing_interval === "monthly" ? "/mo" : pkg.billing_interval === "annual" ? "/yr" : "";

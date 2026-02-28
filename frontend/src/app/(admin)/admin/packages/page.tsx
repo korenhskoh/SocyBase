@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api-client";
-import { formatCurrency } from "@/lib/utils";
+import { useCurrency } from "@/hooks/useCurrency";
 import type { CreditPackage } from "@/types";
 
 interface EditValues {
@@ -35,6 +35,7 @@ function billingColor(interval: string) {
 
 export default function AdminPackagesPage() {
   const { user } = useAuth(true);
+  const { formatPrice } = useCurrency();
   const [packages, setPackages] = useState<CreditPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -181,7 +182,7 @@ export default function AdminPackagesPage() {
               />
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1">Price (RM)</label>
+              <label className="block text-xs text-white/40 mb-1">Price (USD)</label>
               <input
                 type="number"
                 step="0.01"
@@ -357,7 +358,7 @@ export default function AdminPackagesPage() {
                       <td className="px-6 py-4 text-sm text-white/70">{pkg.credits.toLocaleString()}</td>
                       <td className="px-6 py-4 text-sm text-white/50">+{pkg.bonus_credits.toLocaleString()}</td>
                       <td className="px-6 py-4 text-sm text-white/70 font-medium">
-                        {formatCurrency(pkg.price_cents, pkg.currency)}
+                        {formatPrice(pkg.price_cents, pkg.currency)}
                         {pkg.billing_interval !== "one_time" && (
                           <span className="text-white/30 text-xs">/{pkg.billing_interval === "monthly" ? "mo" : "yr"}</span>
                         )}

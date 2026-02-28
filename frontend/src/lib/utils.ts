@@ -13,8 +13,9 @@ export function formatCredits(credits: number): string {
   return credits.toLocaleString();
 }
 
-export function formatCurrency(cents: number, currency = "MYR"): string {
-  return new Intl.NumberFormat("en-MY", {
+export function formatCurrency(cents: number, currency = "USD"): string {
+  const locale = currency === "MYR" ? "en-MY" : "en-US";
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
   }).format(cents / 100);

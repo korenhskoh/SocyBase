@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import { LogoFull } from "@/components/ui/Logo";
 import { useTranslation } from "@/hooks/useTranslation";
+import { CurrencySelector } from "@/components/ui/CurrencySelector";
 
 const navigation = [
   { nameKey: "nav.dashboard", href: "/dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
@@ -159,6 +160,11 @@ export function Sidebar() {
           </>
         )}
       </nav>
+
+      {/* Currency selector */}
+      <div className="px-4 pb-2">
+        <CurrencySelector className="w-full justify-center" />
+      </div>
 
       {/* User section */}
       <div className="border-t border-white/5 p-4">

@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api-client";
-import { formatDate, formatCurrency, getStatusColor } from "@/lib/utils";
+import { formatDate, getStatusColor } from "@/lib/utils";
+import { useCurrency } from "@/hooks/useCurrency";
 import type { Payment } from "@/types";
 
 export default function AdminPaymentsPage() {
   const { user } = useAuth(true);
+  const { formatPrice } = useCurrency();
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -144,7 +146,7 @@ export default function AdminPaymentsPage() {
               {payments.map((p) => (
                 <tr key={p.id} className="hover:bg-white/[0.02] transition">
                   <td className="px-6 py-4 text-sm text-white/80 font-medium">
-                    {formatCurrency(p.amount_cents, p.currency)}
+                    {formatPrice(p.amount_cents, p.currency)}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col gap-1">

@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api-client";
-import { formatCredits, formatCurrency } from "@/lib/utils";
+import { formatCredits } from "@/lib/utils";
+import { useCurrency } from "@/hooks/useCurrency";
 import type { AdminDashboard } from "@/types";
 
 export default function AdminDashboardPage() {
   const { user } = useAuth(true);
+  const { formatPrice } = useCurrency();
   const [stats, setStats] = useState<AdminDashboard | null>(null);
 
   useEffect(() => {
@@ -39,7 +41,7 @@ export default function AdminDashboardPage() {
           { label: "Total Jobs", value: stats?.total_jobs ?? "---", color: "from-accent-pink to-rose-600" },
           { label: "Active Jobs", value: stats?.active_jobs ?? "---", color: "from-cyan-500 to-teal-600" },
           { label: "Credits Sold", value: stats ? formatCredits(stats.total_credits_sold) : "---", color: "from-emerald-500 to-green-600" },
-          { label: "Total Revenue", value: stats ? formatCurrency(stats.total_revenue_cents) : "---", color: "from-yellow-500 to-orange-500" },
+          { label: "Total Revenue", value: stats ? formatPrice(stats.total_revenue_cents) : "---", color: "from-yellow-500 to-orange-500" },
         ].map((stat) => (
           <div key={stat.label} className="glass-card p-6">
             <div className={`h-1 w-8 rounded-full bg-gradient-to-r ${stat.color} mb-3`} />

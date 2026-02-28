@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { creditsApi, paymentsApi, uploadsApi } from "@/lib/api-client";
-import { formatCredits, formatCurrency } from "@/lib/utils";
+import { formatCredits } from "@/lib/utils";
+import { useCurrency } from "@/hooks/useCurrency";
 import type { CreditBalance, CreditPackage } from "@/types";
 
 interface SubscriptionStatus {
@@ -15,6 +16,7 @@ interface SubscriptionStatus {
 }
 
 export default function CreditsPage() {
+  const { formatPrice } = useCurrency();
   const [balance, setBalance] = useState<CreditBalance | null>(null);
   const [packages, setPackages] = useState<CreditPackage[]>([]);
   const [selectedPkg, setSelectedPkg] = useState<string | null>(null);
@@ -141,7 +143,7 @@ export default function CreditsPage() {
       <div className={`h-2 w-12 rounded-full bg-gradient-to-r ${packageColors[i % packageColors.length]} mb-4`} />
       <h3 className="text-lg font-bold text-white">{pkg.name}</h3>
       <p className="text-3xl font-bold text-white mt-2">
-        {formatCurrency(pkg.price_cents, pkg.currency)}
+        {formatPrice(pkg.price_cents, pkg.currency)}
         {pkg.billing_interval !== "one_time" && (
           <span className="text-sm font-normal text-white/40">
             /{pkg.billing_interval === "monthly" ? "mo" : "yr"}
@@ -159,7 +161,7 @@ export default function CreditsPage() {
         )}
       </div>
       <p className="text-xs text-white/30 mt-2">
-        ~{formatCurrency(Math.round(pkg.price_cents / (pkg.credits + pkg.bonus_credits)), pkg.currency)}/credit
+        ~{formatPrice(Math.round(pkg.price_cents / (pkg.credits + pkg.bonus_credits)), pkg.currency)}/credit
       </p>
     </button>
   );
@@ -342,7 +344,7 @@ export default function CreditsPage() {
                 <p className="text-sm text-white/40">Amount</p>
                 <p className="text-lg font-bold text-white">
                   {selectedPackage
-                    ? formatCurrency(
+                    ? formatPrice(
                         selectedPackage.price_cents,
                         selectedPackage.currency
                       )
