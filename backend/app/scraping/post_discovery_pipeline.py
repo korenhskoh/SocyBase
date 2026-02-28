@@ -224,7 +224,12 @@ async def _charge_credits(
 # ── Celery entry point ──────────────────────────────────────────────
 
 
-@celery_app.task(bind=True, name="app.scraping.tasks.run_post_discovery_pipeline")
+@celery_app.task(
+    bind=True,
+    name="app.scraping.tasks.run_post_discovery_pipeline",
+    soft_time_limit=1800,   # 30 min — triggers SoftTimeLimitExceeded
+    time_limit=2100,        # 35 min — hard SIGKILL if task still alive
+)
 def run_post_discovery_pipeline(self, job_id: str):
     """Celery entry point. Runs the async pipeline in a fresh event loop."""
     loop = asyncio.new_event_loop()
@@ -276,6 +281,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
             _publish_progress(job, "start")
 
             job_settings = job.settings or {}
+            _tenant_id_str = str(job.tenant_id)
 
             try:
                 # ── STAGE 1: Parse Input ────────────────────────
@@ -305,7 +311,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     try:
                         logger.info(f"[Job {job_id}] Stage 1.5: Fetching author profile for {page_id}")
                         await _append_log(db, job, "info", "fetch_author", f"Fetching author profile for {page_id}")
-                        await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+                        await rate_limiter.wait_for_slot_tenant(
+                            _tenant_id_str, max_requests_global=settings_rate_limit())
                         # Try multiple token types on 401
                         author_raw = None
                         _author_tokens = ["EAAAAU", "EAAGNO", "EAAD6V"]
@@ -349,6 +356,26 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     except Exception as author_err:
                         logger.warning(f"[Job {job_id}] Failed to fetch author profile: {author_err}")
                         await _append_log(db, job, "warn", "fetch_author", f"Failed to fetch author: {author_err}")
+
+                # ── Credit pre-check ──────────────────────────
+                balance_result = await db.execute(
+                    select(CreditBalance).where(CreditBalance.tenant_id == job.tenant_id)
+                )
+                balance = balance_result.scalar_one_or_none()
+                # Estimate: at least 1 credit per page to be fetched
+                estimated_min_credits = int(job_settings.get("max_pages", 50))
+                if not balance or balance.balance < 1:
+                    job.status = "failed"
+                    job.error_message = f"Insufficient credits. Have {balance.balance if balance else 0}, need at least 1."
+                    await _append_log(db, job, "error", "credit_check",
+                        f"Insufficient credits: have {balance.balance if balance else 0}")
+                    await db.commit()
+                    _publish_progress(job, "credit_check")
+                    return
+                if balance.balance < estimated_min_credits:
+                    logger.warning(f"[Job {job_id}] Low credits: have {balance.balance}, max_pages would need ~{estimated_min_credits}")
+                    await _append_log(db, job, "warn", "credit_check",
+                        f"Low credits ({balance.balance}). Job may stop early if credits run out.")
 
                 # ── STAGE 2: Fetch Posts (paginated) ────────────
                 current_status = await _check_job_status(db, job.id)
@@ -405,9 +432,9 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                 while pages_fetched < max_pages:
                     # Rate limit before each API call
-                    await rate_limiter.wait_for_slot(
-                        "akng_api_global",
-                        max_requests=settings_rate_limit(),
+                    await rate_limiter.wait_for_slot_tenant(
+                        _tenant_id_str,
+                        max_requests_global=settings_rate_limit(),
                     )
 
                     # Retry wrapper for timeout errors (AKNG can be slow)
@@ -694,11 +721,22 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
             except Exception as e:
-                logger.exception(f"[Job {job_id}] Post discovery pipeline failed: {e}")
+                from celery.exceptions import SoftTimeLimitExceeded
+                is_timeout = isinstance(e, SoftTimeLimitExceeded)
+                if is_timeout:
+                    logger.warning(f"[Job {job_id}] Task hit soft time limit (30 min), saving state for resume")
+                else:
+                    logger.exception(f"[Job {job_id}] Post discovery pipeline failed: {e}")
                 try:
                     current_state = (job.error_details or {}).get("pipeline_state", {})
                     failed_stage = current_state.get("current_stage", "unknown")
-                    await _save_error_details(db, job, failed_stage, e)
+                    if is_timeout:
+                        job.status = "failed"
+                        job.error_message = f"[{failed_stage}] Task timed out after 30 minutes. Use resume to continue."
+                        await db.commit()
+                        await _append_log(db, job, "error", failed_stage, "Task timed out (30 min limit). State saved — use resume to continue.")
+                    else:
+                        await _save_error_details(db, job, failed_stage, e)
                     # Charge credits for pages already fetched before failure
                     try:
                         if pages_fetched > 0 and (job.credits_used or 0) == 0:

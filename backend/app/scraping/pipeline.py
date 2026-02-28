@@ -15,6 +15,9 @@ import asyncio
 import logging
 import traceback as tb_module
 from datetime import datetime, timezone
+
+import httpx
+
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, PageAuthorProfile
@@ -126,17 +129,23 @@ async def _append_log(db: AsyncSession, job: ScrapingJob, level: str, stage: str
     await db.commit()
 
 
-async def _retry_profile_fetch(client, rate_limiter, uid: str, max_retries: int = 2) -> dict:
-    """Fetch a user profile with retries and linear backoff."""
+async def _retry_profile_fetch(
+    client, rate_limiter, uid: str, max_retries: int = 2, tenant_id: str | None = None,
+) -> dict:
+    """Fetch a user profile with retries and exponential backoff."""
     last_exc = None
     for attempt in range(1 + max_retries):
         try:
-            await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+            if tenant_id:
+                await rate_limiter.wait_for_slot_tenant(
+                    tenant_id, max_requests_global=settings_rate_limit())
+            else:
+                await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
             return await client.get_user_profile(uid)
         except Exception as e:
             last_exc = e
             if attempt < max_retries:
-                await asyncio.sleep(1.0 * (attempt + 1))
+                await asyncio.sleep(2.0 ** attempt)  # exponential: 1s, 2s, 4s
     raise last_exc
 
 
@@ -152,7 +161,12 @@ _PROFILE_FIELDS = [
 # ── Main Pipeline ────────────────────────────────────────────────────
 
 
-@celery_app.task(bind=True, name="app.scraping.tasks.run_scraping_pipeline")
+@celery_app.task(
+    bind=True,
+    name="app.scraping.tasks.run_scraping_pipeline",
+    soft_time_limit=1800,   # 30 min — triggers SoftTimeLimitExceeded
+    time_limit=2100,        # 35 min — hard SIGKILL if task still alive
+)
 def run_scraping_pipeline(self, job_id: str):
     """Entry point for Celery. Runs the async pipeline in an event loop."""
     loop = asyncio.new_event_loop()
@@ -204,6 +218,7 @@ async def _execute_pipeline(job_id: str, celery_task):
             job_settings = job.settings or {}
             profile_retry_count = min(int(job_settings.get("profile_retry_count", 2)), 3)
             resume_from_job_id = job_settings.get("resume_from_job_id")
+            _tenant_id_str = str(job.tenant_id)
 
             # Load original job if resuming
             original_job = None
@@ -243,7 +258,8 @@ async def _execute_pipeline(job_id: str, celery_task):
                     try:
                         logger.info(f"[Job {job_id}] Stage 1.5: Fetching author profile for {page_id}")
                         await _append_log(db, job, "info", "fetch_author", f"Fetching author profile for {page_id}")
-                        await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+                        await rate_limiter.wait_for_slot_tenant(
+                            _tenant_id_str, max_requests_global=settings_rate_limit())
                         author_raw = await client.get_object_details(page_id)
                         author_mapped = mapper.map_object_to_author(author_raw)
                         author_profile = PageAuthorProfile(
@@ -340,20 +356,41 @@ async def _execute_pipeline(job_id: str, celery_task):
                     next_cursor = start_cursor
                     logger.info(f"[Job {job_id}] Starting from user-selected cursor")
 
+                # Max comment pages: prevent unbounded pagination on viral posts
+                max_comment_pages = min(max(int(job_settings.get("max_comment_pages", 200)), 1), 1000)
+
                 # Pagination loop (normal or continuing from cursor)
                 if not resume_from_job_id or next_cursor:
-                    while True:
-                        await rate_limiter.wait_for_slot(
-                            "akng_api_global",
-                            max_requests=settings_rate_limit(),
+                    while page_count < max_comment_pages:
+                        await rate_limiter.wait_for_slot_tenant(
+                            _tenant_id_str,
+                            max_requests_global=settings_rate_limit(),
                         )
 
-                        response = await client.get_post_comments(
-                            post_id,
-                            is_group=is_group,
-                            after=next_cursor,
-                            limit=25,
-                        )
+                        # Retry wrapper for timeout / transient errors
+                        response = None
+                        _max_retries = 3
+                        for _attempt in range(_max_retries):
+                            try:
+                                response = await client.get_post_comments(
+                                    post_id,
+                                    is_group=is_group,
+                                    after=next_cursor,
+                                    limit=25,
+                                )
+                                break
+                            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as _te:
+                                if _attempt < _max_retries - 1:
+                                    _wait = 3 * (2 ** _attempt)  # 3s, 6s, 12s
+                                    logger.warning(
+                                        f"[Job {job_id}] Comment page {page_count+1} timeout "
+                                        f"(attempt {_attempt+1}/{_max_retries}), retrying in {_wait}s"
+                                    )
+                                    await _append_log(db, job, "warn", "fetch_comments",
+                                        f"Timeout on page {page_count+1}, retrying ({_attempt+1}/{_max_retries})")
+                                    await asyncio.sleep(_wait)
+                                else:
+                                    raise
 
                         logger.info(
                             "[Job %s] Raw comments response keys: %s, first 500 chars: %s",
@@ -415,6 +452,12 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                         if not extracted["has_next"] or not next_cursor:
                             break
+
+                    # Log if stopped due to page limit
+                    if page_count >= max_comment_pages and next_cursor:
+                        logger.info(f"[Job {job_id}] Stopped at max_comment_pages={max_comment_pages}")
+                        await _append_log(db, job, "info", "fetch_comments",
+                            f"Reached comment page limit ({max_comment_pages}). Use resume to continue.")
 
                 logger.info(f"[Job {job_id}] Fetched {len(all_comments)} total ({total_top_level} comments + {total_replies} replies) from {page_count} pages")
                 await _append_log(db, job, "info", "fetch_comments", f"Fetched {total_top_level} comments + {total_replies} replies = {len(all_comments)} total from {page_count} pages")
@@ -599,7 +642,8 @@ async def _execute_pipeline(job_id: str, celery_task):
                     try:
                         logger.info(f"[Job {job_id}] Enriching profile {i+1}/{len(user_ids_to_enrich)}: {uid}")
                         profile_data = await _retry_profile_fetch(
-                            client, rate_limiter, uid, max_retries=profile_retry_count
+                            client, rate_limiter, uid, max_retries=profile_retry_count,
+                            tenant_id=_tenant_id_str,
                         )
                         logger.info(f"[Job {job_id}] Profile {uid}: got {len(profile_data) if profile_data else 0} fields")
                         mapped = mapper.map_to_standard(profile_data)
@@ -778,12 +822,23 @@ async def _execute_pipeline(job_id: str, celery_task):
                     logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
             except Exception as e:
-                logger.exception(f"[Job {job_id}] Pipeline failed: {e}")
+                from celery.exceptions import SoftTimeLimitExceeded
+                is_timeout = isinstance(e, SoftTimeLimitExceeded)
+                if is_timeout:
+                    logger.warning(f"[Job {job_id}] Task hit soft time limit (30 min), saving state for resume")
+                else:
+                    logger.exception(f"[Job {job_id}] Pipeline failed: {e}")
                 try:
                     current_state = (job.error_details or {}).get("pipeline_state", {})
                     failed_stage = current_state.get("current_stage", "unknown")
-                    await _save_error_details(db, job, failed_stage, e)
-                    await _append_log(db, job, "error", failed_stage, f"Pipeline failed: {type(e).__name__}: {e}")
+                    if is_timeout:
+                        job.status = "failed"
+                        job.error_message = f"[{failed_stage}] Task timed out after 30 minutes. Use resume to continue."
+                        await db.commit()
+                        await _append_log(db, job, "error", failed_stage, "Task timed out (30 min limit). State saved — use resume to continue.")
+                    else:
+                        await _save_error_details(db, job, failed_stage, e)
+                        await _append_log(db, job, "error", failed_stage, f"Pipeline failed: {type(e).__name__}: {e}")
                 except Exception as save_err:
                     logger.error(f"[Job {job_id}] Failed to save error details: {save_err}")
 
@@ -871,6 +926,7 @@ async def _check_and_dispatch_scheduled():
     # with Celery prefork workers (each task gets a new event loop)
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from app.config import get_settings
+    from app.models.tenant import Tenant
 
     settings = get_settings()
     local_engine = create_async_engine(settings.async_database_url, pool_pre_ping=True)
@@ -883,10 +939,30 @@ async def _check_and_dispatch_scheduled():
                 select(ScrapingJob).where(
                     ScrapingJob.status == "scheduled",
                     ScrapingJob.scheduled_at <= now,
-                )
+                ).order_by(ScrapingJob.scheduled_at.asc())
             )
             jobs = result.scalars().all()
+            dispatched = 0
+            skipped = 0
             for job in jobs:
+                # Re-check concurrent job limit per tenant before dispatching
+                running_result = await db.execute(
+                    select(func.count(ScrapingJob.id)).where(
+                        ScrapingJob.tenant_id == job.tenant_id,
+                        ScrapingJob.status.in_(["running", "queued"]),
+                    )
+                )
+                running_count = running_result.scalar() or 0
+                tenant_result = await db.execute(
+                    select(Tenant).where(Tenant.id == job.tenant_id)
+                )
+                tenant = tenant_result.scalar_one_or_none()
+                max_concurrent = (tenant.settings or {}).get("max_concurrent_jobs", 3) if tenant else 3
+
+                if running_count >= max_concurrent:
+                    skipped += 1
+                    continue  # leave as "scheduled", will be picked up next cycle
+
                 job.status = "queued"
                 if job.job_type == "post_discovery":
                     from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
@@ -894,9 +970,10 @@ async def _check_and_dispatch_scheduled():
                 else:
                     task = run_scraping_pipeline.delay(str(job.id))
                 job.celery_task_id = task.id
+                dispatched += 1
             await db.commit()
 
-            if jobs:
-                logger.info(f"Dispatched {len(jobs)} scheduled jobs")
+            if dispatched or skipped:
+                logger.info(f"Scheduled jobs: dispatched={dispatched}, deferred={skipped}")
     finally:
         await local_engine.dispose()

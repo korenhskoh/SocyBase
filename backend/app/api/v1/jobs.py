@@ -92,11 +92,13 @@ async def create_job(
     if not platform:
         raise HTTPException(status_code=400, detail=f"Platform '{data.platform}' not found or disabled")
 
-    # Concurrent job limit check
+    # Tenant settings
     tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
     tenant = tenant_result.scalar_one_or_none()
-    max_concurrent = (tenant.settings or {}).get("max_concurrent_jobs", 3) if tenant else 3
+    tenant_settings = (tenant.settings or {}) if tenant else {}
+    max_concurrent = tenant_settings.get("max_concurrent_jobs", 3)
 
+    # Concurrent job limit check
     running_count_result = await db.execute(
         select(func.count(ScrapingJob.id)).where(
             ScrapingJob.tenant_id == user.tenant_id,
@@ -110,6 +112,23 @@ async def create_job(
             status_code=429,
             detail=f"Concurrent job limit reached ({running_count}/{max_concurrent}). "
                    f"Wait for current jobs to finish or schedule for later.",
+        )
+
+    # Daily job creation limit check
+    max_daily = tenant_settings.get("max_jobs_per_day", 100)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_count_result = await db.execute(
+        select(func.count(ScrapingJob.id)).where(
+            ScrapingJob.tenant_id == user.tenant_id,
+            ScrapingJob.created_at >= today_start,
+        )
+    )
+    daily_count = daily_count_result.scalar() or 0
+
+    if daily_count >= max_daily:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily job limit reached ({daily_count}/{max_daily}). Try again tomorrow.",
         )
 
     # Create job
@@ -406,6 +425,22 @@ async def batch_action(
     success = []
     failed = []
 
+    # Pre-check concurrent job limit for batch resume
+    if data.action == "resume":
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
+        max_concurrent = (tenant.settings or {}).get("max_concurrent_jobs", 3) if tenant else 3
+        running_count_result = await db.execute(
+            select(func.count(ScrapingJob.id)).where(
+                ScrapingJob.tenant_id == user.tenant_id,
+                ScrapingJob.status.in_(["running", "queued"]),
+            )
+        )
+        _running_count = running_count_result.scalar() or 0
+    else:
+        max_concurrent = 0
+        _running_count = 0
+
     for jid_str in data.job_ids:
         try:
             jid = UUID(jid_str)
@@ -455,6 +490,10 @@ async def batch_action(
             if job.status not in ("failed", "paused"):
                 failed.append({"id": jid_str, "reason": f"Cannot resume '{job.status}' job"})
                 continue
+            # Enforce concurrent job limit per resume
+            if _running_count >= max_concurrent:
+                failed.append({"id": jid_str, "reason": f"Concurrent job limit reached ({_running_count}/{max_concurrent})"})
+                continue
             pipeline_state = (job.error_details or {}).get("pipeline_state")
             if not pipeline_state:
                 failed.append({"id": jid_str, "reason": "No checkpoint data"})
@@ -484,6 +523,7 @@ async def batch_action(
                 task = run_scraping_pipeline.delay(str(new_job.id))
             new_job.celery_task_id = task.id
             await db.flush()
+            _running_count += 1  # track within batch
             success.append(str(new_job.id))
 
     await db.flush()

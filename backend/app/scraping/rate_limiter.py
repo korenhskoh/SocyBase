@@ -61,6 +61,30 @@ class RateLimiter:
             await asyncio.sleep(0.1)
         return False
 
+    async def wait_for_slot_tenant(
+        self,
+        tenant_id: str,
+        max_requests_global: int,
+        max_requests_tenant: int = 3,
+        window_seconds: int = 1,
+        max_wait: float = 30.0,
+    ) -> bool:
+        """Wait for both per-tenant AND global rate limit slots.
+
+        Ensures no single tenant can monopolise the shared API quota.
+        """
+        global_key = "akng_api_global"
+        tenant_key = f"akng_api:tenant:{tenant_id}"
+        start = time.time()
+        while time.time() - start < max_wait:
+            tenant_ok = await self.acquire(tenant_key, max_requests_tenant, window_seconds)
+            if tenant_ok:
+                global_ok = await self.acquire(global_key, max_requests_global, window_seconds)
+                if global_ok:
+                    return True
+            await asyncio.sleep(0.1)
+        return False
+
     async def close(self):
         if self._redis:
             await self._redis.close()
