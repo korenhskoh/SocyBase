@@ -364,7 +364,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                 # Settings
                 token_type = job_settings.get("token_type", "EAAAAU")
-                max_pages = int(job_settings.get("max_pages", 50))
+                max_pages = min(max(int(job_settings.get("max_pages", 50)), 1), 500)
 
                 # Groups require a different token type
                 if is_group:
@@ -388,8 +388,14 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 start_page_params = job_settings.get("start_from_page_params")
                 start_cursor = job_settings.get("start_from_cursor")
                 if start_page_params and isinstance(start_page_params, dict):
+                    # Sanitise: only allow known Facebook pagination keys
+                    _ALLOWED_PAGE_KEYS = {"__paging_token", "until", "since", "after", "before"}
+                    start_page_params = {
+                        k: v for k, v in start_page_params.items()
+                        if k in _ALLOWED_PAGE_KEYS and isinstance(v, str)
+                    }
                     # Full pagination params (includes __paging_token + until etc.)
-                    page_params = start_page_params
+                    page_params = start_page_params if start_page_params else None
                     logger.info(f"[Job {job_id}] Starting from saved page params: {list(start_page_params.keys())}")
                     await _append_log(db, job, "info", "fetch_posts", "Continuing from previous cursor (full params)")
                 elif start_cursor:

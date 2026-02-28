@@ -247,7 +247,16 @@ class FacebookGraphClient(AbstractSocialClient):
             "order": order,
         }
         if pagination_params:
-            params.update(pagination_params)
+            # Only allow known Facebook pagination keys — prevent overriding
+            # access_token, fields, token_type, limit, or other sensitive params
+            _ALLOWED_PAGINATION_KEYS = frozenset(
+                ("__paging_token", "until", "since", "after", "before")
+            )
+            safe_params = {
+                k: v for k, v in pagination_params.items()
+                if k in _ALLOWED_PAGINATION_KEYS
+            }
+            params.update(safe_params)
         elif after:
             params["after"] = after
 
