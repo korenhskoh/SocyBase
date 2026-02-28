@@ -899,7 +899,7 @@ export default function JobDetailPage() {
                     min={1}
                     max={500}
                     value={continuationMaxPages}
-                    onChange={(e) => setContinuationMaxPages(e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value) || 1))}
+                    onChange={(e) => setContinuationMaxPages(e.target.value === "" ? "" : Math.min(500, Math.max(1, parseInt(e.target.value) || 1)))}
                     placeholder={String((job?.settings as Record<string, unknown> | undefined)?.max_pages || 50)}
                     className="w-20 px-2 py-2.5 rounded-lg bg-dark-700 border border-white/10 text-white text-sm text-center placeholder:text-white/30 focus:border-amber-500/50 focus:outline-none"
                     title="Max pages to fetch (optional)"
