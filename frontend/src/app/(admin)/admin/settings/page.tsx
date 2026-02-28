@@ -333,21 +333,42 @@ export default function AdminSettingsPage() {
             )}
           </div>
 
-          {/* Webhook Events Info */}
-          <div className="rounded-lg bg-blue-500/5 border border-blue-500/15 p-4 space-y-2">
-            <p className="text-xs font-medium text-blue-300/90">Stripe Webhook Events to Enable:</p>
-            <div className="grid grid-cols-2 gap-1">
-              {[
-                "checkout.session.completed",
-                "invoice.paid",
-                "customer.subscription.deleted",
-                "charge.refunded",
-              ].map((evt) => (
-                <p key={evt} className="text-xs text-blue-300/60 font-mono">{evt}</p>
-              ))}
+          {/* Webhook Setup Info */}
+          <div className="rounded-lg bg-blue-500/5 border border-blue-500/15 p-4 space-y-3">
+            <p className="text-xs font-medium text-blue-300/90">Stripe Webhook Setup</p>
+            <div>
+              <p className="text-xs text-blue-300/60 mb-1">Webhook URL (paste this in Stripe Dashboard &gt; Developers &gt; Webhooks):</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs bg-white/5 rounded px-3 py-2 text-blue-300/80 font-mono break-all">
+                  {(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")}/api/v1/payments/stripe/webhook
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/payments/stripe/webhook`;
+                    navigator.clipboard.writeText(url);
+                  }}
+                  className="shrink-0 text-xs px-3 py-2 rounded-lg text-blue-400 bg-blue-400/10 border border-blue-400/20 hover:bg-blue-400/20 transition"
+                >
+                  Copy
+                </button>
+              </div>
             </div>
-            <p className="text-xs text-blue-300/50 pt-1">
-              These events handle one-time payments, subscription renewals, cancellations, and refunds.
+            <div>
+              <p className="text-xs text-blue-300/60 mb-1">Events to enable:</p>
+              <div className="grid grid-cols-2 gap-1">
+                {[
+                  "checkout.session.completed",
+                  "invoice.paid",
+                  "customer.subscription.deleted",
+                  "charge.refunded",
+                ].map((evt) => (
+                  <p key={evt} className="text-xs text-blue-300/60 font-mono">{evt}</p>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-blue-300/50">
+              After creating the webhook in Stripe, copy the Signing secret (whsec_...) and paste it in the Webhook Secret field above.
             </p>
           </div>
 
