@@ -37,17 +37,19 @@ async def score_ad_components(
                 custom_audience, lookalike, location, age, gender
     """
     settings = get_settings()
-    if not settings.openai_api_key:
-        raise ValueError("OpenAI API key not configured")
 
     # 1. Aggregate metrics by group type
     groups = await _aggregate_by_group(db, tenant_id, ad_account_id, date_from, date_to, group_type)
     if not groups:
         return []
 
-    # 2. Send to AI for scoring
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
-    scores = await _ai_score(client, groups, group_type)
+    # 2. Score using AI if configured, otherwise use metric-based fallback
+    if settings.openai_api_key:
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        scores = await _ai_score(client, groups, group_type)
+    else:
+        logger.info("No OpenAI API key configured, using metric-based fallback scoring")
+        scores = _fallback_score_all(groups)
 
     # 3. Store results
     now = datetime.now(timezone.utc)
@@ -221,7 +223,6 @@ Only return the JSON array, nothing else."""
         scored = []
 
     # Merge AI scores with metrics
-    name_to_metrics = {g["name"]: g for g in groups}
     result = []
     for g in groups:
         ai_score = next((s["score"] for s in scored if s.get("name") == g["name"]), None)
@@ -267,6 +268,28 @@ def _fallback_score(g: dict) -> float:
     return min(score, 10)
 
 
+def _fallback_score_all(groups: list[dict]) -> list[dict]:
+    """Score all groups using metric-based fallback when OpenAI is unavailable."""
+    return [
+        {
+            "name": g["name"],
+            "score": round(float(_fallback_score(g)), 1),
+            "metrics": {
+                "spend": g["spend"],
+                "impressions": g["impressions"],
+                "clicks": g["clicks"],
+                "ctr": g["ctr"],
+                "results": g["results"],
+                "cpr": g["cpr"],
+                "purchase_value": g["purchase_value"],
+                "roas": g["roas"],
+                "ad_count": g["ad_count"],
+            },
+        }
+        for g in groups
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Phase 4: Winning Ads Detection
 # ---------------------------------------------------------------------------
@@ -278,7 +301,7 @@ async def detect_winning_ads(db: AsyncSession, tenant_id, ad_account_id) -> list
     - Minimum $50 spend
     - Weighted formula: 0.4*roas_percentile + 0.3*cpr_inverse_percentile + 0.3*ctr_percentile
     """
-    # Get all ads with sufficient spend
+    # Get all ads with sufficient spend, scoped to the selected ad account
     ads_r = await db.execute(
         select(
             FBAd,
@@ -287,8 +310,13 @@ async def detect_winning_ads(db: AsyncSession, tenant_id, ad_account_id) -> list
             func.sum(FBInsight.clicks).label("clicks"),
             func.sum(FBInsight.results).label("results"),
             func.sum(FBInsight.purchase_value).label("purchase_value"),
-        ).join(FBInsight, FBInsight.object_id == FBAd.ad_id).where(
-            FBAd.tenant_id == tenant_id,
+        )
+        .join(FBAdSet, FBAd.adset_id == FBAdSet.id)
+        .join(FBCampaign, FBAdSet.campaign_id == FBCampaign.id)
+        .join(FBInsight, FBInsight.object_id == FBAd.ad_id)
+        .where(
+            FBCampaign.tenant_id == tenant_id,
+            FBCampaign.ad_account_id == ad_account_id,
             FBInsight.tenant_id == tenant_id,
             FBInsight.object_type == "ad",
         ).group_by(FBAd.id).having(

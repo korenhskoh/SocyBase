@@ -77,10 +77,17 @@ export default function FBInsightsPage() {
   const handleScore = async () => {
     setScoring(true);
     try {
-      await fbAdsApi.runAIScoring(groupType, df, dt);
+      const res = await fbAdsApi.runAIScoring(groupType, df, dt);
       await loadData();
-    } catch {
-      alert("AI scoring failed. Check your OpenAI API key.");
+      const count = res.data?.count ?? 0;
+      if (count === 0) {
+        alert("No ad components found to score. Make sure you have synced your ad data first.");
+      }
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "AI scoring failed. Please try again.";
+      alert(msg);
     } finally {
       setScoring(false);
     }

@@ -1429,8 +1429,12 @@ async def run_ai_scoring(
     df, dt = _default_date_range(body.date_from, body.date_to)
 
     from app.services.fb_insights_ai import score_ad_components
-    scores = await score_ad_components(db, user.tenant_id, account.id, df.isoformat(), dt.isoformat(), body.group_type)
-    await db.commit()
+    try:
+        scores = await score_ad_components(db, user.tenant_id, account.id, df.isoformat(), dt.isoformat(), body.group_type)
+        await db.commit()
+    except Exception as exc:
+        logger.exception("AI scoring failed")
+        raise HTTPException(status_code=500, detail=f"AI scoring failed: {exc}")
 
     return {"detail": f"Scored {len(scores)} {body.group_type} components.", "count": len(scores)}
 
@@ -1494,8 +1498,12 @@ async def trigger_winning_detection(
         raise HTTPException(status_code=400, detail="No ad account selected.")
 
     from app.services.fb_insights_ai import detect_winning_ads
-    winners = await detect_winning_ads(db, user.tenant_id, account.id)
-    await db.commit()
+    try:
+        winners = await detect_winning_ads(db, user.tenant_id, account.id)
+        await db.commit()
+    except Exception as exc:
+        logger.exception("Winning ads detection failed")
+        raise HTTPException(status_code=500, detail=f"Winner detection failed: {exc}")
 
     return {"detail": f"Detected {len(winners)} winning ads.", "count": len(winners)}
 

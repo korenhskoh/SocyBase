@@ -34,10 +34,17 @@ export default function FBWinningAdsPage() {
   const handleDetect = async () => {
     setDetecting(true);
     try {
-      await fbAdsApi.detectWinningAds();
+      const res = await fbAdsApi.detectWinningAds();
       await loadData();
-    } catch {
-      alert("Failed to detect winning ads.");
+      const count = res.data?.count ?? 0;
+      if (count === 0) {
+        alert("No winning ads found. Ads need at least $50 in spend to qualify. Make sure you have synced your ad data first.");
+      }
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Failed to detect winning ads. Please try again.";
+      alert(msg);
     } finally {
       setDetecting(false);
     }
