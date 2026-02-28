@@ -111,6 +111,11 @@ async def lifespan(app: FastAPI):
             ("scraped_posts", "post_url", "TEXT"),
             # credit_balances — may have been added after initial table creation
             ("credit_balances", "lifetime_used", "INTEGER DEFAULT 0"),
+            # credit_packages — billing_interval added after initial table creation
+            ("credit_packages", "billing_interval", "VARCHAR(20) DEFAULT 'one_time'"),
+            # payments — subscription/refund fields added after initial table creation
+            ("payments", "stripe_subscription_id", "VARCHAR(255)"),
+            ("payments", "refunded_at", "TIMESTAMPTZ"),
         ]
         for tbl, col, col_type in missing_columns:
             await conn.execute(text(
