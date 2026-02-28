@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     # Telegram Bot
     telegram_bot_token: str = ""
 
+    # WhatsApp Notifications (Baileys microservice)
+    whatsapp_service_url: str = "http://whatsapp:3001"
+    whatsapp_admin_number: str = ""  # e.g. "60123456789"
+
     # OpenAI
     openai_api_key: str = ""
 

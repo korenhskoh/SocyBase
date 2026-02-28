@@ -10,6 +10,7 @@ from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.traffic_bot import TrafficBotWalletDeposit
 from app.services import traffic_bot_service as svc
+from app.services.whatsapp_notify import notify_traffic_bot_order, notify_wallet_deposit_request
 from app.schemas.traffic_bot import (
     OrderCreateRequest, OrderResponse, OrderListResponse,
     ServiceResponse, PriceCalcResponse,
@@ -72,6 +73,10 @@ async def create_order(
     service = await svc.get_service(db, order.service_id)
     resp = OrderResponse.model_validate(order)
     resp.service_name = service.name if service else None
+    await notify_traffic_bot_order(
+        user.email, resp.service_name or "Unknown",
+        body.quantity, float(order.total_cost), body.link, db,
+    )
     return resp
 
 
@@ -181,6 +186,9 @@ async def submit_deposit_request(
     )
     db.add(deposit)
     await db.flush()
+    await notify_wallet_deposit_request(
+        user.email, float(body.amount), body.bank_reference, db,
+    )
     return deposit
 
 

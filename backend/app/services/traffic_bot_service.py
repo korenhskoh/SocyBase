@@ -5,6 +5,7 @@ from decimal import Decimal
 from datetime import datetime, timezone
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.traffic_bot import (
@@ -281,7 +282,7 @@ async def list_orders(
     status: str | None = None,
     limit: int = 50, offset: int = 0,
 ) -> tuple[list[TrafficBotOrder], int]:
-    q = select(TrafficBotOrder).where(TrafficBotOrder.tenant_id == tenant_id)
+    q = select(TrafficBotOrder).where(TrafficBotOrder.tenant_id == tenant_id).options(selectinload(TrafficBotOrder.service))
     count_q = select(func.count()).select_from(TrafficBotOrder).where(TrafficBotOrder.tenant_id == tenant_id)
     if status:
         q = q.where(TrafficBotOrder.status == status)
@@ -322,7 +323,7 @@ async def list_all_orders(
     limit: int = 50, offset: int = 0,
 ) -> tuple[list[TrafficBotOrder], int]:
     """Admin: list orders across all tenants."""
-    q = select(TrafficBotOrder)
+    q = select(TrafficBotOrder).options(selectinload(TrafficBotOrder.service))
     count_q = select(func.count()).select_from(TrafficBotOrder)
     if status:
         q = q.where(TrafficBotOrder.status == status)

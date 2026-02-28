@@ -1,0 +1,15 @@
+{
+  "name": "socybase-whatsapp-service",
+  "version": "1.0.0",
+  "description": "WhatsApp notification microservice using Baileys",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "express": "^4.21.2",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4"
+  }
+}

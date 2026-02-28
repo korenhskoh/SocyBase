@@ -240,6 +240,18 @@ export const adminApi = {
     bank_transfer_enabled?: boolean;
     payment_model?: string;
   }) => api.put("/admin/payment-settings", data),
+  getWhatsappSettings: () => api.get("/admin/whatsapp-settings"),
+  updateWhatsappSettings: (data: {
+    whatsapp_service_url?: string;
+    whatsapp_admin_number?: string;
+    whatsapp_enabled?: boolean;
+    notify_new_user?: boolean;
+    notify_payment_approved?: boolean;
+    notify_payment_completed?: boolean;
+    notify_refund?: boolean;
+    notify_traffic_bot_order?: boolean;
+    notify_wallet_deposit?: boolean;
+  }) => api.put("/admin/whatsapp-settings", data),
 };
 
 // Telegram API

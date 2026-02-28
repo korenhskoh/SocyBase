@@ -9,6 +9,7 @@ from app.models.credit import CreditBalance
 from app.utils.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse
 from app.config import get_settings
+from app.services.whatsapp_notify import notify_new_user
 
 settings = get_settings()
 
@@ -58,6 +59,8 @@ async def register_user(data: RegisterRequest, db: AsyncSession) -> tuple[User, 
 
     # Generate tokens
     tokens = _create_tokens(user)
+
+    await notify_new_user(user.email, user.full_name or "", data.tenant_name, db)
 
     return user, tokens
 

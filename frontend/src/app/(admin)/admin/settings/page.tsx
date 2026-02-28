@@ -39,11 +39,26 @@ export default function AdminSettingsPage() {
   const [bankDuitnowId, setBankDuitnowId] = useState("");
   const [bankSwiftCode, setBankSwiftCode] = useState("");
 
+  // WhatsApp settings
+  const [waEnabled, setWaEnabled] = useState(true);
+  const [waServiceUrl, setWaServiceUrl] = useState("");
+  const [waAdminNumber, setWaAdminNumber] = useState("");
+  const [waSaving, setWaSaving] = useState(false);
+  const [waMessage, setWaMessage] = useState("");
+  const [waStatus, setWaStatus] = useState<string | null>(null);
+
+  // Per-notification toggles
+  const [notifyNewUser, setNotifyNewUser] = useState(true);
+  const [notifyPaymentApproved, setNotifyPaymentApproved] = useState(true);
+  const [notifyPaymentCompleted, setNotifyPaymentCompleted] = useState(true);
+  const [notifyRefund, setNotifyRefund] = useState(true);
+  const [notifyTrafficBotOrder, setNotifyTrafficBotOrder] = useState(true);
+  const [notifyWalletDeposit, setNotifyWalletDeposit] = useState(true);
+
   useEffect(() => {
     if (user?.role === "super_admin") {
-      adminApi
-        .getPaymentSettings()
-        .then((r) => {
+      Promise.all([
+        adminApi.getPaymentSettings().then((r) => {
           const d = r.data;
           if (d.payment_model) setPaymentModel(d.payment_model);
           if (d.stripe_enabled !== undefined) setStripeEnabled(d.stripe_enabled);
@@ -70,9 +85,20 @@ export default function AdminSettingsPage() {
           if (d.bank_account_number) setBankAccountNumber(d.bank_account_number);
           if (d.bank_duitnow_id) setBankDuitnowId(d.bank_duitnow_id);
           if (d.bank_swift_code) setBankSwiftCode(d.bank_swift_code);
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false));
+        }).catch(() => {}),
+        adminApi.getWhatsappSettings().then((r) => {
+          const d = r.data;
+          if (d.whatsapp_enabled !== undefined) setWaEnabled(d.whatsapp_enabled);
+          if (d.whatsapp_service_url) setWaServiceUrl(d.whatsapp_service_url);
+          if (d.whatsapp_admin_number) setWaAdminNumber(d.whatsapp_admin_number);
+          if (d.notify_new_user !== undefined) setNotifyNewUser(d.notify_new_user);
+          if (d.notify_payment_approved !== undefined) setNotifyPaymentApproved(d.notify_payment_approved);
+          if (d.notify_payment_completed !== undefined) setNotifyPaymentCompleted(d.notify_payment_completed);
+          if (d.notify_refund !== undefined) setNotifyRefund(d.notify_refund);
+          if (d.notify_traffic_bot_order !== undefined) setNotifyTrafficBotOrder(d.notify_traffic_bot_order);
+          if (d.notify_wallet_deposit !== undefined) setNotifyWalletDeposit(d.notify_wallet_deposit);
+        }).catch(() => {}),
+      ]).finally(() => setLoading(false));
     }
   }, [user]);
 
@@ -104,6 +130,42 @@ export default function AdminSettingsPage() {
     }
   };
 
+  const handleSaveWhatsApp = async () => {
+    setWaSaving(true);
+    setWaMessage("");
+    try {
+      await adminApi.updateWhatsappSettings({
+        whatsapp_enabled: waEnabled,
+        whatsapp_service_url: waServiceUrl || undefined,
+        whatsapp_admin_number: waAdminNumber || undefined,
+        notify_new_user: notifyNewUser,
+        notify_payment_approved: notifyPaymentApproved,
+        notify_payment_completed: notifyPaymentCompleted,
+        notify_refund: notifyRefund,
+        notify_traffic_bot_order: notifyTrafficBotOrder,
+        notify_wallet_deposit: notifyWalletDeposit,
+      });
+      setWaMessage("WhatsApp settings saved successfully!");
+    } catch {
+      setWaMessage("Failed to save WhatsApp settings");
+    } finally {
+      setWaSaving(false);
+    }
+  };
+
+  const checkWhatsAppStatus = async () => {
+    setWaStatus(null);
+    try {
+      // Use localhost for browser access (Docker internal URLs won't work from browser)
+      const baseUrl = waServiceUrl?.replace("whatsapp", "localhost") || "http://localhost:3001";
+      const resp = await fetch(`${baseUrl}/status`);
+      const data = await resp.json();
+      setWaStatus(data.status || "unknown");
+    } catch {
+      setWaStatus("unreachable");
+    }
+  };
+
   if (user?.role !== "super_admin") {
     return (
       <div className="text-center py-20 text-white/40">
@@ -120,10 +182,10 @@ export default function AdminSettingsPage() {
           <Link href="/admin" className="text-white/40 hover:text-white transition">
             &larr;
           </Link>
-          <h1 className="text-2xl md:text-3xl font-bold text-white">Payment Settings</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-white">Platform Settings</h1>
         </div>
         <p className="text-white/50 mt-1 ml-7">
-          Configure payment methods and billing model
+          Configure payment methods, billing model, and notifications
         </p>
       </div>
 
@@ -372,7 +434,7 @@ export default function AdminSettingsPage() {
             </p>
           </div>
 
-          {/* Save */}
+          {/* Save Payment Settings */}
           {message && (
             <p className={`text-sm ${message.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
               {message}
@@ -385,6 +447,140 @@ export default function AdminSettingsPage() {
             className="btn-glow w-full py-3 disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save Payment Settings"}
+          </button>
+
+          {/* WhatsApp Notifications */}
+          <div className="glass-card p-6 space-y-4 mt-8">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-green-500/10 border border-green-500/20">
+                  <svg className="h-5 w-5 text-green-400" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-white">WhatsApp Notifications</h2>
+                  <p className="text-sm text-white/40">Admin alerts via WhatsApp (Baileys)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setWaEnabled(!waEnabled)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${
+                  waEnabled ? "bg-primary-500" : "bg-white/10"
+                }`}
+              >
+                <div className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                  waEnabled ? "translate-x-5" : ""
+                }`} />
+              </button>
+            </div>
+
+            {waEnabled && (
+              <div className="space-y-3 pt-2">
+                <div>
+                  <label className="block text-xs text-white/60 mb-1">Service URL</label>
+                  <input
+                    type="text"
+                    value={waServiceUrl}
+                    onChange={(e) => setWaServiceUrl(e.target.value)}
+                    placeholder="http://whatsapp:3001"
+                    className="input-glass text-sm"
+                  />
+                  <p className="text-xs text-white/30 mt-1">URL of the Baileys WhatsApp microservice</p>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/60 mb-1">Admin Phone Number</label>
+                  <input
+                    type="text"
+                    value={waAdminNumber}
+                    onChange={(e) => setWaAdminNumber(e.target.value)}
+                    placeholder="60123456789 (no + prefix)"
+                    className="input-glass text-sm"
+                  />
+                  <p className="text-xs text-white/30 mt-1">Phone number that receives all admin notifications</p>
+                </div>
+
+                {/* Connection Status */}
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={checkWhatsAppStatus}
+                    className="text-xs px-3 py-1.5 rounded-lg font-medium text-green-400 bg-green-400/10 border border-green-400/20 hover:bg-green-400/20 transition"
+                  >
+                    Check Connection
+                  </button>
+                  {waStatus && (
+                    <span className={`text-xs font-medium ${
+                      waStatus === "connected"
+                        ? "text-emerald-400"
+                        : waStatus === "connecting"
+                        ? "text-amber-400"
+                        : "text-red-400"
+                    }`}>
+                      {waStatus === "connected" ? "Connected" :
+                       waStatus === "connecting" ? "Connecting (scan QR)" :
+                       waStatus === "unreachable" ? "Service unreachable" :
+                       waStatus}
+                    </span>
+                  )}
+                </div>
+
+                {/* Per-notification toggles */}
+                <div className="pt-3 border-t border-white/5">
+                  <p className="text-xs text-white/60 font-medium mb-3">Notification Types</p>
+                  <div className="space-y-2">
+                    {[
+                      { label: "New User Registration", value: notifyNewUser, setter: setNotifyNewUser },
+                      { label: "Payment Approved", value: notifyPaymentApproved, setter: setNotifyPaymentApproved },
+                      { label: "Stripe Payment Completed", value: notifyPaymentCompleted, setter: setNotifyPaymentCompleted },
+                      { label: "Refund Processed", value: notifyRefund, setter: setNotifyRefund },
+                      { label: "Traffic Bot Order", value: notifyTrafficBotOrder, setter: setNotifyTrafficBotOrder },
+                      { label: "Wallet Deposit Request", value: notifyWalletDeposit, setter: setNotifyWalletDeposit },
+                    ].map((item) => (
+                      <div key={item.label} className="flex items-center justify-between py-1.5 px-3 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition">
+                        <span className="text-sm text-white/70">{item.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => item.setter(!item.value)}
+                          className={`relative w-9 h-5 rounded-full transition-colors ${
+                            item.value ? "bg-green-500" : "bg-white/10"
+                          }`}
+                        >
+                          <div className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                            item.value ? "translate-x-4" : ""
+                          }`} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* WhatsApp Info */}
+            <div className="rounded-lg bg-green-500/5 border border-green-500/15 p-3 space-y-2">
+              <p className="text-xs text-green-300/80">
+                Notifications are sent to the admin WhatsApp number for: new user registrations, payment approvals, Stripe completions, refunds, Traffic Bot orders, and wallet deposit requests.
+              </p>
+              <p className="text-xs text-green-300/60">
+                First-time setup: start the WhatsApp service, visit the <code className="bg-white/5 px-1 rounded">/qr</code> endpoint to scan the QR code with your phone.
+              </p>
+            </div>
+          </div>
+
+          {/* Save WhatsApp Settings */}
+          {waMessage && (
+            <p className={`text-sm ${waMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+              {waMessage}
+            </p>
+          )}
+
+          <button
+            onClick={handleSaveWhatsApp}
+            disabled={waSaving}
+            className="btn-glow w-full py-3 disabled:opacity-50"
+          >
+            {waSaving ? "Saving..." : "Save WhatsApp Settings"}
           </button>
         </>
       )}

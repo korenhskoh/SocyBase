@@ -12,6 +12,7 @@ from app.models.payment import Payment
 from app.models.credit import CreditPackage, CreditBalance, CreditTransaction
 from app.models.system import SystemSetting
 from app.config import get_settings
+from app.services.whatsapp_notify import notify_payment_completed
 from app.schemas.payment import (
     StripeCheckoutRequest,
     StripeCheckoutResponse,
@@ -204,6 +205,9 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 )
 
         await db.flush()
+        await notify_payment_completed(
+            str(payment.id), payment.amount_cents, payment.currency, credits_added, db,
+        )
         logger.info(f"Stripe webhook: payment {payment_id} completed, {credits_added} credits added")
         return {"status": "completed", "payment_id": payment_id}
 

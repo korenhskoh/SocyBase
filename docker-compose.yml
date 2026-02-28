@@ -159,6 +159,29 @@ services:
         condition: service_healthy
 
   # ========================
+  # WhatsApp Notification Service (Baileys)
+  # ========================
+  whatsapp:
+    build:
+      context: ./whatsapp-service
+      dockerfile: Dockerfile
+    container_name: socybase-whatsapp
+    restart: unless-stopped
+    environment:
+      - PORT=3001
+      - AUTH_DIR=/app/auth_state
+      - LOG_LEVEL=info
+    volumes:
+      - whatsapp_auth:/app/auth_state
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ========================
   # Frontend (Next.js)
   # ========================
   frontend:
@@ -199,3 +222,4 @@ volumes:
   redisdata:
   uploads:
   exports:
+  whatsapp_auth:

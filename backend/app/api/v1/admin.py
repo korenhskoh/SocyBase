@@ -12,6 +12,7 @@ from app.models.payment import Payment
 from app.models.credit import CreditBalance, CreditPackage, CreditTransaction
 from app.models.audit import AuditLog
 from app.models.system import SystemSetting
+from app.services.whatsapp_notify import notify_payment_approved, notify_refund_processed
 from pydantic import BaseModel, Field
 from app.schemas.admin import (
     AdminDashboardResponse,
@@ -187,6 +188,10 @@ async def approve_payment(
         db.add(transaction)
 
     await db.flush()
+    await notify_payment_approved(
+        str(payment.id), payment.amount_cents, payment.currency,
+        credits_to_add, payment.method, db,
+    )
     return payment
 
 
@@ -257,6 +262,10 @@ async def refund_payment(
             db.add(transaction)
 
     await db.flush()
+    await notify_refund_processed(
+        str(payment.id), payment.amount_cents, payment.currency,
+        credits_to_deduct, payment.method, db,
+    )
     return payment
 
 
@@ -745,3 +754,69 @@ async def update_payment_settings(
     if resp.get("stripe_webhook_secret"):
         resp["stripe_webhook_secret"] = PAYMENT_MASKED
     return resp
+
+
+# ── WhatsApp Notification Settings ───────────────────────────────────
+
+
+WHATSAPP_SETTINGS_KEY = "whatsapp_settings"
+
+
+class WhatsAppSettingsUpdate(BaseModel):
+    whatsapp_service_url: str | None = None
+    whatsapp_admin_number: str | None = None
+    whatsapp_enabled: bool = True
+    # Per-notification toggles
+    notify_new_user: bool | None = None
+    notify_payment_approved: bool | None = None
+    notify_payment_completed: bool | None = None
+    notify_refund: bool | None = None
+    notify_traffic_bot_order: bool | None = None
+    notify_wallet_deposit: bool | None = None
+
+
+@router.get("/whatsapp-settings")
+async def get_whatsapp_settings(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get WhatsApp notification settings."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == WHATSAPP_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {}
+    return dict(setting.value)
+
+
+@router.put("/whatsapp-settings")
+async def update_whatsapp_settings(
+    data: WhatsAppSettingsUpdate,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update WhatsApp notification settings."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == WHATSAPP_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    existing = dict(setting.value) if setting else {}
+
+    new_value = data.model_dump(exclude_none=True)
+    merged = {**existing, **new_value}
+
+    if setting:
+        setting.value = merged
+        setting.updated_by = admin.id
+    else:
+        setting = SystemSetting(
+            key=WHATSAPP_SETTINGS_KEY,
+            value=merged,
+            description="WhatsApp notification configuration (Baileys)",
+            updated_by=admin.id,
+        )
+        db.add(setting)
+
+    await db.commit()
+    return merged
