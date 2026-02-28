@@ -193,7 +193,7 @@ export default function AdminPaymentsPage() {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex gap-2">
-                      {p.status === "pending" && (
+                      {p.status === "pending" && p.method === "bank_transfer" && (
                         <>
                           <button
                             onClick={() => handleApprove(p.id)}
@@ -208,6 +208,9 @@ export default function AdminPaymentsPage() {
                             Reject
                           </button>
                         </>
+                      )}
+                      {p.status === "pending" && p.method === "stripe" && (
+                        <span className="text-xs text-white/30 italic">Awaiting Stripe</span>
                       )}
                       {p.status === "completed" && (
                         <button
