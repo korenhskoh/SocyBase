@@ -9,9 +9,20 @@ from alembic import context
 from app.database import Base
 from app.models import *  # noqa: F401, F403
 
+import os
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Use DATABASE_URL from environment if available (Railway, Docker, etc.)
+# Falls back to the URL in alembic.ini for local development.
+_db_url = os.environ.get("DATABASE_URL")
+if _db_url:
+    # Railway may provide postgresql:// but asyncpg needs postgresql+asyncpg://
+    if _db_url.startswith("postgresql://"):
+        _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    config.set_main_option("sqlalchemy.url", _db_url)
 
 target_metadata = Base.metadata
 
