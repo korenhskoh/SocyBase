@@ -429,7 +429,7 @@ async def delete_package(
     package = result.scalar_one_or_none()
     if not package:
         raise HTTPException(status_code=404, detail="Package not found")
-    package.is_active = False
+    await db.delete(package)
     await db.flush()
 
 

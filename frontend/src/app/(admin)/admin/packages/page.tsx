@@ -114,7 +114,7 @@ export default function AdminPackagesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Deactivate this package?")) return;
+    if (!confirm("Permanently delete this package? This cannot be undone.")) return;
     try {
       await adminApi.deletePackage(id);
       fetchPackages();
