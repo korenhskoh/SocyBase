@@ -85,6 +85,34 @@ export default function AdminUsersPage() {
     }
   };
 
+  const handleDeactivateTenant = async (tenantId: string, currentlyActive: boolean) => {
+    const action = currentlyActive ? "DEACTIVATE" : "REACTIVATE";
+    if (currentlyActive) {
+      const confirmed = prompt(
+        `WARNING: Deactivating this tenant will:\n` +
+        `- Disable ALL users under this tenant\n` +
+        `- Users will not be able to login or use the platform\n` +
+        `- Active jobs and subscriptions will be affected\n\n` +
+        `Type "DEACTIVATE" to confirm:`
+      );
+      if (confirmed !== "DEACTIVATE") return;
+    } else {
+      if (!confirm("Reactivate this tenant account and all its users?")) return;
+    }
+    try {
+      await adminApi.updateTenantStatus(tenantId, !currentlyActive);
+      // Update all users for this tenant in local state
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.tenant_id === tenantId ? { ...u, is_active: !currentlyActive } : u
+        )
+      );
+      alert(`Tenant ${action.toLowerCase()}d successfully. All users under this tenant have been ${currentlyActive ? "deactivated" : "reactivated"}.`);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || `Failed to ${action.toLowerCase()} tenant`);
+    }
+  };
+
   const startEditConcurrency = (tenantId: string) => {
     setEditingTenant(tenantId);
     setEditValue(String(concurrencyLimits[tenantId] ?? 3));
@@ -180,7 +208,7 @@ export default function AdminUsersPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px]">
+          <table className="w-full min-w-[1050px]">
             <thead>
               <tr className="border-b border-white/5">
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-4 md:px-6 py-3">
@@ -203,6 +231,9 @@ export default function AdminUsersPage() {
                 </th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-4 md:px-6 py-3">
                   Joined
+                </th>
+                <th className="text-right text-xs font-medium text-white/40 uppercase tracking-wider px-4 md:px-6 py-3">
+                  Tenant
                 </th>
               </tr>
             </thead>
@@ -360,6 +391,20 @@ export default function AdminUsersPage() {
                   </td>
                   <td className="px-4 md:px-6 py-4 text-xs text-white/40">
                     {formatDate(u.created_at)}
+                  </td>
+                  <td className="px-4 md:px-6 py-4 text-right">
+                    {u.role !== "super_admin" && (
+                      <button
+                        onClick={() => handleDeactivateTenant(u.tenant_id, u.is_active)}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition border ${
+                          u.is_active
+                            ? "text-red-400 bg-red-400/10 border-red-400/20 hover:bg-red-400/20"
+                            : "text-emerald-400 bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/20"
+                        }`}
+                      >
+                        {u.is_active ? "Deactivate" : "Reactivate"}
+                      </button>
+                    )}
                   </td>
                 </tr>
                 );

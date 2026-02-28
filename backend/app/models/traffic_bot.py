@@ -122,3 +122,32 @@ class TrafficBotOrder(Base):
     tenant = relationship("Tenant")
     user = relationship("User")
     service = relationship("TrafficBotService", back_populates="orders")
+
+
+class TrafficBotWalletDeposit(Base):
+    __tablename__ = "traffic_bot_wallet_deposits"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False,
+    )
+    amount: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), default="pending"
+    )  # pending, approved, rejected
+    bank_reference: Mapped[str] = mapped_column(String(255), nullable=False)
+    proof_url: Mapped[str | None] = mapped_column(String(500))
+    admin_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    tenant = relationship("Tenant")
+    user = relationship("User")

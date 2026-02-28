@@ -3,14 +3,18 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
+from sqlalchemy import select
+
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
+from app.models.traffic_bot import TrafficBotWalletDeposit
 from app.services import traffic_bot_service as svc
 from app.schemas.traffic_bot import (
     OrderCreateRequest, OrderResponse, OrderListResponse,
     ServiceResponse, PriceCalcResponse,
     WalletResponse, TransactionResponse,
+    WalletDepositSubmitRequest, WalletDepositResponse,
 )
 
 router = APIRouter()
@@ -159,3 +163,36 @@ async def get_wallet_transactions(
     db: AsyncSession = Depends(get_db),
 ):
     return await svc.get_transactions(db, user.tenant_id, limit, offset)
+
+
+@router.post("/wallet/deposit-request", response_model=WalletDepositResponse)
+async def submit_deposit_request(
+    body: WalletDepositSubmitRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    deposit = TrafficBotWalletDeposit(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        amount=body.amount,
+        bank_reference=body.bank_reference,
+        proof_url=body.proof_url,
+        status="pending",
+    )
+    db.add(deposit)
+    await db.flush()
+    return deposit
+
+
+@router.get("/wallet/deposits", response_model=list[WalletDepositResponse])
+async def list_my_deposits(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(TrafficBotWalletDeposit)
+        .where(TrafficBotWalletDeposit.tenant_id == user.tenant_id)
+        .order_by(TrafficBotWalletDeposit.created_at.desc())
+        .limit(20)
+    )
+    return result.scalars().all()

@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { trafficBotApi } from "@/lib/api-client";
-import type { TrafficBotService, TrafficBotOrderList } from "@/types";
+import type { TrafficBotService, TrafficBotOrderList, TrafficBotWalletDeposit } from "@/types";
 
 export default function AdminTrafficBotPage() {
-  const [tab, setTab] = useState<"services" | "orders">("services");
+  const [tab, setTab] = useState<"services" | "orders" | "deposits">("services");
   const [services, setServices] = useState<TrafficBotService[]>([]);
   const [orders, setOrders] = useState<TrafficBotOrderList | null>(null);
+  const [depositRequests, setDepositRequests] = useState<TrafficBotWalletDeposit[]>([]);
+  const [depositStatusFilter, setDepositStatusFilter] = useState("pending");
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [apiBalance, setApiBalance] = useState<{ balance: string; currency: string } | null>(null);
@@ -50,9 +52,40 @@ export default function AdminTrafficBotPage() {
     setOrders(r.data);
   }
 
+  async function loadDeposits(status?: string) {
+    const r = await trafficBotApi.getDepositRequests(status || depositStatusFilter);
+    setDepositRequests(r.data);
+  }
+
   useEffect(() => {
     if (tab === "orders" && !orders) loadOrders();
+    if (tab === "deposits") loadDeposits();
   }, [tab]);
+
+  useEffect(() => {
+    if (tab === "deposits") loadDeposits(depositStatusFilter);
+  }, [depositStatusFilter]);
+
+  async function handleApproveDeposit(id: string) {
+    const notes = prompt("Admin notes (optional):");
+    try {
+      await trafficBotApi.approveDeposit(id, notes || undefined);
+      loadDeposits();
+    } catch (err: unknown) {
+      alert("Failed: " + ((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Unknown error"));
+    }
+  }
+
+  async function handleRejectDeposit(id: string) {
+    const notes = prompt("Rejection reason:");
+    if (!notes) return;
+    try {
+      await trafficBotApi.rejectDeposit(id, notes);
+      loadDeposits();
+    } catch (err: unknown) {
+      alert("Failed: " + ((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Unknown error"));
+    }
+  }
 
   const categories = useMemo(() => {
     const cats = new Set(services.map((s) => s.category));
@@ -162,7 +195,7 @@ export default function AdminTrafficBotPage() {
 
       {/* Tabs */}
       <div className="flex gap-2 border-b border-white/10 pb-0">
-        {(["services", "orders"] as const).map((t) => (
+        {(["services", "orders", "deposits"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -172,7 +205,7 @@ export default function AdminTrafficBotPage() {
                 : "text-white/40 border-transparent hover:text-white/60"
             }`}
           >
-            {t === "services" ? "Services" : "All Orders"}
+            {t === "services" ? "Services" : t === "orders" ? "All Orders" : "Deposit Requests"}
           </button>
         ))}
       </div>
@@ -407,6 +440,108 @@ export default function AdminTrafficBotPage() {
                         </td>
                         <td className="py-2 px-4 text-right text-white/30 text-xs">
                           {new Date(o.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Deposits Tab */}
+      {tab === "deposits" && (
+        <div className="space-y-4">
+          {/* Status filter */}
+          <div className="flex gap-2">
+            {["pending", "approved", "rejected", ""].map((s) => (
+              <button
+                key={s}
+                onClick={() => setDepositStatusFilter(s)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition border ${
+                  depositStatusFilter === s
+                    ? "bg-primary-500/20 text-primary-400 border-primary-500/30"
+                    : "bg-white/5 text-white/50 border-white/10 hover:bg-white/10"
+                }`}
+              >
+                {s || "All"}
+              </button>
+            ))}
+          </div>
+
+          {depositRequests.length === 0 ? (
+            <div className="glass-card p-12 text-center">
+              <p className="text-white/40 text-sm">No deposit requests</p>
+            </div>
+          ) : (
+            <div className="glass-card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/5">
+                      <th className="text-left py-3 px-4 text-white/40 font-medium">Amount</th>
+                      <th className="text-left py-3 px-4 text-white/40 font-medium">Reference</th>
+                      <th className="text-left py-3 px-4 text-white/40 font-medium">Proof</th>
+                      <th className="text-center py-3 px-4 text-white/40 font-medium">Status</th>
+                      <th className="text-left py-3 px-4 text-white/40 font-medium">Tenant</th>
+                      <th className="text-right py-3 px-4 text-white/40 font-medium">Date</th>
+                      <th className="text-right py-3 px-4 text-white/40 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {depositRequests.map((d) => (
+                      <tr key={d.id} className="border-b border-white/5 hover:bg-white/[0.02]">
+                        <td className="py-2 px-4 text-white font-medium">RM{d.amount.toFixed(2)}</td>
+                        <td className="py-2 px-4 text-white/60 text-xs">{d.bank_reference}</td>
+                        <td className="py-2 px-4">
+                          {d.proof_url ? (
+                            <a
+                              href={d.proof_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-primary-400 hover:text-primary-300"
+                            >
+                              View Proof
+                            </a>
+                          ) : (
+                            <span className="text-xs text-white/20">None</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-4 text-center">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                            d.status === "approved" ? "text-green-400 bg-green-400/10" :
+                            d.status === "rejected" ? "text-red-400 bg-red-400/10" :
+                            "text-amber-400 bg-amber-400/10"
+                          }`}>
+                            {d.status}
+                          </span>
+                        </td>
+                        <td className="py-2 px-4 text-white/30 text-xs truncate max-w-[120px]">{d.tenant_id.slice(0, 8)}...</td>
+                        <td className="py-2 px-4 text-right text-white/30 text-xs">
+                          {new Date(d.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="py-2 px-4 text-right">
+                          {d.status === "pending" && (
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                onClick={() => handleApproveDeposit(d.id)}
+                                className="text-xs px-3 py-1.5 rounded-lg font-medium text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 hover:bg-emerald-400/20 transition"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => handleRejectDeposit(d.id)}
+                                className="text-xs px-3 py-1.5 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          )}
+                          {d.admin_notes && (
+                            <p className="text-xs text-white/20 mt-1">{d.admin_notes}</p>
+                          )}
                         </td>
                       </tr>
                     ))}

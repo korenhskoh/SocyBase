@@ -197,9 +197,9 @@ async def refund_payment(
     admin: User = Depends(get_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Refund a completed Stripe payment. Deducts credited amount from tenant balance."""
+    """Refund a completed payment. For Stripe: auto-refund via API. For bank transfer: marks as refunded (admin handles manually)."""
     import stripe as stripe_lib
-    from app.config import get_settings
+    from app.api.v1.payments import _get_stripe_keys
 
     result = await db.execute(
         select(Payment).where(Payment.id == payment_id, Payment.status == "completed")
@@ -208,10 +208,10 @@ async def refund_payment(
     if not payment:
         raise HTTPException(status_code=404, detail="Completed payment not found")
 
-    # Stripe refund
+    # Stripe refund via API
     if payment.method == "stripe" and payment.stripe_payment_intent_id:
-        settings = get_settings()
-        stripe_lib.api_key = settings.stripe_secret_key
+        stripe_keys = await _get_stripe_keys(db)
+        stripe_lib.api_key = stripe_keys["secret_key"]
         try:
             stripe_lib.Refund.create(payment_intent=payment.stripe_payment_intent_id)
         except Exception as e:
@@ -468,6 +468,32 @@ async def set_tenant_concurrency(
     tenant.settings = settings
     await db.flush()
     return {"max_concurrent_jobs": data.max_concurrent_jobs}
+
+
+@router.put("/tenants/{tenant_id}/status")
+async def update_tenant_status(
+    tenant_id: UUID,
+    data: UpdateTenantRequest,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Activate or deactivate a tenant account. Deactivating also deactivates all users."""
+    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    if data.is_active is not None:
+        tenant.is_active = data.is_active
+        # Also deactivate/reactivate all users under this tenant
+        users_result = await db.execute(
+            select(User).where(User.tenant_id == tenant_id)
+        )
+        for user in users_result.scalars().all():
+            user.is_active = data.is_active
+
+    await db.flush()
+    return {"tenant_id": str(tenant_id), "is_active": tenant.is_active}
 
 
 # ---------------------------------------------------------------------------

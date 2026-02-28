@@ -618,3 +618,16 @@ export interface TrafficBotPriceCalc {
   fee_amount: number;
   total_cost: number;
 }
+
+export interface TrafficBotWalletDeposit {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  amount: number;
+  status: string;
+  bank_reference: string;
+  proof_url: string | null;
+  admin_notes: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+}

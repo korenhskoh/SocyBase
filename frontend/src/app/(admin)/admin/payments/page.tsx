@@ -53,8 +53,12 @@ export default function AdminPaymentsPage() {
     }
   };
 
-  const handleRefund = async (paymentId: string) => {
-    if (!confirm("Are you sure you want to refund this payment? Credits will be deducted from the tenant.")) return;
+  const handleRefund = async (paymentId: string, method: string) => {
+    const isStripe = method === "stripe";
+    const message = isStripe
+      ? "This will automatically refund the payment via Stripe and deduct credits from the tenant. Continue?"
+      : "This will mark the payment as refunded and deduct credits from the tenant.\n\nIMPORTANT: You must manually process the bank transfer refund to the customer outside this system.\n\nContinue?";
+    if (!confirm(message)) return;
     const notes = prompt("Refund reason (optional):");
     try {
       await adminApi.refundPayment(paymentId, notes || undefined);
@@ -212,12 +216,20 @@ export default function AdminPaymentsPage() {
                       {p.status === "pending" && p.method === "stripe" && (
                         <span className="text-xs text-white/30 italic">Awaiting Stripe</span>
                       )}
-                      {p.status === "completed" && (
+                      {p.status === "completed" && p.method === "stripe" && (
                         <button
-                          onClick={() => handleRefund(p.id)}
+                          onClick={() => handleRefund(p.id, p.method)}
                           className="text-xs px-3 py-1.5 rounded-lg font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 hover:bg-amber-400/20 transition"
                         >
-                          Refund
+                          Refund (Stripe)
+                        </button>
+                      )}
+                      {p.status === "completed" && p.method === "bank_transfer" && (
+                        <button
+                          onClick={() => handleRefund(p.id, p.method)}
+                          className="text-xs px-3 py-1.5 rounded-lg font-medium text-orange-400 bg-orange-400/10 border border-orange-400/20 hover:bg-orange-400/20 transition"
+                        >
+                          Mark Refunded
                         </button>
                       )}
                     </div>

@@ -221,6 +221,8 @@ export const adminApi = {
     api.get(`/admin/tenants/${tenantId}/concurrency`),
   setTenantConcurrency: (tenantId: string, maxConcurrentJobs: number) =>
     api.put(`/admin/tenants/${tenantId}/concurrency`, { max_concurrent_jobs: maxConcurrentJobs }),
+  updateTenantStatus: (tenantId: string, isActive: boolean) =>
+    api.put(`/admin/tenants/${tenantId}/status`, { is_active: isActive }),
   getFeatureFlags: () => api.get("/admin/feature-flags"),
   updateFeatureFlag: (key: string, enabled: boolean) =>
     api.put("/admin/feature-flags", { key, enabled }),
@@ -401,6 +403,9 @@ export const trafficBotApi = {
   getWallet: () => api.get("/traffic-bot/wallet"),
   getTransactions: (params?: { limit?: number; offset?: number }) =>
     api.get("/traffic-bot/wallet/transactions", { params }),
+  submitDepositRequest: (data: { amount: number; bank_reference: string; proof_url?: string }) =>
+    api.post("/traffic-bot/wallet/deposit-request", data),
+  getMyDeposits: () => api.get("/traffic-bot/wallet/deposits"),
   // Admin
   syncServices: () => api.post("/admin/traffic-bot/services/sync"),
   getAllServices: (category?: string) =>
@@ -414,6 +419,12 @@ export const trafficBotApi = {
   depositWallet: (data: { tenant_id: string; amount: number; description?: string }) =>
     api.post("/admin/traffic-bot/wallet/deposit", data),
   getApiBalance: () => api.get("/admin/traffic-bot/api-balance"),
+  getDepositRequests: (status?: string) =>
+    api.get("/admin/traffic-bot/wallet/deposits", { params: status ? { status } : {} }),
+  approveDeposit: (id: string, admin_notes?: string) =>
+    api.post(`/admin/traffic-bot/wallet/deposits/${id}/approve`, { admin_notes }),
+  rejectDeposit: (id: string, admin_notes?: string) =>
+    api.post(`/admin/traffic-bot/wallet/deposits/${id}/reject`, { admin_notes }),
 };
 
 export default api;

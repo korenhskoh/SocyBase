@@ -1,4 +1,5 @@
 """Traffic Bot admin API routes."""
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
@@ -7,13 +8,13 @@ from uuid import UUID
 from app.database import get_db
 from app.dependencies import get_current_admin
 from app.models.user import User
-from app.models.traffic_bot import TrafficBotService
+from app.models.traffic_bot import TrafficBotService, TrafficBotWalletDeposit
 from app.services import traffic_bot_service as svc
 from app.services import traffic_bot_api
 from app.schemas.traffic_bot import (
     ServiceResponse, ServiceUpdateRequest, BulkFeeUpdateRequest,
     WalletDepositRequest, TransactionResponse, OrderResponse, OrderListResponse,
-    APIBalanceResponse,
+    APIBalanceResponse, WalletDepositResponse, WalletDepositApproveRequest,
 )
 
 router = APIRouter()
@@ -123,3 +124,73 @@ async def get_api_balance(
         balance=str(data.get("balance", "0")),
         currency=str(data.get("currency", "USD")),
     )
+
+
+# ── Wallet Deposit Requests ───────────────────────────────
+
+@router.get("/wallet/deposits", response_model=list[WalletDepositResponse])
+async def list_deposit_requests(
+    status: str | None = None,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    q = select(TrafficBotWalletDeposit).order_by(TrafficBotWalletDeposit.created_at.desc())
+    if status:
+        q = q.where(TrafficBotWalletDeposit.status == status)
+    q = q.limit(100)
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
+@router.post("/wallet/deposits/{deposit_id}/approve", response_model=WalletDepositResponse)
+async def approve_deposit(
+    deposit_id: UUID,
+    body: WalletDepositApproveRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(TrafficBotWalletDeposit).where(
+            TrafficBotWalletDeposit.id == deposit_id,
+            TrafficBotWalletDeposit.status == "pending",
+        )
+    )
+    deposit = result.scalar_one_or_none()
+    if not deposit:
+        raise HTTPException(404, "Pending deposit not found")
+
+    # Credit the wallet
+    await svc.deposit(
+        db, deposit.tenant_id, float(deposit.amount),
+        f"Bank transfer deposit (ref: {deposit.bank_reference})",
+    )
+
+    deposit.status = "approved"
+    deposit.admin_notes = body.admin_notes
+    deposit.reviewed_at = datetime.now(timezone.utc)
+    await db.flush()
+    return deposit
+
+
+@router.post("/wallet/deposits/{deposit_id}/reject", response_model=WalletDepositResponse)
+async def reject_deposit(
+    deposit_id: UUID,
+    body: WalletDepositApproveRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(TrafficBotWalletDeposit).where(
+            TrafficBotWalletDeposit.id == deposit_id,
+            TrafficBotWalletDeposit.status == "pending",
+        )
+    )
+    deposit = result.scalar_one_or_none()
+    if not deposit:
+        raise HTTPException(404, "Pending deposit not found")
+
+    deposit.status = "rejected"
+    deposit.admin_notes = body.admin_notes
+    deposit.reviewed_at = datetime.now(timezone.utc)
+    await db.flush()
+    return deposit

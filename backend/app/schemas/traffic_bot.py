@@ -101,3 +101,30 @@ class TransactionResponse(BaseModel):
 class APIBalanceResponse(BaseModel):
     balance: str
     currency: str
+
+
+# ── Wallet Deposit schemas ─────────────────────────────────
+
+class WalletDepositSubmitRequest(BaseModel):
+    amount: float = Field(gt=0)
+    bank_reference: str = Field(min_length=1, max_length=255)
+    proof_url: str | None = None
+
+
+class WalletDepositResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    user_id: UUID
+    amount: float
+    status: str
+    bank_reference: str
+    proof_url: str | None = None
+    admin_notes: str | None = None
+    created_at: datetime
+    reviewed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class WalletDepositApproveRequest(BaseModel):
+    admin_notes: str | None = None
