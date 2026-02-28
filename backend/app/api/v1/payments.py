@@ -10,6 +10,7 @@ from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.payment import Payment
 from app.models.credit import CreditPackage, CreditBalance, CreditTransaction
+from app.models.system import SystemSetting
 from app.config import get_settings
 from app.schemas.payment import (
     StripeCheckoutRequest,
@@ -21,6 +22,21 @@ from app.schemas.payment import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _get_stripe_keys(db: AsyncSession) -> dict:
+    """Read Stripe keys from admin settings (DB), falling back to env vars."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "payment_settings")
+    )
+    setting = result.scalar_one_or_none()
+    db_settings = dict(setting.value) if setting else {}
+
+    env = get_settings()
+    return {
+        "secret_key": db_settings.get("stripe_secret_key") or env.stripe_secret_key,
+        "webhook_secret": db_settings.get("stripe_webhook_secret") or env.stripe_webhook_secret,
+    }
 
 
 async def _credit_tenant(
@@ -88,8 +104,11 @@ async def create_stripe_checkout(
     await db.flush()
 
     # Create Stripe Checkout Session
-    settings = get_settings()
-    stripe.api_key = settings.stripe_secret_key
+    stripe_keys = await _get_stripe_keys(db)
+    stripe.api_key = stripe_keys["secret_key"]
+
+    if not stripe.api_key:
+        raise HTTPException(status_code=500, detail="Stripe is not configured. Please set the Stripe secret key in admin settings.")
 
     if not package.stripe_price_id:
         raise HTTPException(status_code=400, detail="This package is not available for Stripe payments")
@@ -98,6 +117,7 @@ async def create_stripe_checkout(
     is_subscription = package.billing_interval in ("monthly", "annual")
     checkout_mode = "subscription" if is_subscription else "payment"
 
+    settings = get_settings()
     session = stripe.checkout.Session.create(
         mode=checkout_mode,
         payment_method_types=["card"],
@@ -123,8 +143,8 @@ async def create_stripe_checkout(
 
 @router.post("/stripe/webhook")
 async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
-    settings = get_settings()
-    stripe.api_key = settings.stripe_secret_key
+    stripe_keys = await _get_stripe_keys(db)
+    stripe.api_key = stripe_keys["secret_key"]
 
     # 1. Verify webhook signature
     payload = await request.body()
@@ -133,7 +153,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Missing Stripe signature header")
 
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, settings.stripe_webhook_secret)
+        event = stripe.Webhook.construct_event(payload, sig_header, stripe_keys["webhook_secret"])
     except stripe.SignatureVerificationError:
         raise HTTPException(status_code=400, detail="Invalid signature")
     except ValueError:
@@ -327,8 +347,8 @@ async def cancel_subscription(
     if not payment or not payment.stripe_subscription_id:
         raise HTTPException(status_code=404, detail="No active subscription found")
 
-    settings = get_settings()
-    stripe.api_key = settings.stripe_secret_key
+    stripe_keys = await _get_stripe_keys(db)
+    stripe.api_key = stripe_keys["secret_key"]
 
     try:
         stripe.Subscription.cancel(payment.stripe_subscription_id)
@@ -359,8 +379,8 @@ async def get_subscription_status(
         return {"has_subscription": False}
 
     # Fetch subscription status from Stripe
-    settings = get_settings()
-    stripe.api_key = settings.stripe_secret_key
+    stripe_keys = await _get_stripe_keys(db)
+    stripe.api_key = stripe_keys["secret_key"]
 
     try:
         sub = stripe.Subscription.retrieve(payment.stripe_subscription_id)

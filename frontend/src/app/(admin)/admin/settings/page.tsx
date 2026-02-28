@@ -11,6 +11,8 @@ const PAYMENT_MODELS = [
   { value: "both", label: "Both", desc: "Users choose one-time or subscription" },
 ];
 
+const MASKED = "sk_****";
+
 export default function AdminSettingsPage() {
   const { user } = useAuth(true);
   const [loading, setLoading] = useState(true);
@@ -25,6 +27,9 @@ export default function AdminSettingsPage() {
   const [stripePubKey, setStripePubKey] = useState("");
   const [stripeSecretKey, setStripeSecretKey] = useState("");
   const [stripeWebhookSecret, setStripeWebhookSecret] = useState("");
+  // Track whether secrets are saved on server (came back masked)
+  const [secretKeySaved, setSecretKeySaved] = useState(false);
+  const [webhookSecretSaved, setWebhookSecretSaved] = useState(false);
 
   // Bank transfer settings
   const [bankEnabled, setBankEnabled] = useState(true);
@@ -43,8 +48,22 @@ export default function AdminSettingsPage() {
           if (d.payment_model) setPaymentModel(d.payment_model);
           if (d.stripe_enabled !== undefined) setStripeEnabled(d.stripe_enabled);
           if (d.stripe_publishable_key) setStripePubKey(d.stripe_publishable_key);
-          if (d.stripe_secret_key) setStripeSecretKey(d.stripe_secret_key);
-          if (d.stripe_webhook_secret) setStripeWebhookSecret(d.stripe_webhook_secret);
+          if (d.stripe_secret_key) {
+            if (d.stripe_secret_key === MASKED) {
+              setSecretKeySaved(true);
+              setStripeSecretKey("");
+            } else {
+              setStripeSecretKey(d.stripe_secret_key);
+            }
+          }
+          if (d.stripe_webhook_secret) {
+            if (d.stripe_webhook_secret === MASKED) {
+              setWebhookSecretSaved(true);
+              setStripeWebhookSecret("");
+            } else {
+              setStripeWebhookSecret(d.stripe_webhook_secret);
+            }
+          }
           if (d.bank_transfer_enabled !== undefined) setBankEnabled(d.bank_transfer_enabled);
           if (d.bank_name) setBankName(d.bank_name);
           if (d.bank_account_name) setBankAccountName(d.bank_account_name);
@@ -61,12 +80,15 @@ export default function AdminSettingsPage() {
     setSaving(true);
     setMessage("");
     try {
+      // Send masked placeholder for unchanged secrets so backend preserves them
+      const secretToSend = stripeSecretKey || (secretKeySaved ? MASKED : undefined);
+      const webhookToSend = stripeWebhookSecret || (webhookSecretSaved ? MASKED : undefined);
       await adminApi.updatePaymentSettings({
         payment_model: paymentModel,
         stripe_enabled: stripeEnabled,
         stripe_publishable_key: stripePubKey || undefined,
-        stripe_secret_key: stripeSecretKey || undefined,
-        stripe_webhook_secret: stripeWebhookSecret || undefined,
+        stripe_secret_key: secretToSend,
+        stripe_webhook_secret: webhookToSend,
         bank_transfer_enabled: bankEnabled,
         bank_name: bankName || undefined,
         bank_account_name: bankAccountName || undefined,
@@ -194,22 +216,32 @@ export default function AdminSettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/60 mb-1">Secret Key</label>
+                  <label className="block text-xs text-white/60 mb-1">
+                    Secret Key
+                    {secretKeySaved && !stripeSecretKey && (
+                      <span className="ml-2 text-emerald-400">Saved (hidden for security)</span>
+                    )}
+                  </label>
                   <input
                     type="password"
                     value={stripeSecretKey}
                     onChange={(e) => setStripeSecretKey(e.target.value)}
-                    placeholder="sk_live_..."
+                    placeholder={secretKeySaved ? "Enter new key to replace existing" : "sk_live_..."}
                     className="input-glass text-sm"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/60 mb-1">Webhook Secret</label>
+                  <label className="block text-xs text-white/60 mb-1">
+                    Webhook Secret
+                    {webhookSecretSaved && !stripeWebhookSecret && (
+                      <span className="ml-2 text-emerald-400">Saved (hidden for security)</span>
+                    )}
+                  </label>
                   <input
                     type="password"
                     value={stripeWebhookSecret}
                     onChange={(e) => setStripeWebhookSecret(e.target.value)}
-                    placeholder="whsec_..."
+                    placeholder={webhookSecretSaved ? "Enter new key to replace existing" : "whsec_..."}
                     className="input-glass text-sm"
                   />
                 </div>
