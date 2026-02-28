@@ -5,7 +5,7 @@ import { fbAdsApi } from "@/lib/api-client";
 import type { FBCampaignItem, FBAdSetItem, FBAdItem, FBInsightSummary, FBConnectionStatus, PaginatedCampaigns } from "@/types";
 
 type Tab = "campaigns" | "adsets" | "ads";
-type DateRange = "7d" | "14d" | "28d" | "90d";
+type DateRange = "7d" | "14d" | "28d" | "90d" | "custom";
 type SortBy = "spend" | "clicks" | "results" | "roas" | "ctr" | "name";
 type StatusFilter = "ALL" | "ACTIVE" | "PAUSED";
 
@@ -27,12 +27,22 @@ function statusColor(status: string): string {
   }
 }
 
-function getDateRange(range: DateRange): [string, string] {
+function getPresetDateRange(range: Exclude<DateRange, "custom">): [string, string] {
   const to = new Date();
   const from = new Date();
   const days = range === "7d" ? 7 : range === "14d" ? 14 : range === "28d" ? 28 : 90;
   from.setDate(from.getDate() - days);
   return [from.toISOString().split("T")[0], to.toISOString().split("T")[0]];
+}
+
+function todayStr(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
+function daysAgoStr(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().split("T")[0];
 }
 
 export default function FBPerformancePage() {
@@ -57,7 +67,13 @@ export default function FBPerformancePage() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
-  const [df, dt] = getDateRange(dateRange);
+  // Custom date range state
+  const [customFrom, setCustomFrom] = useState<string>(daysAgoStr(90));
+  const [customTo, setCustomTo] = useState<string>(todayStr());
+
+  const [df, dt] = dateRange === "custom"
+    ? [customFrom, customTo]
+    : getPresetDateRange(dateRange);
 
   const loadData = useCallback(async () => {
     try {
@@ -89,7 +105,7 @@ export default function FBPerformancePage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   // Reset to page 1 when filters change
-  useEffect(() => { setPage(1); }, [dateRange, sortBy, sortOrder, statusFilter, perPage]);
+  useEffect(() => { setPage(1); }, [dateRange, customFrom, customTo, sortBy, sortOrder, statusFilter, perPage]);
 
   const loadAdSets = async (campaign: FBCampaignItem) => {
     setSelectedCampaign(campaign);
@@ -204,6 +220,7 @@ export default function FBPerformancePage() {
     { label: "14 Days", value: "14d" },
     { label: "28 Days", value: "28d" },
     { label: "90 Days", value: "90d" },
+    { label: "Custom", value: "custom" },
   ];
 
   const statusFilters: { label: string; value: StatusFilter }[] = [
@@ -225,9 +242,10 @@ export default function FBPerformancePage() {
               ? `Last synced ${new Date(connection.last_synced_at).toLocaleString()}`
               : "Not synced yet"}
             {totalCampaigns > 0 && ` \u00B7 ${totalCampaigns} campaigns`}
+            {` \u00B7 ${df} to ${dt}`}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Date Range */}
           <div className="flex bg-white/[0.03] rounded-lg border border-white/10 p-0.5">
             {dateRanges.map(r => (
@@ -244,6 +262,26 @@ export default function FBPerformancePage() {
               </button>
             ))}
           </div>
+          {dateRange === "custom" && (
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                max={customTo}
+                className="bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/70 outline-none focus:border-white/30 transition [color-scheme:dark]"
+              />
+              <span className="text-white/30 text-xs">to</span>
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                min={customFrom}
+                max={todayStr()}
+                className="bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/70 outline-none focus:border-white/30 transition [color-scheme:dark]"
+              />
+            </div>
+          )}
           <button
             onClick={handleSync}
             disabled={syncing}
