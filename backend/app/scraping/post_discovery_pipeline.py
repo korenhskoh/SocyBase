@@ -20,12 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import ScrapingJob, ScrapedPost, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
 from app.scraping.mappers.facebook_mapper import FacebookProfileMapper
 from app.scraping.rate_limiter import RateLimiter
 from app.celery_app import celery_app
 from app.services.progress_publisher import publish_job_progress
+from app.plan_defaults import resolve_setting
 from app.scraping.pipeline import (
     _save_pipeline_state,
     _save_error_details,
@@ -280,6 +282,12 @@ async def _execute_post_discovery(job_id: str, celery_task):
             await _append_log(db, job, "info", "start", "Post discovery pipeline started")
             _publish_progress(job, "start")
 
+            # Load tenant for plan-based defaults
+            _tenant_result = await db.execute(
+                select(Tenant).where(Tenant.id == job.tenant_id)
+            )
+            _tenant = _tenant_result.scalar_one_or_none()
+
             job_settings = job.settings or {}
             _tenant_id_str = str(job.tenant_id)
 
@@ -307,12 +315,16 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 await _append_log(db, job, "info", "parse_input", f"Parsed: page_id={page_id}, is_group={is_group}")
 
                 # ── STAGE 1.5: Fetch page/author profile ────────
+                # Per-tenant rate limit from plan defaults
+                _tenant_rate = resolve_setting(_tenant, "api_rate_limit_tenant")
+
                 if page_id:
                     try:
                         logger.info(f"[Job {job_id}] Stage 1.5: Fetching author profile for {page_id}")
                         await _append_log(db, job, "info", "fetch_author", f"Fetching author profile for {page_id}")
                         await rate_limiter.wait_for_slot_tenant(
-                            _tenant_id_str, max_requests_global=settings_rate_limit())
+                            _tenant_id_str, max_requests_global=settings_rate_limit(),
+                            max_requests_tenant=_tenant_rate)
                         # Try multiple token types on 401
                         author_raw = None
                         _author_tokens = ["EAAAAU", "EAAGNO", "EAAD6V"]
@@ -363,7 +375,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 )
                 balance = balance_result.scalar_one_or_none()
                 # Estimate: at least 1 credit per page to be fetched
-                estimated_min_credits = int(job_settings.get("max_pages", 50))
+                estimated_min_credits = int(resolve_setting(_tenant, "max_pages", job_settings=job_settings))
                 if not balance or balance.balance < 1:
                     job.status = "failed"
                     job.error_message = f"Insufficient credits. Have {balance.balance if balance else 0}, need at least 1."
@@ -391,7 +403,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                 # Settings
                 token_type = job_settings.get("token_type", "EAAAAU")
-                max_pages = min(max(int(job_settings.get("max_pages", 50)), 1), 500)
+                _plan_max_pages = resolve_setting(_tenant, "max_pages", job_settings=job_settings)
+                max_pages = min(max(int(_plan_max_pages), 1), 500)
 
                 # Groups require a different token type
                 if is_group:
@@ -435,6 +448,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     await rate_limiter.wait_for_slot_tenant(
                         _tenant_id_str,
                         max_requests_global=settings_rate_limit(),
+                        max_requests_tenant=_tenant_rate,
                     )
 
                     # Retry wrapper for timeout errors (AKNG can be slow)

@@ -21,6 +21,7 @@ from app.schemas.job import (
     ScrapedProfileResponse,
     PageAuthorProfileResponse,
 )
+from app.plan_defaults import resolve_setting
 
 router = APIRouter()
 
@@ -92,11 +93,10 @@ async def create_job(
     if not platform:
         raise HTTPException(status_code=400, detail=f"Platform '{data.platform}' not found or disabled")
 
-    # Tenant settings
+    # Tenant settings (plan-aware)
     tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
     tenant = tenant_result.scalar_one_or_none()
-    tenant_settings = (tenant.settings or {}) if tenant else {}
-    max_concurrent = tenant_settings.get("max_concurrent_jobs", 3)
+    max_concurrent = resolve_setting(tenant, "max_concurrent_jobs")
 
     # Concurrent job limit check
     running_count_result = await db.execute(
@@ -115,7 +115,7 @@ async def create_job(
         )
 
     # Daily job creation limit check
-    max_daily = tenant_settings.get("max_jobs_per_day", 100)
+    max_daily = resolve_setting(tenant, "max_jobs_per_day")
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     daily_count_result = await db.execute(
         select(func.count(ScrapingJob.id)).where(
@@ -429,7 +429,7 @@ async def batch_action(
     if data.action == "resume":
         tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
         tenant = tenant_result.scalar_one_or_none()
-        max_concurrent = (tenant.settings or {}).get("max_concurrent_jobs", 3) if tenant else 3
+        max_concurrent = resolve_setting(tenant, "max_concurrent_jobs")
         running_count_result = await db.execute(
             select(func.count(ScrapingJob.id)).where(
                 ScrapingJob.tenant_id == user.tenant_id,

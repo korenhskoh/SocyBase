@@ -22,12 +22,14 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
 from app.scraping.mappers.facebook_mapper import FacebookProfileMapper
 from app.scraping.rate_limiter import RateLimiter
 from app.celery_app import celery_app
 from app.services.progress_publisher import publish_job_progress
+from app.plan_defaults import resolve_setting
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +132,8 @@ async def _append_log(db: AsyncSession, job: ScrapingJob, level: str, stage: str
 
 
 async def _retry_profile_fetch(
-    client, rate_limiter, uid: str, max_retries: int = 2, tenant_id: str | None = None,
+    client, rate_limiter, uid: str, max_retries: int = 2,
+    tenant_id: str | None = None, max_requests_tenant: int = 3,
 ) -> dict:
     """Fetch a user profile with retries and exponential backoff."""
     last_exc = None
@@ -138,7 +141,8 @@ async def _retry_profile_fetch(
         try:
             if tenant_id:
                 await rate_limiter.wait_for_slot_tenant(
-                    tenant_id, max_requests_global=settings_rate_limit())
+                    tenant_id, max_requests_global=settings_rate_limit(),
+                    max_requests_tenant=max_requests_tenant)
             else:
                 await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
             return await client.get_user_profile(uid)
@@ -214,6 +218,12 @@ async def _execute_pipeline(job_id: str, celery_task):
             # Publish initial "running" state to SSE subscribers
             publish_job_progress(str(job.id), _build_progress_event(job, "start"))
 
+            # Load tenant for plan-based defaults
+            _tenant_result = await db.execute(
+                select(Tenant).where(Tenant.id == job.tenant_id)
+            )
+            _tenant = _tenant_result.scalar_one_or_none()
+
             # Read job settings
             job_settings = job.settings or {}
             profile_retry_count = min(int(job_settings.get("profile_retry_count", 2)), 3)
@@ -258,8 +268,10 @@ async def _execute_pipeline(job_id: str, celery_task):
                     try:
                         logger.info(f"[Job {job_id}] Stage 1.5: Fetching author profile for {page_id}")
                         await _append_log(db, job, "info", "fetch_author", f"Fetching author profile for {page_id}")
+                        _tenant_rate = resolve_setting(_tenant, "api_rate_limit_tenant")
                         await rate_limiter.wait_for_slot_tenant(
-                            _tenant_id_str, max_requests_global=settings_rate_limit())
+                            _tenant_id_str, max_requests_global=settings_rate_limit(),
+                            max_requests_tenant=_tenant_rate)
                         author_raw = await client.get_object_details(page_id)
                         author_mapped = mapper.map_object_to_author(author_raw)
                         author_profile = PageAuthorProfile(
@@ -357,7 +369,11 @@ async def _execute_pipeline(job_id: str, celery_task):
                     logger.info(f"[Job {job_id}] Starting from user-selected cursor")
 
                 # Max comment pages: prevent unbounded pagination on viral posts
-                max_comment_pages = min(max(int(job_settings.get("max_comment_pages", 200)), 1), 1000)
+                _plan_max_comment = resolve_setting(_tenant, "max_comment_pages", job_settings=job_settings)
+                max_comment_pages = min(max(int(_plan_max_comment), 1), 1000)
+
+                # Per-tenant rate limit from plan defaults
+                _tenant_rate = resolve_setting(_tenant, "api_rate_limit_tenant")
 
                 # Pagination loop (normal or continuing from cursor)
                 if not resume_from_job_id or next_cursor:
@@ -365,6 +381,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                         await rate_limiter.wait_for_slot_tenant(
                             _tenant_id_str,
                             max_requests_global=settings_rate_limit(),
+                            max_requests_tenant=_tenant_rate,
                         )
 
                         # Retry wrapper for timeout / transient errors
@@ -644,6 +661,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                         profile_data = await _retry_profile_fetch(
                             client, rate_limiter, uid, max_retries=profile_retry_count,
                             tenant_id=_tenant_id_str,
+                            max_requests_tenant=_tenant_rate,
                         )
                         logger.info(f"[Job {job_id}] Profile {uid}: got {len(profile_data) if profile_data else 0} fields")
                         mapped = mapper.map_to_standard(profile_data)
@@ -926,7 +944,6 @@ async def _check_and_dispatch_scheduled():
     # with Celery prefork workers (each task gets a new event loop)
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from app.config import get_settings
-    from app.models.tenant import Tenant
 
     settings = get_settings()
     local_engine = create_async_engine(settings.async_database_url, pool_pre_ping=True)
@@ -957,7 +974,7 @@ async def _check_and_dispatch_scheduled():
                     select(Tenant).where(Tenant.id == job.tenant_id)
                 )
                 tenant = tenant_result.scalar_one_or_none()
-                max_concurrent = (tenant.settings or {}).get("max_concurrent_jobs", 3) if tenant else 3
+                max_concurrent = resolve_setting(tenant, "max_concurrent_jobs")
 
                 if running_count >= max_concurrent:
                     skipped += 1
