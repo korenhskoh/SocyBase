@@ -5,6 +5,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
+# Global asyncio semaphore to enforce max concurrent in-flight API requests
+# across all tasks within a single worker process.  Since each Celery prefork
+# worker creates its own event loop, this is per-worker.  The supplier limit
+# (e.g. 4 concurrent connections) is shared across all workers, so set this
+# to max_supplier_concurrency / celery_concurrency (or 2 to leave headroom).
+_SUPPLIER_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def get_supplier_semaphore(max_concurrent: int = 2) -> asyncio.Semaphore:
+    """Get or create a per-event-loop semaphore for supplier concurrency."""
+    global _SUPPLIER_SEMAPHORE
+    if _SUPPLIER_SEMAPHORE is None:
+        _SUPPLIER_SEMAPHORE = asyncio.Semaphore(max_concurrent)
+    return _SUPPLIER_SEMAPHORE
+
 
 class RateLimiter:
     """Redis-based sliding window rate limiter."""

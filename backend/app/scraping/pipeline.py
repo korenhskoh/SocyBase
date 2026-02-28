@@ -655,68 +655,87 @@ async def _execute_pipeline(job_id: str, celery_task):
                      "profiles_failed": 0},
                 ))
 
-                for i, uid in enumerate(user_ids_to_enrich):
+                # ── Parallel profile enrichment with concurrency limit ──
+                # Process profiles in batches to maximise supplier API utilisation.
+                # Batch size of 3 leaves headroom for other concurrent tasks sharing
+                # the supplier's 4-connection limit.
+                ENRICH_BATCH_SIZE = 3
+                _enrich_counter = {"done": 0, "failed": 0, "cancelled": False}
+
+                async def _enrich_one(uid: str, idx: int):
+                    """Fetch and persist a single profile (runs concurrently)."""
                     try:
-                        logger.info(f"[Job {job_id}] Enriching profile {i+1}/{len(user_ids_to_enrich)}: {uid}")
+                        logger.info(f"[Job {job_id}] Enriching profile {idx+1}/{len(user_ids_to_enrich)}: {uid}")
                         profile_data = await _retry_profile_fetch(
                             client, rate_limiter, uid, max_retries=profile_retry_count,
                             tenant_id=_tenant_id_str,
                             max_requests_tenant=_tenant_rate,
                         )
-                        logger.info(f"[Job {job_id}] Profile {uid}: got {len(profile_data) if profile_data else 0} fields")
-                        mapped = mapper.map_to_standard(profile_data)
-
-                        # Update ScrapedProfile
-                        profile_result = await db.execute(
-                            select(ScrapedProfile).where(
-                                ScrapedProfile.job_id == job.id,
-                                ScrapedProfile.platform_user_id == uid,
-                            )
-                        )
-                        profile = profile_result.scalar_one_or_none()
-                        if profile:
-                            profile.name = mapped["Name"]
-                            profile.first_name = mapped["First Name"]
-                            profile.last_name = mapped["Last Name"]
-                            profile.gender = mapped["Gender"]
-                            profile.birthday = mapped["Birthday"]
-                            profile.relationship_status = mapped["Relationship"]
-                            profile.education = mapped["Education"]
-                            profile.work = mapped["Work"]
-                            profile.position = mapped["Position"]
-                            profile.hometown = mapped["Hometown"]
-                            profile.location = mapped["Location"]
-                            profile.website = mapped["Website"]
-                            profile.languages = mapped["Languages"]
-                            profile.username_link = mapped["UsernameLink"]
-                            profile.username = mapped["Username"]
-                            profile.about = mapped["About"]
-                            profile.phone = mapped["Phone"]
-                            profile.picture_url = mapped["Picture URL"]
-                            profile.raw_data = profile_data
-                            profile.scrape_status = "success"
-                            profile.scraped_at = datetime.now(timezone.utc)
-
-                        credits_used += 1
-
+                        return ("ok", uid, profile_data)
                     except Exception as e:
                         logger.warning(
                             f"[Job {job_id}] Failed to fetch profile {uid} "
                             f"after {profile_retry_count} retries: {e}"
                         )
-                        profile_result = await db.execute(
-                            select(ScrapedProfile).where(
-                                ScrapedProfile.job_id == job.id,
-                                ScrapedProfile.platform_user_id == uid,
-                            )
-                        )
-                        profile = profile_result.scalar_one_or_none()
-                        if profile:
-                            profile.scrape_status = "failed"
-                            profile.error_message = str(e)
-                        job.failed_items += 1
+                        return ("fail", uid, e)
 
-                    total_done = already_done + i + 1
+                for batch_start in range(0, len(user_ids_to_enrich), ENRICH_BATCH_SIZE):
+                    batch = user_ids_to_enrich[batch_start:batch_start + ENRICH_BATCH_SIZE]
+                    tasks = [
+                        _enrich_one(uid, batch_start + j)
+                        for j, uid in enumerate(batch)
+                    ]
+                    results = await asyncio.gather(*tasks)
+
+                    # Apply results to DB sequentially (SQLAlchemy session is not thread-safe)
+                    for status, uid, data in results:
+                        if status == "ok":
+                            mapped = mapper.map_to_standard(data)
+                            profile_result = await db.execute(
+                                select(ScrapedProfile).where(
+                                    ScrapedProfile.job_id == job.id,
+                                    ScrapedProfile.platform_user_id == uid,
+                                )
+                            )
+                            profile = profile_result.scalar_one_or_none()
+                            if profile:
+                                profile.name = mapped["Name"]
+                                profile.first_name = mapped["First Name"]
+                                profile.last_name = mapped["Last Name"]
+                                profile.gender = mapped["Gender"]
+                                profile.birthday = mapped["Birthday"]
+                                profile.relationship_status = mapped["Relationship"]
+                                profile.education = mapped["Education"]
+                                profile.work = mapped["Work"]
+                                profile.position = mapped["Position"]
+                                profile.hometown = mapped["Hometown"]
+                                profile.location = mapped["Location"]
+                                profile.website = mapped["Website"]
+                                profile.languages = mapped["Languages"]
+                                profile.username_link = mapped["UsernameLink"]
+                                profile.username = mapped["Username"]
+                                profile.about = mapped["About"]
+                                profile.phone = mapped["Phone"]
+                                profile.picture_url = mapped["Picture URL"]
+                                profile.raw_data = data
+                                profile.scrape_status = "success"
+                                profile.scraped_at = datetime.now(timezone.utc)
+                            credits_used += 1
+                        else:
+                            profile_result = await db.execute(
+                                select(ScrapedProfile).where(
+                                    ScrapedProfile.job_id == job.id,
+                                    ScrapedProfile.platform_user_id == uid,
+                                )
+                            )
+                            profile = profile_result.scalar_one_or_none()
+                            if profile:
+                                profile.scrape_status = "failed"
+                                profile.error_message = str(data)
+                            job.failed_items += 1
+
+                    # Update progress after each batch
+                    total_done = already_done + batch_start + len(batch)
                     job.processed_items = total_done
                     job.progress_pct = _calc_stage_progress(
                         "enrich_profiles", done=total_done, total=len(user_ids),
@@ -727,19 +746,18 @@ async def _execute_pipeline(job_id: str, celery_task):
                         profiles_failed=job.failed_items,
                     )
 
-                    # Check for pause/cancel every 5 profiles
-                    if (i + 1) % 5 == 0:
-                        current_status = await _check_job_status(db, job.id)
-                        if current_status in ("paused", "cancelled"):
-                            job.status = current_status
-                            await _save_pipeline_state(
-                                db, job, "enrich_profiles",
-                                profiles_enriched=total_done,
-                                profiles_failed=job.failed_items,
-                            )
-                            await _append_log(db, job, "warn", "enrich_profiles", f"Job {current_status} by user after {total_done} profiles")
-                            publish_job_progress(str(job.id), _build_progress_event(job, "enrich_profiles"))
-                            return
+                    # Check for pause/cancel after each batch
+                    current_status = await _check_job_status(db, job.id)
+                    if current_status in ("paused", "cancelled"):
+                        job.status = current_status
+                        await _save_pipeline_state(
+                            db, job, "enrich_profiles",
+                            profiles_enriched=total_done,
+                            profiles_failed=job.failed_items,
+                        )
+                        await _append_log(db, job, "warn", "enrich_profiles", f"Job {current_status} by user after {total_done} profiles")
+                        publish_job_progress(str(job.id), _build_progress_event(job, "enrich_profiles"))
+                        return
 
                     # Update Celery task state for progress tracking
                     celery_task.update_state(
@@ -940,8 +958,15 @@ def check_scheduled_jobs():
 
 
 async def _check_and_dispatch_scheduled():
-    # Create a fresh engine per invocation to avoid stale event loop issues
-    # with Celery prefork workers (each task gets a new event loop)
+    """Dispatch scheduled jobs using round-robin across tenants.
+
+    Instead of dispatching in strict ``scheduled_at`` order (which lets
+    early-submitting tenants starve others), this groups pending jobs by
+    tenant and picks one job per tenant per cycle, round-robin style.
+    This ensures fair slot distribution when many tenants are competing
+    for limited Celery worker capacity.
+    """
+    from collections import defaultdict
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from app.config import get_settings
 
@@ -959,38 +984,70 @@ async def _check_and_dispatch_scheduled():
                 ).order_by(ScrapingJob.scheduled_at.asc())
             )
             jobs = result.scalars().all()
-            dispatched = 0
-            skipped = 0
+            if not jobs:
+                return
+
+            # Group jobs by tenant, preserving scheduled_at order within each tenant
+            tenant_queues: dict[str, list] = defaultdict(list)
             for job in jobs:
-                # Re-check concurrent job limit per tenant before dispatching
+                tenant_queues[str(job.tenant_id)].append(job)
+
+            # Pre-fetch running counts and tenant objects for all affected tenants
+            tenant_ids = list(tenant_queues.keys())
+            tenant_running: dict[str, int] = {}
+            tenant_objs: dict[str, object] = {}
+            for tid in tenant_ids:
+                import uuid as _uuid
+                _tid_uuid = _uuid.UUID(tid)
                 running_result = await db.execute(
                     select(func.count(ScrapingJob.id)).where(
-                        ScrapingJob.tenant_id == job.tenant_id,
+                        ScrapingJob.tenant_id == _tid_uuid,
                         ScrapingJob.status.in_(["running", "queued"]),
                     )
                 )
-                running_count = running_result.scalar() or 0
+                tenant_running[tid] = running_result.scalar() or 0
                 tenant_result = await db.execute(
-                    select(Tenant).where(Tenant.id == job.tenant_id)
+                    select(Tenant).where(Tenant.id == _tid_uuid)
                 )
-                tenant = tenant_result.scalar_one_or_none()
-                max_concurrent = resolve_setting(tenant, "max_concurrent_jobs")
+                tenant_objs[tid] = tenant_result.scalar_one_or_none()
 
-                if running_count >= max_concurrent:
-                    skipped += 1
-                    continue  # leave as "scheduled", will be picked up next cycle
+            # Round-robin dispatch: iterate through tenants, dispatch one job
+            # per tenant per round until no more jobs can be dispatched
+            dispatched = 0
+            skipped = 0
+            progress = True
+            while progress:
+                progress = False
+                for tid in list(tenant_queues.keys()):
+                    queue = tenant_queues[tid]
+                    if not queue:
+                        continue
 
-                job.status = "queued"
-                if job.job_type == "post_discovery":
-                    from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
-                    task = run_post_discovery_pipeline.delay(str(job.id))
-                else:
-                    task = run_scraping_pipeline.delay(str(job.id))
-                job.celery_task_id = task.id
-                dispatched += 1
+                    tenant = tenant_objs.get(tid)
+                    max_concurrent = resolve_setting(tenant, "max_concurrent_jobs")
+                    running = tenant_running.get(tid, 0)
+
+                    if running >= max_concurrent:
+                        skipped += len(queue)
+                        tenant_queues[tid] = []  # skip all remaining for this tenant
+                        continue
+
+                    # Dispatch the oldest job for this tenant
+                    job = queue.pop(0)
+                    job.status = "queued"
+                    if job.job_type == "post_discovery":
+                        from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
+                        task = run_post_discovery_pipeline.delay(str(job.id))
+                    else:
+                        task = run_scraping_pipeline.delay(str(job.id))
+                    job.celery_task_id = task.id
+                    tenant_running[tid] = running + 1
+                    dispatched += 1
+                    progress = True
+
             await db.commit()
 
             if dispatched or skipped:
-                logger.info(f"Scheduled jobs: dispatched={dispatched}, deferred={skipped}")
+                logger.info(f"Scheduled jobs: dispatched={dispatched}, deferred={skipped} (round-robin across {len(tenant_ids)} tenants)")
     finally:
         await local_engine.dispose()
