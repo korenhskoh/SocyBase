@@ -78,14 +78,21 @@ async def send_email(
     if body_html:
         msg.add_alternative(body_html, subtype="html")
 
+    port = cfg["port"]
+    # Port 465 uses implicit SSL; port 587 uses STARTTLS
+    use_tls = port == 465
+    start_tls = not use_tls
+
     try:
         await aiosmtplib.send(
             msg,
             hostname=cfg["hostname"],
-            port=cfg["port"],
+            port=port,
             username=cfg["username"],
             password=cfg["password"],
-            start_tls=True,
+            use_tls=use_tls,
+            start_tls=start_tls,
+            timeout=30,
         )
         return True
     except Exception as e:
