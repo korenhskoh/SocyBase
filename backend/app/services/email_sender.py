@@ -32,20 +32,21 @@ async def _resolve_smtp_config() -> dict | None:
 
     logger.info("Env-var SMTP not set (host=%r, user=%r), trying tenant DB...", settings.smtp_host, settings.smtp_user)
 
-    # 2. Fallback: tenant DB settings
+    # 2. Fallback: scan all tenants for one with email settings configured
     try:
         from sqlalchemy import select
         from app.database import async_session
         from app.models.tenant import Tenant
 
         async with async_session() as db:
-            result = await db.execute(select(Tenant).limit(1))
-            tenant = result.scalar_one_or_none()
-            if tenant:
+            result = await db.execute(select(Tenant))
+            tenants = result.scalars().all()
+            logger.info("Found %d tenant(s) in DB", len(tenants))
+            for tenant in tenants:
                 email_cfg = (tenant.settings or {}).get("email", {})
-                logger.info("Tenant email config keys: %s", list(email_cfg.keys()) if email_cfg else "none")
+                logger.info("Tenant %s email config keys: %s", tenant.id, list(email_cfg.keys()) if email_cfg else "none")
                 if email_cfg.get("smtp_host") and email_cfg.get("smtp_user"):
-                    logger.info("Using tenant DB SMTP config (host=%s, user=%s)", email_cfg["smtp_host"], email_cfg["smtp_user"])
+                    logger.info("Using tenant %s DB SMTP config (host=%s, user=%s)", tenant.id, email_cfg["smtp_host"], email_cfg["smtp_user"])
                     return {
                         "hostname": email_cfg["smtp_host"],
                         "port": email_cfg.get("smtp_port", 587),
@@ -53,11 +54,7 @@ async def _resolve_smtp_config() -> dict | None:
                         "password": email_cfg.get("smtp_password", ""),
                         "email_from": email_cfg.get("email_from", settings.email_from),
                     }
-                else:
-                    logger.warning("Tenant email config incomplete: smtp_host=%r, smtp_user=%r",
-                                   email_cfg.get("smtp_host"), email_cfg.get("smtp_user"))
-            else:
-                logger.warning("No tenant found in DB")
+            logger.warning("No tenant with complete email settings found")
     except Exception:
         logger.warning("Failed to load tenant SMTP config from DB", exc_info=True)
 
