@@ -122,13 +122,42 @@ TB_SERVICES_PER_PAGE = 8
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_COOLDOWN_SECONDS = 300  # 5 min
 MAX_OTP_RESENDS = 3
-OTP_EXPIRY_SECONDS = 300  # 5 min
+OTP_EXPIRY_SECONDS = 600  # 10 min
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _generate_otp() -> str:
     return f"{secrets.randbelow(1000000):06d}"
+
+
+def _otp_email_html(otp: str) -> str:
+    """Return a styled HTML email template for the OTP code."""
+    return (
+        '<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;'
+        'background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb">'
+        '<div style="background:#0f172a;padding:24px 32px;text-align:center">'
+        '<h1 style="color:#ffffff;margin:0;font-size:22px">SocyBase</h1>'
+        '</div>'
+        '<div style="padding:32px">'
+        '<h2 style="color:#1e293b;margin:0 0 8px">Verification Code</h2>'
+        '<p style="color:#64748b;margin:0 0 24px;font-size:14px">'
+        'Use the code below to complete your Telegram login.</p>'
+        f'<div style="background:#f1f5f9;border-radius:8px;padding:20px;text-align:center;'
+        f'margin:0 0 24px">'
+        f'<span style="font-size:32px;font-weight:700;letter-spacing:8px;font-family:monospace;'
+        f'color:#0f172a">{otp}</span></div>'
+        '<p style="color:#64748b;font-size:13px;margin:0 0 8px">'
+        'This code expires in <b>10 minutes</b>.</p>'
+        '<p style="color:#94a3b8;font-size:12px;margin:0">'
+        'If you didn\'t request this code, you can safely ignore this email.</p>'
+        '</div>'
+        '<div style="background:#f8fafc;padding:16px 32px;text-align:center;'
+        'border-top:1px solid #e5e7eb">'
+        '<p style="color:#94a3b8;font-size:11px;margin:0">'
+        'Sent by SocyBase Telegram Bot</p>'
+        '</div></div>'
+    )
 
 
 def _clear_login_flow(context: ContextTypes.DEFAULT_TYPE):
@@ -804,14 +833,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent = await send_email(
             to=email,
             subject="SocyBase Telegram Login Code",
-            body_text=f"Your verification code is: {otp}\n\nThis code expires in 5 minutes.",
-            body_html=(
-                f"<h2>SocyBase Telegram Verification</h2>"
-                f"<p>Your verification code is:</p>"
-                f"<h1 style='letter-spacing:8px;font-family:monospace'>{otp}</h1>"
-                f"<p>This code expires in 5 minutes.</p>"
-                f"<p>If you didn't request this, you can safely ignore this email.</p>"
-            ),
+            body_text=f"Your verification code is: {otp}\n\nThis code expires in 10 minutes.",
+            body_html=_otp_email_html(otp),
         )
 
         masked = _mask_email(email)
@@ -1537,14 +1560,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent = await send_email(
             to=email,
             subject="SocyBase Telegram Login Code",
-            body_text=f"Your verification code is: {otp}\n\nThis code expires in 5 minutes.",
-            body_html=(
-                f"<h2>SocyBase Telegram Verification</h2>"
-                f"<p>Your verification code is:</p>"
-                f"<h1 style='letter-spacing:8px;font-family:monospace'>{otp}</h1>"
-                f"<p>This code expires in 5 minutes.</p>"
-                f"<p>If you didn't request this, you can safely ignore this email.</p>"
-            ),
+            body_text=f"Your verification code is: {otp}\n\nThis code expires in 10 minutes.",
+            body_html=_otp_email_html(otp),
         )
 
         # Try to delete the email message for privacy
