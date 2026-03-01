@@ -47,6 +47,11 @@ export default function AdminSettingsPage() {
   const [waMessage, setWaMessage] = useState("");
   const [waStatus, setWaStatus] = useState<string | null>(null);
 
+  // QR code pairing
+  const [waQr, setWaQr] = useState<string | null>(null);
+  const [waQrMessage, setWaQrMessage] = useState("");
+  const [waQrLoading, setWaQrLoading] = useState(false);
+
   // Per-notification toggles
   const [notifyNewUser, setNotifyNewUser] = useState(true);
   const [notifyPaymentApproved, setNotifyPaymentApproved] = useState(true);
@@ -153,16 +158,47 @@ export default function AdminSettingsPage() {
     }
   };
 
+  const getWaBrowserUrl = () => {
+    if (!waServiceUrl) return "http://localhost:3001";
+    // If it's a public URL (https:// or a domain), use as-is
+    // If it's a Docker internal URL (e.g. http://whatsapp:3001), swap to localhost
+    if (waServiceUrl.includes("://localhost") || waServiceUrl.includes("://whatsapp")) {
+      return waServiceUrl.replace("whatsapp", "localhost");
+    }
+    return waServiceUrl;
+  };
+
   const checkWhatsAppStatus = async () => {
     setWaStatus(null);
     try {
-      // Use localhost for browser access (Docker internal URLs won't work from browser)
-      const baseUrl = waServiceUrl?.replace("whatsapp", "localhost") || "http://localhost:3001";
-      const resp = await fetch(`${baseUrl}/status`);
+      const resp = await fetch(`${getWaBrowserUrl()}/status`);
       const data = await resp.json();
       setWaStatus(data.status || "unknown");
     } catch {
       setWaStatus("unreachable");
+    }
+  };
+
+  const fetchQrCode = async () => {
+    setWaQrLoading(true);
+    setWaQr(null);
+    setWaQrMessage("");
+    try {
+      const resp = await fetch(`${getWaBrowserUrl()}/qr`);
+      const data = await resp.json();
+      if (data.status === "connected") {
+        setWaQrMessage("Already connected! No QR scan needed.");
+        setWaStatus("connected");
+      } else if (data.qr) {
+        setWaQr(data.qr);
+        setWaQrMessage("Scan this QR code with your WhatsApp app (Linked Devices > Link a Device)");
+      } else {
+        setWaQrMessage(data.message || "No QR code available yet. Try again in a few seconds.");
+      }
+    } catch {
+      setWaQrMessage("Cannot reach WhatsApp service. Make sure it is running and the Service URL is correct.");
+    } finally {
+      setWaQrLoading(false);
     }
   };
 
@@ -500,7 +536,7 @@ export default function AdminSettingsPage() {
                   <p className="text-xs text-white/30 mt-1">Phone number that receives all admin notifications</p>
                 </div>
 
-                {/* Connection Status */}
+                {/* Connection Status & QR Pairing */}
                 <div className="flex items-center gap-3 pt-1">
                   <button
                     type="button"
@@ -508,6 +544,14 @@ export default function AdminSettingsPage() {
                     className="text-xs px-3 py-1.5 rounded-lg font-medium text-green-400 bg-green-400/10 border border-green-400/20 hover:bg-green-400/20 transition"
                   >
                     Check Connection
+                  </button>
+                  <button
+                    type="button"
+                    onClick={fetchQrCode}
+                    disabled={waQrLoading}
+                    className="text-xs px-3 py-1.5 rounded-lg font-medium text-blue-400 bg-blue-400/10 border border-blue-400/20 hover:bg-blue-400/20 transition disabled:opacity-50"
+                  >
+                    {waQrLoading ? "Loading..." : "Pair WhatsApp (QR)"}
                   </button>
                   {waStatus && (
                     <span className={`text-xs font-medium ${
@@ -524,6 +568,35 @@ export default function AdminSettingsPage() {
                     </span>
                   )}
                 </div>
+
+                {/* QR Code Display */}
+                {(waQr || waQrMessage) && (
+                  <div className="rounded-lg bg-white/[0.03] border border-white/10 p-4 space-y-3">
+                    {waQr && (
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="bg-white rounded-xl p-3">
+                          <img
+                            src={waQr}
+                            alt="WhatsApp QR Code"
+                            className="w-56 h-56"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={fetchQrCode}
+                          className="text-xs text-blue-400 hover:text-blue-300 transition"
+                        >
+                          Refresh QR Code
+                        </button>
+                      </div>
+                    )}
+                    {waQrMessage && (
+                      <p className={`text-xs text-center ${waQr ? "text-white/50" : waQrMessage.includes("Connected") || waQrMessage.includes("connected") ? "text-emerald-400" : "text-amber-400"}`}>
+                        {waQrMessage}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Per-notification toggles */}
                 <div className="pt-3 border-t border-white/5">
@@ -559,12 +632,13 @@ export default function AdminSettingsPage() {
 
             {/* WhatsApp Info */}
             <div className="rounded-lg bg-green-500/5 border border-green-500/15 p-3 space-y-2">
-              <p className="text-xs text-green-300/80">
-                Notifications are sent to the admin WhatsApp number for: new user registrations, payment approvals, Stripe completions, refunds, Traffic Bot orders, and wallet deposit requests.
-              </p>
-              <p className="text-xs text-green-300/60">
-                First-time setup: start the WhatsApp service, visit the <code className="bg-white/5 px-1 rounded">/qr</code> endpoint to scan the QR code with your phone.
-              </p>
+              <p className="text-xs font-medium text-green-300/90">Setup Guide</p>
+              <ol className="text-xs text-green-300/70 space-y-1 list-decimal list-inside">
+                <li>Enter the WhatsApp service URL (your Railway WhatsApp service public URL)</li>
+                <li>Enter the admin phone number that will receive notifications</li>
+                <li>Click <strong>&quot;Pair WhatsApp (QR)&quot;</strong> and scan the QR code with WhatsApp on your phone (Settings &gt; Linked Devices &gt; Link a Device)</li>
+                <li>Once connected, save settings and enable the notifications you want</li>
+              </ol>
             </div>
           </div>
 
