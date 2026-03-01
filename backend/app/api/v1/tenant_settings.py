@@ -102,6 +102,7 @@ async def update_tenant_settings(
         current["ai_suggestions"] = data.ai_suggestions
 
     tenant.settings = current
-    await db.flush()
+    await db.commit()
+    await db.refresh(tenant)
 
     return _mask_settings(tenant.settings)
