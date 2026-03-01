@@ -873,3 +873,25 @@ async def proxy_whatsapp_qr(
             return resp.json()
     except Exception:
         return {"status": "error", "message": "Cannot reach WhatsApp service. Make sure it is running and the Service URL is correct."}
+
+
+@router.post("/whatsapp-disconnect")
+async def proxy_whatsapp_disconnect(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Proxy WhatsApp service /disconnect to log out and allow re-pairing."""
+    import httpx
+
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == WHATSAPP_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    service_url = (setting.value.get("whatsapp_service_url") if setting else None) or "http://localhost:3001"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{service_url.rstrip('/')}/disconnect")
+            return resp.json()
+    except Exception:
+        return {"success": False, "message": "Cannot reach WhatsApp service."}

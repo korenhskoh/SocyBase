@@ -226,6 +226,20 @@ export default function AdminSettingsPage() {
     }
   };
 
+  const disconnectWhatsApp = async () => {
+    if (!confirm("Disconnect WhatsApp? You will need to scan a new QR code to re-pair.")) return;
+    setWaStatus(null);
+    setWaQr(null);
+    setWaQrMessage("");
+    try {
+      const { data } = await adminApi.disconnectWhatsapp();
+      setWaStatus("disconnected");
+      setWaQrMessage(data.message || "Disconnected. Click 'Pair WhatsApp (QR)' to link a new account.");
+    } catch {
+      setWaQrMessage("Failed to disconnect. Check if the service is running.");
+    }
+  };
+
   if (user?.role !== "super_admin") {
     return (
       <div className="text-center py-20 text-white/40">
@@ -577,6 +591,15 @@ export default function AdminSettingsPage() {
                   >
                     {waQrLoading ? "Loading..." : "Pair WhatsApp (QR)"}
                   </button>
+                  {waStatus === "connected" && (
+                    <button
+                      type="button"
+                      onClick={disconnectWhatsApp}
+                      className="text-xs px-3 py-1.5 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition"
+                    >
+                      Disconnect
+                    </button>
+                  )}
                   {waStatus && (
                     <span className={`text-xs font-medium ${
                       waStatus === "connected"

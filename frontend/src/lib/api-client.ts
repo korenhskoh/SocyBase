@@ -254,6 +254,7 @@ export const adminApi = {
   }) => api.put("/admin/whatsapp-settings", data),
   getWhatsappStatus: () => api.get("/admin/whatsapp-status"),
   getWhatsappQr: () => api.get("/admin/whatsapp-qr"),
+  disconnectWhatsapp: () => api.post("/admin/whatsapp-disconnect"),
 };
 
 // Telegram API
