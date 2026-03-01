@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api-client";
@@ -163,10 +163,44 @@ export default function AdminSettingsPage() {
     try {
       const { data } = await adminApi.getWhatsappStatus();
       setWaStatus(data.status || "unknown");
+      return data.status || "unknown";
     } catch {
       setWaStatus("unreachable");
+      return "unreachable";
     }
   };
+
+  // Auto-poll status while QR is displayed
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const startPolling = () => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const { data } = await adminApi.getWhatsappStatus();
+        if (data.status === "connected") {
+          setWaStatus("connected");
+          setWaQr(null);
+          setWaQrMessage("WhatsApp connected successfully!");
+          stopPolling();
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 3000);
+  };
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
 
   const fetchQrCode = async () => {
     setWaQrLoading(true);
@@ -177,9 +211,11 @@ export default function AdminSettingsPage() {
       if (data.status === "connected") {
         setWaQrMessage("Already connected! No QR scan needed.");
         setWaStatus("connected");
+        stopPolling();
       } else if (data.qr) {
         setWaQr(data.qr);
         setWaQrMessage("Scan this QR code with your WhatsApp app (Linked Devices > Link a Device)");
+        startPolling();
       } else {
         setWaQrMessage(data.message || "No QR code available yet. Try again in a few seconds.");
       }
