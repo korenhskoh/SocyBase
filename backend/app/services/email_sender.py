@@ -1,8 +1,9 @@
 """Lightweight async email sender.
 
-Resolves email sending via:
-1. Resend HTTP API (if RESEND_API_KEY is set — works on Railway)
-2. SMTP from env vars or tenant DB settings (fallback)
+Resolves email sending via (in priority order):
+1. Brevo HTTP API (if BREVO_API_KEY is set — free, no recipient restrictions)
+2. Resend HTTP API (if RESEND_API_KEY is set — requires verified domain for non-test recipients)
+3. SMTP from env vars or tenant DB settings (fallback — blocked on Railway)
 """
 
 import logging
@@ -14,6 +15,42 @@ import httpx
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+async def _send_via_brevo(
+    to: str, subject: str, body_text: str, body_html: str | None,
+    from_email: str, from_name: str, api_key: str,
+) -> bool:
+    """Send email via Brevo (Sendinblue) HTTP API."""
+    payload: dict = {
+        "sender": {"name": from_name, "email": from_email},
+        "to": [{"email": to}],
+        "subject": subject,
+    }
+    if body_html:
+        payload["htmlContent"] = body_html
+    else:
+        payload["textContent"] = body_text
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": api_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        if resp.status_code in (200, 201):
+            logger.info("Email sent via Brevo to %s", to)
+            return True
+        else:
+            logger.error("Brevo API error (%d): %s", resp.status_code, resp.text)
+            return False
+    except Exception as e:
+        logger.error("Brevo request failed: %s", e)
+        return False
 
 
 async def _send_via_resend(
@@ -91,31 +128,37 @@ async def _resolve_smtp_config() -> dict | None:
     return None
 
 
-def _resolve_from_email() -> str:
-    """Get the sender email address from env or tenant DB (sync-safe, best effort)."""
-    return get_settings().email_from
+async def _resolve_sender() -> tuple[str, str]:
+    """Return (from_email, from_name) for the sender."""
+    smtp_cfg = await _resolve_smtp_config()
+    settings = get_settings()
+    from_email = (smtp_cfg or {}).get("email_from", settings.email_from) or "noreply@socybase.com"
+    return from_email, "SocyBase"
 
 
 async def send_email(
     to: str, subject: str, body_text: str, body_html: str | None = None,
 ) -> bool:
-    """Send an email. Tries Resend HTTP API first, then SMTP as fallback."""
+    """Send an email. Tries Brevo → Resend → SMTP in order."""
     settings = get_settings()
+    from_email, from_name = await _resolve_sender()
 
-    # ── Try Resend first (works on Railway where SMTP is blocked) ──
+    # ── 1. Brevo (best free option: no recipient restrictions) ──
+    if settings.brevo_api_key:
+        return await _send_via_brevo(to, subject, body_text, body_html, from_email, from_name, settings.brevo_api_key)
+
+    # ── 2. Resend (requires verified domain for non-test recipients) ──
     if settings.resend_api_key:
-        # Use Resend default testing sender if no custom domain configured
-        smtp_cfg = await _resolve_smtp_config()
-        from_email = (smtp_cfg or {}).get("email_from", settings.email_from)
         # Resend requires verified domain; fall back to their testing sender
-        if not from_email or "@gmail.com" in from_email or from_email == "noreply@socybase.com":
-            from_email = "SocyBase <onboarding@resend.dev>"
-        return await _send_via_resend(to, subject, body_text, body_html, from_email, settings.resend_api_key)
+        resend_from = from_email
+        if "@gmail.com" in from_email or from_email == "noreply@socybase.com":
+            resend_from = "SocyBase <onboarding@resend.dev>"
+        return await _send_via_resend(to, subject, body_text, body_html, resend_from, settings.resend_api_key)
 
-    # ── Fallback: SMTP ──
+    # ── 3. SMTP (blocked on Railway, works elsewhere) ──
     cfg = await _resolve_smtp_config()
     if not cfg:
-        logger.warning("No email config (Resend or SMTP), skipping email to %s", to)
+        logger.warning("No email config (Brevo/Resend/SMTP), skipping email to %s", to)
         return False
 
     msg = EmailMessage()
