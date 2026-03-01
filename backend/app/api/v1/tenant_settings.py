@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -102,6 +103,7 @@ async def update_tenant_settings(
         current["ai_suggestions"] = data.ai_suggestions
 
     tenant.settings = current
+    flag_modified(tenant, "settings")
     await db.commit()
     await db.refresh(tenant)
 
