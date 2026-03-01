@@ -11,6 +11,7 @@ from app.models.user import User
 from app.models.traffic_bot import TrafficBotWalletDeposit
 from app.services import traffic_bot_service as svc
 from app.services.whatsapp_notify import notify_traffic_bot_order, notify_wallet_deposit_request
+from app.services.telegram_notify import send_tb_order_notification
 from app.schemas.traffic_bot import (
     OrderCreateRequest, OrderResponse, OrderListResponse,
     ServiceResponse, PriceCalcResponse,
@@ -77,6 +78,11 @@ async def create_order(
         user.email, resp.service_name or "Unknown",
         body.quantity, float(order.total_cost), body.link, db,
     )
+    # Telegram notification to the user if linked
+    if user.telegram_chat_id:
+        await send_tb_order_notification(
+            user.telegram_chat_id, order, resp.service_name or "Unknown",
+        )
     return resp
 
 

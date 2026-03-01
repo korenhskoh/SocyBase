@@ -326,10 +326,6 @@ export const tenantSettingsApi = {
       smtp_password: string;
       email_from: string;
     };
-    telegram?: {
-      bot_token: string;
-      notification_chat_id: string;
-    };
     business?: {
       business_name: string;
       business_type: string;

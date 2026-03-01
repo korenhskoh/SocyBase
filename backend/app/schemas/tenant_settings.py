@@ -28,25 +28,13 @@ class EmailSettingsResponse(BaseModel):
     email_from: str
 
 
-class TelegramSettingsRequest(BaseModel):
-    bot_token: str = Field(max_length=255)
-    notification_chat_id: str = Field(max_length=100)
-
-
-class TelegramSettingsResponse(BaseModel):
-    bot_token: str
-    notification_chat_id: str
-
-
 class TenantSettingsResponse(BaseModel):
     email: EmailSettingsResponse | None = None
-    telegram: TelegramSettingsResponse | None = None
     business: BusinessProfileSettings | None = None
     ai_suggestions: dict | None = None
 
 
 class UpdateTenantSettingsRequest(BaseModel):
     email: EmailSettingsRequest | None = None
-    telegram: TelegramSettingsRequest | None = None
     business: BusinessProfileSettings | None = None
     ai_suggestions: dict | None = None

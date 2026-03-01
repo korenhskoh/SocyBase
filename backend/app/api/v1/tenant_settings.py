@@ -10,7 +10,6 @@ from app.schemas.tenant_settings import (
     TenantSettingsResponse,
     UpdateTenantSettingsRequest,
     EmailSettingsResponse,
-    TelegramSettingsResponse,
     BusinessProfileSettings,
 )
 
@@ -22,7 +21,6 @@ MASKED = "********"
 def _mask_settings(settings: dict) -> TenantSettingsResponse:
     """Mask sensitive fields before returning to the client."""
     email_data = settings.get("email")
-    telegram_data = settings.get("telegram")
 
     masked_email = None
     if email_data:
@@ -34,13 +32,6 @@ def _mask_settings(settings: dict) -> TenantSettingsResponse:
             email_from=email_data.get("email_from", ""),
         )
 
-    masked_telegram = None
-    if telegram_data:
-        masked_telegram = TelegramSettingsResponse(
-            bot_token=MASKED,
-            notification_chat_id=telegram_data.get("notification_chat_id", ""),
-        )
-
     # Business profile — no masking needed
     business_data = settings.get("business")
     business = BusinessProfileSettings(**business_data) if business_data else None
@@ -48,7 +39,7 @@ def _mask_settings(settings: dict) -> TenantSettingsResponse:
     # AI suggestions — no masking needed
     ai_suggestions = settings.get("ai_suggestions")
 
-    return TenantSettingsResponse(email=masked_email, telegram=masked_telegram, business=business, ai_suggestions=ai_suggestions)
+    return TenantSettingsResponse(email=masked_email, business=business, ai_suggestions=ai_suggestions)
 
 
 @router.get("", response_model=TenantSettingsResponse)
@@ -75,7 +66,7 @@ async def update_tenant_settings(
 ):
     """Update tenant settings.
 
-    Any user can update business profile, ai_suggestions, and telegram settings.
+    Any user can update business profile and ai_suggestions.
     Only tenant_admin or super_admin can update email (SMTP) settings.
     """
     is_admin = user.role in ("tenant_admin", "super_admin")
@@ -103,14 +94,6 @@ async def update_tenant_settings(
         if email_dict.get("smtp_password") == MASKED and existing_email.get("smtp_password"):
             email_dict["smtp_password"] = existing_email["smtp_password"]
         current["email"] = email_dict
-
-    if data.telegram is not None:
-        telegram_dict = data.telegram.model_dump()
-        # Preserve existing bot token if client sends the masked placeholder back
-        existing_telegram = current.get("telegram", {})
-        if telegram_dict.get("bot_token") == MASKED and existing_telegram.get("bot_token"):
-            telegram_dict["bot_token"] = existing_telegram["bot_token"]
-        current["telegram"] = telegram_dict
 
     if data.business is not None:
         current["business"] = data.business.model_dump()

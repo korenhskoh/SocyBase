@@ -33,7 +33,7 @@ export default function SettingsPage() {
       .finally(() => setTelegramLoading(false));
   }, []);
 
-  // Tenant settings (email + telegram org)
+  // Tenant settings (email)
   const isAdmin = user?.role === "tenant_admin" || user?.role === "super_admin";
   const [tenantSettings, setTenantSettings] = useState<TenantSettings | null>(null);
 
@@ -45,16 +45,6 @@ export default function SettingsPage() {
   const [emailFrom, setEmailFrom] = useState("");
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailMessage, setEmailMessage] = useState("");
-
-  // Telegram org form
-  const [tgBotToken, setTgBotToken] = useState("");
-  const [tgChatId, setTgChatId] = useState("");
-  const [tgSaving, setTgSaving] = useState(false);
-  const [tgMessage, setTgMessage] = useState("");
-
-
-  // Telegram setup guide state
-  const [showTgGuide, setShowTgGuide] = useState(false);
 
   useEffect(() => {
     tenantSettingsApi
@@ -68,10 +58,6 @@ export default function SettingsPage() {
           setSmtpUser(s.email.smtp_user);
           setSmtpPassword(s.email.smtp_password);
           setEmailFrom(s.email.email_from);
-        }
-        if (s.telegram) {
-          setTgBotToken(s.telegram.bot_token);
-          setTgChatId(s.telegram.notification_chat_id);
         }
       })
       .catch(() => {});
@@ -133,27 +119,6 @@ export default function SettingsPage() {
       setEmailSaving(false);
     }
   };
-
-  const handleSaveTelegram = async () => {
-    setTgSaving(true);
-    setTgMessage("");
-    try {
-      const res = await tenantSettingsApi.update({
-        telegram: {
-          bot_token: tgBotToken,
-          notification_chat_id: tgChatId,
-        },
-      });
-      setTenantSettings(res.data);
-      setTgBotToken(res.data.telegram?.bot_token || "");
-      setTgMessage("Telegram settings saved successfully!");
-    } catch {
-      setTgMessage("Failed to save Telegram settings");
-    } finally {
-      setTgSaving(false);
-    }
-  };
-
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
@@ -366,111 +331,25 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Organization Telegram Bot Setup */}
+        {/* Available Commands */}
         <div className="border-t border-white/10 pt-4 mt-4">
-          <h3 className="text-sm font-semibold text-white mb-1">Organization Bot Setup</h3>
-          <p className="text-xs text-white/30 mb-3">
-            Configure your own Telegram bot to receive job notifications and manage scraping remotely.
-          </p>
-
-          {/* Setup Guide Toggle */}
-          <button
-            onClick={() => setShowTgGuide(!showTgGuide)}
-            className="text-xs px-3 py-1.5 rounded-lg font-medium text-[#00AAFF] bg-[#00AAFF]/10 border border-[#00AAFF]/20 hover:bg-[#00AAFF]/20 transition mb-3 flex items-center gap-1.5"
-          >
-            <svg className={`h-3 w-3 transition-transform ${showTgGuide ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-            </svg>
-            {showTgGuide ? "Hide Setup Guide" : "How to setup a Telegram Bot"}
-          </button>
-
-          {showTgGuide && (
-            <div className="rounded-lg bg-[#00AAFF]/5 border border-[#00AAFF]/15 p-4 mb-4 space-y-3">
-              <p className="text-xs font-semibold text-[#00AAFF]">Step-by-step Guide</p>
-              <ol className="space-y-2.5 text-xs text-white/60">
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">1</span>
-                  <span>Open Telegram and search for <span className="text-white font-medium">@BotFather</span></span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">2</span>
-                  <span>Send <span className="text-white font-mono font-medium">/newbot</span> and follow the prompts to create your bot</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">3</span>
-                  <span>Copy the <span className="text-white font-medium">Bot Token</span> (looks like <span className="text-white/40 font-mono">123456:ABC-DEF1234ghIkl-zyx57W2v...</span>)</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">4</span>
-                  <span>Paste the bot token below and save</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">5</span>
-                  <div>
-                    <span>To get the <span className="text-white font-medium">Chat ID</span>: add the bot to your group/channel, then send a message and visit</span>
-                    <span className="block text-white/40 font-mono mt-0.5 break-all">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span>
-                    <span className="block mt-0.5">Look for <span className="font-mono text-white/40">&quot;chat&quot;:{`{`}&quot;id&quot;:-100xxx{`}`}</span> in the response</span>
-                  </div>
-                </li>
-              </ol>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs text-white/60 mb-1">Bot Token</label>
-              <input
-                type="password"
-                value={tgBotToken}
-                onChange={(e) => setTgBotToken(e.target.value)}
-                placeholder="123456:ABC-DEF..."
-                className="input-glass text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-white/60 mb-1">Notification Chat ID</label>
-              <input
-                type="text"
-                value={tgChatId}
-                onChange={(e) => setTgChatId(e.target.value)}
-                placeholder="-1001234567890"
-                className="input-glass text-sm"
-              />
-            </div>
-          </div>
-
-          {tgMessage && (
-            <p className={`text-sm mt-3 ${tgMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
-              {tgMessage}
-            </p>
-          )}
-
-          <button
-            onClick={handleSaveTelegram}
-            disabled={tgSaving}
-            className="mt-3 text-sm px-4 py-2 rounded-lg font-medium text-white bg-[#00AAFF]/15 border border-[#00AAFF]/25 hover:bg-[#00AAFF]/25 transition disabled:opacity-50"
-          >
-            {tgSaving ? "Saving..." : "Save Telegram Settings"}
-          </button>
-
-          {/* Available Commands */}
-          <div className="mt-4 pt-4 border-t border-white/5">
-            <p className="text-xs font-semibold text-white/50 mb-2">Available Bot Commands</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-              {[
-                { cmd: "/jobs", desc: "List your recent scraping jobs" },
-                { cmd: "/newjob", desc: "Start a new scraping job" },
-                { cmd: "/status", desc: "Check active job progress" },
-                { cmd: "/credits", desc: "View your credit balance" },
-                { cmd: "/cancel", desc: "Cancel a running job" },
-                { cmd: "/help", desc: "Show all available commands" },
-              ].map((item) => (
-                <div key={item.cmd} className="flex items-center gap-2 px-2 py-1.5 rounded bg-white/[0.02]">
-                  <span className="text-xs font-mono text-[#00AAFF] font-medium w-16 shrink-0">{item.cmd}</span>
-                  <span className="text-xs text-white/40">{item.desc}</span>
-                </div>
-              ))}
-            </div>
+          <p className="text-xs font-semibold text-white/50 mb-2">Available Bot Commands</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+            {[
+              { cmd: "/login", desc: "Log in with email & OTP" },
+              { cmd: "/jobs", desc: "List your recent scraping jobs" },
+              { cmd: "/newjob", desc: "Start a new scraping job" },
+              { cmd: "/tborder", desc: "Place a traffic bot order" },
+              { cmd: "/tborders", desc: "View your TB orders" },
+              { cmd: "/tbwallet", desc: "Check TB wallet balance" },
+              { cmd: "/credits", desc: "View your credit balance" },
+              { cmd: "/help", desc: "Show all available commands" },
+            ].map((item) => (
+              <div key={item.cmd} className="flex items-center gap-2 px-2 py-1.5 rounded bg-white/[0.02]">
+                <span className="text-xs font-mono text-[#00AAFF] font-medium w-16 shrink-0">{item.cmd}</span>
+                <span className="text-xs text-white/40">{item.desc}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

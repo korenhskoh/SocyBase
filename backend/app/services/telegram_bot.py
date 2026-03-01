@@ -1,14 +1,20 @@
-"""SocyBase Telegram Bot — remote job management and notifications.
+"""SocyBase Telegram Bot — remote job management, traffic bot orders, and notifications.
 
 Mirrors the webapp flow:
+  /login  → email → OTP code → account linked
   /newjob → select platform → select scrape type → send input → job created
   /jobs   → list recent jobs with action buttons (details, cancel, pause, resume)
   /credits → credit balance
+  /tborder  → select category → select service → enter link → enter qty → confirm
+  /tborders → list recent traffic bot orders with action buttons
+  /tbwallet → traffic bot wallet balance
   /help   → command reference
 """
 
 import logging
-from datetime import datetime, timezone
+import re
+import secrets
+import time
 
 from telegram import (
     Update,
@@ -27,6 +33,7 @@ from telegram.ext import (
     filters,
 )
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.database import async_session
@@ -34,6 +41,9 @@ from app.models.user import User
 from app.models.job import ScrapingJob
 from app.models.credit import CreditBalance
 from app.models.platform import Platform
+from app.models.traffic_bot import TrafficBotOrder
+from app.services import traffic_bot_service as tb_svc
+from app.services.email_sender import send_email
 from app.utils.security import decode_token
 
 logger = logging.getLogger(__name__)
@@ -42,7 +52,9 @@ logger = logging.getLogger(__name__)
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
         [KeyboardButton("\U0001F680 New Job"), KeyboardButton("\U0001F4CB My Jobs")],
-        [KeyboardButton("\U0001F4B3 Credits"), KeyboardButton("\u2753 Help")],
+        [KeyboardButton("\U0001F4E6 TB Order"), KeyboardButton("\U0001F4CA TB Orders")],
+        [KeyboardButton("\U0001F4B3 Credits"), KeyboardButton("\U0001F4B0 TB Wallet")],
+        [KeyboardButton("\u2753 Help")],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -57,6 +69,17 @@ STATUS_ICONS = {
     "scheduled": "\U0001F4C5",
     "cancelled": "\u26D4",
     "paused": "\u23F8",
+}
+
+TB_STATUS_ICONS = {
+    "pending": "\u23F3",
+    "processing": "\U0001F504",
+    "in_progress": "\U0001F504",
+    "completed": "\u2705",
+    "partial": "\u26A0\uFE0F",
+    "cancelled": "\u26D4",
+    "refunded": "\U0001F4B8",
+    "failed": "\u274C",
 }
 
 # ── Platform / scrape-type registry (mirrors frontend PLATFORMS) ─────────
@@ -92,6 +115,39 @@ SCRAPE_TYPES = {
     ],
 }
 
+TB_SERVICES_PER_PAGE = 8
+
+# ── Login / OTP constants ────────────────────────────────────────────────
+
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_COOLDOWN_SECONDS = 300  # 5 min
+MAX_OTP_RESENDS = 3
+OTP_EXPIRY_SECONDS = 300  # 5 min
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _generate_otp() -> str:
+    return f"{secrets.randbelow(1000000):06d}"
+
+
+def _clear_login_flow(context: ContextTypes.DEFAULT_TYPE):
+    """Clear all login flow state."""
+    for key in ["login_awaiting_email", "login_awaiting_otp",
+                "login_email", "login_otp", "login_otp_expires",
+                "login_otp_resends"]:
+        context.user_data.pop(key, None)
+
+
+def _mask_email(email: str) -> str:
+    """Mask email: j***n@gmail.com"""
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        masked = local[0] + "***"
+    else:
+        masked = local[0] + "***" + local[-1]
+    return f"{masked}@{domain}"
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -112,11 +168,25 @@ async def _require_user(update: Update) -> User | None:
         msg = update.message or update.callback_query.message
         await msg.reply_text(
             "\u26A0\uFE0F Your Telegram account is not linked.\n\n"
-            "Go to <b>Settings</b> in the SocyBase dashboard and click "
-            "<b>Link Telegram</b> to get started.",
+            "Use /login to link your SocyBase account, "
+            "or go to <b>Settings</b> in the dashboard and click "
+            "<b>Link Telegram</b>.",
             parse_mode="HTML",
         )
     return user
+
+
+def _clear_tb_flow(context: ContextTypes.DEFAULT_TYPE):
+    """Clear all traffic bot order flow state."""
+    for key in ["tb_category", "tb_service_id", "tb_service_name",
+                "tb_link", "tb_quantity", "tb_awaiting_link", "tb_awaiting_quantity"]:
+        context.user_data.pop(key, None)
+
+
+def _clear_job_flow(context: ContextTypes.DEFAULT_TYPE):
+    """Clear all scraping job creation flow state."""
+    for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
+        context.user_data.pop(key, None)
 
 
 def _progress_bar(pct: float, width: int = 10) -> str:
@@ -196,6 +266,60 @@ def _job_action_buttons(job: ScrapingJob) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def _tb_order_detail_text(order: TrafficBotOrder) -> str:
+    """Build rich traffic bot order detail text."""
+    icon = TB_STATUS_ICONS.get(order.status, "\u26AA")
+    short_id = str(order.id)[:8]
+    svc_name = order.service.name if order.service else "Unknown"
+
+    lines = [
+        f"{icon} <b>TB Order {short_id}...</b>\n",
+        f"<b>Service:</b> {svc_name}",
+        f"<b>Link:</b> <code>{(order.link or '')[:60]}</code>",
+        f"<b>Quantity:</b> {order.quantity:,}",
+        f"<b>Cost:</b> RM{float(order.total_cost):.4f}",
+        f"<b>Status:</b> {order.status.upper().replace('_', ' ')}",
+    ]
+
+    if order.start_count is not None:
+        lines.append(f"<b>Start Count:</b> {order.start_count:,}")
+    if order.remains is not None:
+        lines.append(f"<b>Remains:</b> {order.remains:,}")
+    if order.external_order_id:
+        lines.append(f"<b>Ext. ID:</b> {order.external_order_id}")
+    if order.created_at:
+        lines.append(f"<b>Created:</b> {order.created_at.strftime('%Y-%m-%d %H:%M')}")
+    if order.error_message:
+        lines.append(f"\n\u26A0\uFE0F <b>Error:</b> {order.error_message[:200]}")
+
+    return "\n".join(lines)
+
+
+def _tb_order_action_buttons(order: TrafficBotOrder) -> InlineKeyboardMarkup:
+    """Build action buttons for a traffic bot order."""
+    buttons = []
+    oid = str(order.id)
+
+    if order.status in ("pending", "processing", "in_progress"):
+        buttons.append([
+            InlineKeyboardButton("\U0001F504 Refresh Status", callback_data=f"tb_refresh:{oid}"),
+        ])
+    if order.status in ("pending", "processing", "in_progress"):
+        buttons.append([
+            InlineKeyboardButton("\u274C Cancel Order", callback_data=f"tb_cancel_order:{oid}"),
+        ])
+    if order.status == "completed":
+        buttons.append([
+            InlineKeyboardButton("\U0001F504 Refill", callback_data=f"tb_refill:{oid}"),
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("\u2B05\uFE0F Back to Orders", callback_data="tb_back:orders"),
+    ])
+
+    return InlineKeyboardMarkup(buttons)
+
+
 # ── /start ───────────────────────────────────────────────────────────────
 
 
@@ -230,7 +354,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await db.commit()
                     await update.message.reply_text(
                         f"\u2705 Account linked to <b>{user.email}</b>!\n\n"
-                        "You can now manage scraping jobs directly from Telegram.\n"
+                        "You can now manage scraping jobs and traffic bot orders "
+                        "directly from Telegram.\n"
                         "Use the buttons below to get started!",
                         parse_mode="HTML",
                         reply_markup=MAIN_KEYBOARD,
@@ -246,13 +371,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "\U0001F44B <b>Welcome to SocyBase Bot!</b>\n\n"
             "This bot lets you create and manage scraping jobs, "
-            "check credits, and receive notifications — all from Telegram.\n\n"
-            "<b>Getting started:</b>\n"
-            "1. Open the SocyBase dashboard\n"
-            "2. Go to <b>Settings</b>\n"
-            "3. Click <b>Link Telegram</b>\n"
-            "4. Click the link to connect your account\n\n"
-            "Once linked, type /help to see available commands.",
+            "place traffic bot orders, check credits, and receive "
+            "notifications \u2014 all from Telegram.\n\n"
+            "<b>To get started, log in with your SocyBase account:</b>\n"
+            "\u27A1\uFE0F /login\n\n"
+            "Or link from the dashboard via <b>Settings \u2192 Link Telegram</b>.",
             parse_mode="HTML",
         )
 
@@ -264,22 +387,23 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show command reference."""
     await update.message.reply_text(
         "\U0001F4D6 <b>SocyBase Bot Commands</b>\n\n"
-        "<b>Job Management:</b>\n"
-        "/newjob — Create a new scraping job\n"
-        "  1. Choose a platform (Facebook, etc.)\n"
-        "  2. Choose a scrape type\n"
-        "  3. Send the URL or ID\n"
-        "  4. Job is created and starts automatically\n\n"
-        "/jobs — List your 5 most recent jobs\n"
-        "  \u2022 Tap a job to see details\n"
-        "  \u2022 Use action buttons to pause/cancel/resume\n\n"
-        "/status <i>job_id</i> — Check a specific job\n\n"
+        "<b>Scraping Jobs:</b>\n"
+        "/newjob \u2014 Create a new scraping job\n"
+        "/jobs \u2014 List your recent scraping jobs\n"
+        "/status <i>job_id</i> \u2014 Check a specific job\n\n"
+        "<b>Traffic Bot:</b>\n"
+        "/tborder \u2014 Place a traffic bot order\n"
+        "/tborders \u2014 View your recent TB orders\n"
+        "/tbwallet \u2014 Check TB wallet balance\n\n"
         "<b>Account:</b>\n"
-        "/credits — Check your credit balance\n"
-        "/cancel — Cancel current operation\n"
-        "/help — Show this message\n\n"
+        "/login \u2014 Log in with email & OTP code\n"
+        "/unlink \u2014 Disconnect your Telegram\n"
+        "/credits \u2014 Check scraping credit balance\n"
+        "/cancel \u2014 Cancel current operation\n"
+        "/help \u2014 Show this message\n\n"
         "<b>Notifications:</b>\n"
-        "You'll automatically receive a message when a job completes or fails.",
+        "You'll receive messages when jobs complete or fail, "
+        "and confirmations for traffic bot orders.",
         parse_mode="HTML",
     )
 
@@ -288,15 +412,88 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel current new-job flow."""
+    """Cancel current flow."""
     cleared = False
-    for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
+    for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input",
+                "tb_category", "tb_service_id", "tb_service_name",
+                "tb_link", "tb_quantity", "tb_awaiting_link", "tb_awaiting_quantity",
+                "login_awaiting_email", "login_awaiting_otp",
+                "login_email", "login_otp", "login_otp_expires", "login_otp_resends"]:
         if context.user_data.pop(key, None) is not None:
             cleared = True
     if cleared:
-        await update.message.reply_text("\u274C Job creation cancelled.")
+        await update.message.reply_text("\u274C Operation cancelled.")
     else:
-        await update.message.reply_text("Nothing to cancel. Use /newjob to start a new job.")
+        await update.message.reply_text("Nothing to cancel.")
+
+
+# ── /login ──────────────────────────────────────────────────────────────
+
+
+async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the email + OTP login flow."""
+    chat_id = str(update.effective_chat.id)
+
+    # Already linked?
+    user = await _get_user_by_chat_id(chat_id)
+    if user:
+        await update.message.reply_text(
+            f"\u2705 Already linked to <b>{user.email}</b>.\n\n"
+            "Use /unlink to disconnect first.",
+            parse_mode="HTML",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+
+    # Check cooldown
+    cooldown_until = context.user_data.get("login_cooldown_until", 0)
+    if time.time() < cooldown_until:
+        remaining = int(cooldown_until - time.time())
+        await update.message.reply_text(
+            f"\u23F3 Too many failed attempts. Try again in {remaining}s."
+        )
+        return
+
+    # Clear any stale login state
+    _clear_login_flow(context)
+
+    context.user_data["login_awaiting_email"] = True
+    await update.message.reply_text(
+        "\U0001F511 <b>Log in to SocyBase</b>\n\n"
+        "Enter your <b>email address</b>:\n\n"
+        "<i>Send /cancel to abort.</i>",
+        parse_mode="HTML",
+    )
+
+
+# ── /unlink ─────────────────────────────────────────────────────────────
+
+
+async def unlink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Disconnect Telegram from SocyBase account."""
+    chat_id = str(update.effective_chat.id)
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(User).where(User.telegram_chat_id == chat_id)
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            await update.message.reply_text(
+                "Your Telegram is not linked to any account."
+            )
+            return
+
+        email = user.email
+        user.telegram_chat_id = None
+        await db.commit()
+
+    _clear_login_flow(context)
+    await update.message.reply_text(
+        f"\u2705 Telegram disconnected from <b>{email}</b>.\n\n"
+        "Use /login to link a different account.",
+        parse_mode="HTML",
+    )
 
 
 # ── /jobs ────────────────────────────────────────────────────────────────
@@ -331,12 +528,12 @@ async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pct = float(job.progress_pct or 0)
         jtype = "Discovery" if job.job_type == "post_discovery" else "Comments"
         lines.append(
-            f"{icon} <code>{short_id}</code> {jtype} — {job.status} "
-            f"({job.processed_items or 0}/{job.total_items or '?'} · {pct:.0f}%)"
+            f"{icon} <code>{short_id}</code> {jtype} \u2014 {job.status} "
+            f"({job.processed_items or 0}/{job.total_items or '?'} \u00B7 {pct:.0f}%)"
         )
         buttons.append([
             InlineKeyboardButton(
-                f"{icon} {short_id}... — {jtype}",
+                f"{icon} {short_id}... \u2014 {jtype}",
                 callback_data=f"job:{job.id}",
             )
         ])
@@ -436,8 +633,8 @@ async def newjob_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Clear any previous flow state
-    for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
-        context.user_data.pop(key, None)
+    _clear_job_flow(context)
+    _clear_tb_flow(context)
 
     await _send_platform_picker(update.message, context)
 
@@ -470,6 +667,108 @@ async def _send_platform_picker(message, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── /tbwallet ────────────────────────────────────────────────────────────
+
+
+async def tbwallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check traffic bot wallet balance."""
+    user = await _require_user(update)
+    if not user:
+        return
+
+    async with async_session() as db:
+        wallet = await tb_svc.get_or_create_wallet(db, user.tenant_id)
+        await db.commit()
+
+    await update.message.reply_text(
+        "\U0001F4B0 <b>Traffic Bot Wallet</b>\n\n"
+        f"Balance: <b>RM{float(wallet.balance):.2f}</b>\n\n"
+        "<i>To deposit funds, use the SocyBase dashboard \u2192 Traffic Bot \u2192 Wallet.</i>",
+        parse_mode="HTML",
+    )
+
+
+# ── /tborder ─────────────────────────────────────────────────────────────
+
+
+async def tborder_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start placing a traffic bot order — step 1: choose category."""
+    user = await _require_user(update)
+    if not user:
+        return
+
+    _clear_tb_flow(context)
+    _clear_job_flow(context)
+
+    async with async_session() as db:
+        categories = await tb_svc.get_categories(db)
+
+    if not categories:
+        await update.message.reply_text(
+            "No traffic bot services available. Please try again later.",
+        )
+        return
+
+    keyboard = []
+    for cat in categories:
+        keyboard.append([
+            InlineKeyboardButton(cat, callback_data=f"tb_cat:{cat}")
+        ])
+    keyboard.append([InlineKeyboardButton("\u274C Cancel", callback_data="tb_cancel_flow")])
+
+    await update.message.reply_text(
+        "\U0001F4E6 <b>New Traffic Bot Order</b>\n\n"
+        "<b>Step 1/4:</b> Choose a category:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# ── /tborders ────────────────────────────────────────────────────────────
+
+
+async def tborders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List recent traffic bot orders."""
+    user = await _require_user(update)
+    if not user:
+        return
+
+    async with async_session() as db:
+        orders, total = await tb_svc.list_orders(db, user.tenant_id, limit=5)
+
+    if not orders:
+        await update.message.reply_text(
+            "No traffic bot orders found.\n\nUse /tborder to place your first order!",
+        )
+        return
+
+    lines = [f"\U0001F4CA <b>Your Recent TB Orders</b> ({total} total)\n"]
+    buttons = []
+    for order in orders:
+        icon = TB_STATUS_ICONS.get(order.status, "\u26AA")
+        short_id = str(order.id)[:8]
+        svc_name = (order.service.name if order.service else "Unknown")[:25]
+        lines.append(
+            f"{icon} <code>{short_id}</code> {svc_name} \u2014 {order.status}"
+        )
+        buttons.append([
+            InlineKeyboardButton(
+                f"{icon} {short_id}... \u2014 {svc_name}",
+                callback_data=f"tb_order:{order.id}",
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("\u2795 New Order", callback_data="tb_start_order"),
+    ])
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
 # ── Callback Handler ─────────────────────────────────────────────────────
 
 
@@ -478,6 +777,62 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    # ── Login: resend OTP ─────────────────────────────────────────
+    if data == "login:resend_otp":
+        email = context.user_data.get("login_email")
+        if not email or not context.user_data.get("login_awaiting_otp"):
+            await query.edit_message_text(
+                "Login session expired. Use /login to start again."
+            )
+            return
+
+        resends = context.user_data.get("login_otp_resends", 0)
+        if resends >= MAX_OTP_RESENDS:
+            await query.edit_message_text(
+                "\u26D4 Maximum resends reached. Use /login to start a new session."
+            )
+            _clear_login_flow(context)
+            return
+
+        # Generate new OTP and resend
+        otp = _generate_otp()
+        context.user_data["login_otp"] = otp
+        context.user_data["login_otp_expires"] = time.time() + OTP_EXPIRY_SECONDS
+        context.user_data["login_otp_resends"] = resends + 1
+
+        sent = await send_email(
+            to=email,
+            subject="SocyBase Telegram Login Code",
+            body_text=f"Your verification code is: {otp}\n\nThis code expires in 5 minutes.",
+            body_html=(
+                f"<h2>SocyBase Telegram Verification</h2>"
+                f"<p>Your verification code is:</p>"
+                f"<h1 style='letter-spacing:8px;font-family:monospace'>{otp}</h1>"
+                f"<p>This code expires in 5 minutes.</p>"
+                f"<p>If you didn't request this, you can safely ignore this email.</p>"
+            ),
+        )
+
+        masked = _mask_email(email)
+        if sent:
+            remaining_resends = MAX_OTP_RESENDS - resends - 1
+            await query.edit_message_text(
+                f"\U0001F504 New code sent to <b>{masked}</b>.\n\n"
+                f"Enter the 6-digit code below:\n"
+                f"<i>({remaining_resends} resend{'s' if remaining_resends != 1 else ''} remaining)</i>\n\n"
+                "<i>Send /cancel to abort.</i>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("\U0001F504 Resend Code", callback_data="login:resend_otp"),
+                ]]) if remaining_resends > 0 else None,
+            )
+        else:
+            await query.edit_message_text(
+                "\u274C Failed to resend email. Try /login again later."
+            )
+            _clear_login_flow(context)
+        return
 
     # ── Job detail ───────────────────────────────────────────────
     if data.startswith("job:"):
@@ -533,12 +888,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pct = float(job.progress_pct or 0)
             jtype = "Discovery" if job.job_type == "post_discovery" else "Comments"
             lines.append(
-                f"{icon} <code>{short_id}</code> {jtype} — {job.status} "
-                f"({job.processed_items or 0}/{job.total_items or '?'} · {pct:.0f}%)"
+                f"{icon} <code>{short_id}</code> {jtype} \u2014 {job.status} "
+                f"({job.processed_items or 0}/{job.total_items or '?'} \u00B7 {pct:.0f}%)"
             )
             buttons.append([
                 InlineKeyboardButton(
-                    f"{icon} {short_id}... — {jtype}",
+                    f"{icon} {short_id}... \u2014 {jtype}",
                     callback_data=f"job:{job.id}",
                 )
             ])
@@ -657,8 +1012,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = await _get_user_by_chat_id(str(query.from_user.id))
         if not user:
             return
-        for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
-            context.user_data.pop(key, None)
+        _clear_job_flow(context)
 
         async with async_session() as db:
             result = await db.execute(
@@ -686,8 +1040,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── New job: cancel ──────────────────────────────────────────
     elif data == "newjob:cancel":
-        for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
-            context.user_data.pop(key, None)
+        _clear_job_flow(context)
         await query.edit_message_text("\u274C Job creation cancelled.")
 
     # ── New job: platform selected ───────────────────────────────
@@ -766,12 +1119,362 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
 
+    # ══════════════════════════════════════════════════════════════
+    # ── TRAFFIC BOT CALLBACKS ────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
 
-# ── Message Handler (for URL / input during job creation) ────────────────
+    # ── TB: Start order flow (from button) ───────────────────────
+    elif data == "tb_start_order":
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+        _clear_tb_flow(context)
+
+        async with async_session() as db:
+            categories = await tb_svc.get_categories(db)
+
+        if not categories:
+            await query.edit_message_text("No traffic bot services available.")
+            return
+
+        keyboard = []
+        for cat in categories:
+            keyboard.append([
+                InlineKeyboardButton(cat, callback_data=f"tb_cat:{cat}")
+            ])
+        keyboard.append([InlineKeyboardButton("\u274C Cancel", callback_data="tb_cancel_flow")])
+
+        await query.edit_message_text(
+            "\U0001F4E6 <b>New Traffic Bot Order</b>\n\n"
+            "<b>Step 1/4:</b> Choose a category:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    # ── TB: Cancel flow ──────────────────────────────────────────
+    elif data == "tb_cancel_flow":
+        _clear_tb_flow(context)
+        await query.edit_message_text("\u274C Order cancelled.")
+
+    # ── TB: Category selected ────────────────────────────────────
+    elif data.startswith("tb_cat:"):
+        category = data.split(":", 1)[1]
+        context.user_data["tb_category"] = category
+
+        async with async_session() as db:
+            services = await tb_svc.list_services(db, enabled_only=True, category=category)
+
+        if not services:
+            await query.edit_message_text(f"No services available in {category}.")
+            return
+
+        # Paginate services
+        page = 0
+        total_pages = (len(services) + TB_SERVICES_PER_PAGE - 1) // TB_SERVICES_PER_PAGE
+        page_services = services[:TB_SERVICES_PER_PAGE]
+
+        keyboard = []
+        for svc in page_services:
+            rate_with_fee = float(svc.rate) * (1 + float(svc.fee_pct) / 100)
+            label = f"{svc.name[:35]} (RM{rate_with_fee:.2f}/1K)"
+            keyboard.append([
+                InlineKeyboardButton(label, callback_data=f"tb_svc:{svc.id}")
+            ])
+
+        nav_row = []
+        if total_pages > 1:
+            nav_row.append(
+                InlineKeyboardButton(f"Page 1/{total_pages} \u25B6\uFE0F", callback_data=f"tb_svc_page:{category}:1")
+            )
+        keyboard.append(nav_row if nav_row else [])
+        keyboard.append([
+            InlineKeyboardButton("\u2B05\uFE0F Back", callback_data="tb_start_order"),
+            InlineKeyboardButton("\u274C Cancel", callback_data="tb_cancel_flow"),
+        ])
+        # Remove empty rows
+        keyboard = [row for row in keyboard if row]
+
+        await query.edit_message_text(
+            f"\U0001F4E6 <b>New Traffic Bot Order</b>\n\n"
+            f"<b>Category:</b> {category}\n"
+            f"<b>Step 2/4:</b> Choose a service ({len(services)} available):",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    # ── TB: Service page navigation ──────────────────────────────
+    elif data.startswith("tb_svc_page:"):
+        parts = data.split(":", 2)
+        category = parts[1]
+        page = int(parts[2])
+
+        async with async_session() as db:
+            services = await tb_svc.list_services(db, enabled_only=True, category=category)
+
+        total_pages = (len(services) + TB_SERVICES_PER_PAGE - 1) // TB_SERVICES_PER_PAGE
+        start = page * TB_SERVICES_PER_PAGE
+        page_services = services[start:start + TB_SERVICES_PER_PAGE]
+
+        keyboard = []
+        for svc in page_services:
+            rate_with_fee = float(svc.rate) * (1 + float(svc.fee_pct) / 100)
+            label = f"{svc.name[:35]} (RM{rate_with_fee:.2f}/1K)"
+            keyboard.append([
+                InlineKeyboardButton(label, callback_data=f"tb_svc:{svc.id}")
+            ])
+
+        nav_row = []
+        if page > 0:
+            nav_row.append(
+                InlineKeyboardButton("\u25C0\uFE0F Prev", callback_data=f"tb_svc_page:{category}:{page - 1}")
+            )
+        if page < total_pages - 1:
+            nav_row.append(
+                InlineKeyboardButton(f"Next \u25B6\uFE0F", callback_data=f"tb_svc_page:{category}:{page + 1}")
+            )
+        if nav_row:
+            keyboard.append(nav_row)
+
+        keyboard.append([
+            InlineKeyboardButton("\u2B05\uFE0F Back", callback_data="tb_start_order"),
+            InlineKeyboardButton("\u274C Cancel", callback_data="tb_cancel_flow"),
+        ])
+
+        await query.edit_message_text(
+            f"\U0001F4E6 <b>New Traffic Bot Order</b>\n\n"
+            f"<b>Category:</b> {category}\n"
+            f"<b>Step 2/4:</b> Choose a service (page {page + 1}/{total_pages}):",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    # ── TB: Service selected → ask for link ──────────────────────
+    elif data.startswith("tb_svc:"):
+        service_id = data.split(":", 1)[1]
+
+        async with async_session() as db:
+            service = await tb_svc.get_service(db, service_id)
+
+        if not service:
+            await query.edit_message_text("Service not found. Use /tborder to start over.")
+            return
+
+        context.user_data["tb_service_id"] = str(service.id)
+        context.user_data["tb_service_name"] = service.name
+        context.user_data["tb_awaiting_link"] = True
+
+        rate_with_fee = float(service.rate) * (1 + float(service.fee_pct) / 100)
+        await query.edit_message_text(
+            f"\U0001F4E6 <b>New Traffic Bot Order</b>\n\n"
+            f"<b>Service:</b> {service.name}\n"
+            f"<b>Rate:</b> RM{rate_with_fee:.2f} per 1K\n"
+            f"<b>Min/Max:</b> {service.min_quantity:,} \u2014 {service.max_quantity:,}\n\n"
+            f"<b>Step 3/4:</b> Send me the <b>target link/URL</b>:\n\n"
+            f"<i>Send /cancel to abort.</i>",
+            parse_mode="HTML",
+        )
+
+    # ── TB: Confirm order ────────────────────────────────────────
+    elif data == "tb_confirm":
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+
+        service_id = context.user_data.get("tb_service_id")
+        link = context.user_data.get("tb_link")
+        quantity = context.user_data.get("tb_quantity")
+
+        if not all([service_id, link, quantity]):
+            _clear_tb_flow(context)
+            await query.edit_message_text("Session expired. Use /tborder to start over.")
+            return
+
+        _clear_tb_flow(context)
+
+        async with async_session() as db:
+            try:
+                order = await tb_svc.place_order(
+                    db, user.tenant_id, user.id,
+                    service_id, link, quantity,
+                )
+                await db.refresh(order, attribute_names=["service"])
+                await db.commit()
+
+                svc_name = order.service.name if order.service else "Unknown"
+                short_id = str(order.id)[:8]
+                icon = TB_STATUS_ICONS.get(order.status, "\u26AA")
+
+                await query.edit_message_text(
+                    f"\u2705 <b>Order Placed!</b>\n\n"
+                    f"<b>ID:</b> <code>{short_id}...</code>\n"
+                    f"<b>Service:</b> {svc_name}\n"
+                    f"<b>Link:</b> <code>{link[:60]}</code>\n"
+                    f"<b>Quantity:</b> {quantity:,}\n"
+                    f"<b>Cost:</b> RM{float(order.total_cost):.4f}\n"
+                    f"<b>Status:</b> {icon} {order.status.upper()}\n\n"
+                    f"Your order is being processed.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("\U0001F4CA View Order", callback_data=f"tb_order:{order.id}")],
+                        [InlineKeyboardButton("\U0001F4CB My Orders", callback_data="tb_back:orders")],
+                    ]),
+                )
+            except ValueError as exc:
+                await query.edit_message_text(
+                    f"\u274C <b>Order Failed</b>\n\n{str(exc)}\n\n"
+                    f"Use /tborder to try again.",
+                    parse_mode="HTML",
+                )
+            except Exception as exc:
+                logger.error("TB order failed via Telegram: %s", exc)
+                await query.edit_message_text(
+                    f"\u274C <b>Order Failed</b>\n\nAn unexpected error occurred.\n\n"
+                    f"Use /tborder to try again.",
+                    parse_mode="HTML",
+                )
+
+    # ── TB: View order detail ────────────────────────────────────
+    elif data.startswith("tb_order:"):
+        order_id = data.split(":", 1)[1]
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+
+        async with async_session() as db:
+            order = await tb_svc.get_order(db, order_id)
+
+        if not order or order.tenant_id != user.tenant_id:
+            await query.edit_message_text("Order not found.")
+            return
+
+        await query.edit_message_text(
+            _tb_order_detail_text(order),
+            parse_mode="HTML",
+            reply_markup=_tb_order_action_buttons(order),
+        )
+
+    # ── TB: Refresh order status ─────────────────────────────────
+    elif data.startswith("tb_refresh:"):
+        order_id = data.split(":", 1)[1]
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+
+        async with async_session() as db:
+            order = await tb_svc.get_order(db, order_id)
+            if not order or order.tenant_id != user.tenant_id:
+                await query.edit_message_text("Order not found.")
+                return
+            order = await tb_svc.refresh_order_status(db, order)
+            await db.commit()
+
+        await query.edit_message_text(
+            _tb_order_detail_text(order),
+            parse_mode="HTML",
+            reply_markup=_tb_order_action_buttons(order),
+        )
+
+    # ── TB: Cancel order ─────────────────────────────────────────
+    elif data.startswith("tb_cancel_order:"):
+        order_id = data.split(":", 1)[1]
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+
+        async with async_session() as db:
+            order = await tb_svc.get_order(db, order_id)
+            if not order or order.tenant_id != user.tenant_id:
+                await query.edit_message_text("Order not found.")
+                return
+
+            try:
+                order = await tb_svc.cancel_order(db, order)
+                await db.commit()
+                await query.edit_message_text(
+                    f"\u274C <b>Order {str(order.id)[:8]}... cancelled.</b>\n\n"
+                    f"RM{float(order.total_cost):.4f} has been refunded to your wallet.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("\u2B05\uFE0F Back to Orders", callback_data="tb_back:orders"),
+                    ]]),
+                )
+            except ValueError as exc:
+                await query.answer(str(exc), show_alert=True)
+            except Exception:
+                await query.answer("Failed to cancel order.", show_alert=True)
+
+    # ── TB: Refill order ─────────────────────────────────────────
+    elif data.startswith("tb_refill:"):
+        order_id = data.split(":", 1)[1]
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+
+        async with async_session() as db:
+            order = await tb_svc.get_order(db, order_id)
+            if not order or order.tenant_id != user.tenant_id:
+                await query.edit_message_text("Order not found.")
+                return
+
+            try:
+                await tb_svc.refill_order(db, order)
+                await query.answer("\u2705 Refill requested!", show_alert=True)
+                # Refresh the detail view
+                order = await tb_svc.get_order(db, order_id)
+                await query.edit_message_text(
+                    _tb_order_detail_text(order),
+                    parse_mode="HTML",
+                    reply_markup=_tb_order_action_buttons(order),
+                )
+            except ValueError as exc:
+                await query.answer(str(exc), show_alert=True)
+            except Exception:
+                await query.answer("Failed to request refill.", show_alert=True)
+
+    # ── TB: Back to orders list ──────────────────────────────────
+    elif data == "tb_back:orders":
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+
+        async with async_session() as db:
+            orders, total = await tb_svc.list_orders(db, user.tenant_id, limit=5)
+
+        if not orders:
+            await query.edit_message_text("No orders found. Use /tborder to place one.")
+            return
+
+        lines = [f"\U0001F4CA <b>Your Recent TB Orders</b> ({total} total)\n"]
+        buttons = []
+        for order in orders:
+            icon = TB_STATUS_ICONS.get(order.status, "\u26AA")
+            short_id = str(order.id)[:8]
+            svc_name = (order.service.name if order.service else "Unknown")[:25]
+            lines.append(
+                f"{icon} <code>{short_id}</code> {svc_name} \u2014 {order.status}"
+            )
+            buttons.append([
+                InlineKeyboardButton(
+                    f"{icon} {short_id}... \u2014 {svc_name}",
+                    callback_data=f"tb_order:{order.id}",
+                )
+            ])
+        buttons.append([
+            InlineKeyboardButton("\u2795 New Order", callback_data="tb_start_order"),
+        ])
+
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+
+
+# ── Message Handler (for URL / input during flows) ───────────────────────
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text messages — keyboard buttons and URL input during /newjob flow."""
+    """Handle text messages — keyboard buttons and text input during flows."""
     text = (update.message.text or "").strip()
 
     # ── Handle persistent keyboard button presses ────────────────
@@ -783,100 +1486,356 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await credits_command(update, context)
     elif text == "\u2753 Help":
         return await help_command(update, context)
+    elif text == "\U0001F4E6 TB Order":
+        return await tborder_command(update, context)
+    elif text == "\U0001F4CA TB Orders":
+        return await tborders_command(update, context)
+    elif text == "\U0001F4B0 TB Wallet":
+        return await tbwallet_command(update, context)
 
-    # ── URL/input during job creation flow ────────────────────────
-    if not context.user_data.get("new_job_awaiting_input"):
-        await update.message.reply_text(
-            "Use the buttons below or type /help for commands.",
-            reply_markup=MAIN_KEYBOARD,
-        )
-        return
-
-    user = await _require_user(update)
-    if not user:
-        return
-
-    platform_name = context.user_data.get("new_job_platform")
-    scrape_type_id = context.user_data.get("new_job_scrape_type")
-
-    if not platform_name or not scrape_type_id:
-        await update.message.reply_text("Session expired. Use /newjob to start over.")
-        for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
-            context.user_data.pop(key, None)
-        return
-
-    scrape_types = SCRAPE_TYPES.get(platform_name, [])
-    st = next((s for s in scrape_types if s["id"] == scrape_type_id), None)
-    if not st:
-        await update.message.reply_text("Invalid configuration. Use /newjob to start over.")
-        for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
-            context.user_data.pop(key, None)
-        return
-
-    input_value = update.message.text.strip()
-
-    # Basic validation
-    if not input_value:
-        await update.message.reply_text("Please send a valid URL or ID.")
-        return
-
-    # Clear flow state
-    for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
-        context.user_data.pop(key, None)
-
-    # Create the job
-    async with async_session() as db:
-        result = await db.execute(
-            select(Platform).where(Platform.name == platform_name)
-        )
-        plat = result.scalar_one_or_none()
-        if not plat:
-            await update.message.reply_text("Platform not found. Use /newjob to start over.")
+    # ── Login flow: awaiting email ────────────────────────────────
+    if context.user_data.get("login_awaiting_email"):
+        email = text.lower().strip()
+        if not EMAIL_RE.match(email):
+            await update.message.reply_text(
+                "That doesn't look like a valid email. Please try again:"
+            )
             return
 
-        job = ScrapingJob(
-            tenant_id=user.tenant_id,
-            user_id=user.id,
-            platform_id=plat.id,
-            job_type=st["job_type"],
-            input_type=st["input_type"],
-            input_value=input_value,
-            status="queued",
-            settings={
-                "include_replies": True,
-                "profile_retry_count": 2,
-            },
+        # Look up user by email
+        async with async_session() as db:
+            result = await db.execute(
+                select(User).where(func.lower(User.email) == email)
+            )
+            user = result.scalar_one_or_none()
+
+        if not user:
+            await update.message.reply_text(
+                "\u274C No SocyBase account found with that email.\n"
+                "Please check and try again, or /cancel to abort."
+            )
+            return
+
+        # Check if this account is already linked to another Telegram
+        if user.telegram_chat_id and user.telegram_chat_id != str(update.effective_chat.id):
+            await update.message.reply_text(
+                "\u26A0\uFE0F This account is already linked to another Telegram.\n"
+                "Unlink it from the other device first via the dashboard, "
+                "or /cancel to abort."
+            )
+            return
+
+        # Generate and send OTP
+        otp = _generate_otp()
+        context.user_data["login_awaiting_email"] = False
+        context.user_data["login_email"] = email
+        context.user_data["login_otp"] = otp
+        context.user_data["login_otp_expires"] = time.time() + OTP_EXPIRY_SECONDS
+        context.user_data["login_awaiting_otp"] = True
+        context.user_data["login_otp_resends"] = 0
+
+        sent = await send_email(
+            to=email,
+            subject="SocyBase Telegram Login Code",
+            body_text=f"Your verification code is: {otp}\n\nThis code expires in 5 minutes.",
+            body_html=(
+                f"<h2>SocyBase Telegram Verification</h2>"
+                f"<p>Your verification code is:</p>"
+                f"<h1 style='letter-spacing:8px;font-family:monospace'>{otp}</h1>"
+                f"<p>This code expires in 5 minutes.</p>"
+                f"<p>If you didn't request this, you can safely ignore this email.</p>"
+            ),
         )
-        db.add(job)
-        await db.flush()
 
-        # Dispatch Celery task
-        if st["job_type"] == "post_discovery":
-            from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
-            task = run_post_discovery_pipeline.delay(str(job.id))
+        # Try to delete the email message for privacy
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+        if sent:
+            masked = _mask_email(email)
+            await update.effective_chat.send_message(
+                f"\U0001F4E7 A 6-digit code has been sent to <b>{masked}</b>.\n\n"
+                "Enter the code below:\n\n"
+                "<i>Send /cancel to abort.</i>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("\U0001F504 Resend Code", callback_data="login:resend_otp"),
+                ]]),
+            )
         else:
-            from app.scraping.pipeline import run_scraping_pipeline
-            task = run_scraping_pipeline.delay(str(job.id))
+            _clear_login_flow(context)
+            await update.effective_chat.send_message(
+                "\u274C Failed to send verification email.\n"
+                "Please check that SMTP is configured, or try /login again later."
+            )
+        return
 
-        job.celery_task_id = task.id
-        await db.commit()
+    # ── Login flow: awaiting OTP code ─────────────────────────────
+    if context.user_data.get("login_awaiting_otp"):
+        # Check expiry
+        if time.time() > context.user_data.get("login_otp_expires", 0):
+            _clear_login_flow(context)
+            await update.message.reply_text(
+                "\u23F3 Code expired. Use /login to try again."
+            )
+            return
 
-        short_id = str(job.id)[:8]
+        code = text.strip()
+        stored_otp = context.user_data.get("login_otp", "")
+
+        # Try to delete the code message
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+        if secrets.compare_digest(code, stored_otp):
+            # Success — link account
+            email = context.user_data.get("login_email")
+            chat_id = str(update.effective_chat.id)
+
+            async with async_session() as db:
+                result = await db.execute(
+                    select(User).where(func.lower(User.email) == email)
+                )
+                user = result.scalar_one_or_none()
+                if user:
+                    user.telegram_chat_id = chat_id
+                    await db.commit()
+
+            _clear_login_flow(context)
+            # Reset attempt counter on success
+            context.user_data.pop("login_attempts", None)
+            context.user_data.pop("login_cooldown_until", None)
+
+            await update.effective_chat.send_message(
+                f"\u2705 <b>Account linked!</b>\n\n"
+                f"Logged in as <b>{email}</b>.\n"
+                "Use the buttons below to get started.",
+                parse_mode="HTML",
+                reply_markup=MAIN_KEYBOARD,
+            )
+        else:
+            # Wrong code — increment attempts
+            attempts = context.user_data.get("login_attempts", 0) + 1
+            context.user_data["login_attempts"] = attempts
+
+            if attempts >= MAX_LOGIN_ATTEMPTS:
+                _clear_login_flow(context)
+                context.user_data["login_cooldown_until"] = time.time() + LOGIN_COOLDOWN_SECONDS
+                await update.effective_chat.send_message(
+                    f"\u26D4 Too many failed attempts. "
+                    f"Please wait {LOGIN_COOLDOWN_SECONDS // 60} minutes before trying /login again."
+                )
+            else:
+                remaining = MAX_LOGIN_ATTEMPTS - attempts
+                await update.effective_chat.send_message(
+                    f"\u274C Incorrect code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.\n\n"
+                    "Enter the code again or /cancel to abort.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("\U0001F504 Resend Code", callback_data="login:resend_otp"),
+                    ]]),
+                )
+        return
+
+    # ── Traffic bot: awaiting link input ──────────────────────────
+    if context.user_data.get("tb_awaiting_link"):
+        user = await _require_user(update)
+        if not user:
+            return
+
+        link = text
+        if not link:
+            await update.message.reply_text("Please send a valid URL.")
+            return
+
+        context.user_data["tb_awaiting_link"] = False
+        context.user_data["tb_link"] = link
+
+        service_id = context.user_data.get("tb_service_id")
+        async with async_session() as db:
+            service = await tb_svc.get_service(db, service_id)
+
+        if not service:
+            _clear_tb_flow(context)
+            await update.message.reply_text("Service not found. Use /tborder to start over.")
+            return
+
+        context.user_data["tb_awaiting_quantity"] = True
+
         await update.message.reply_text(
-            f"\u2705 <b>Job Created!</b>\n\n"
-            f"<b>ID:</b> <code>{short_id}...</code>\n"
-            f"<b>Platform:</b> {platform_name.title()}\n"
-            f"<b>Type:</b> {st['short']}\n"
-            f"<b>Input:</b> <code>{input_value[:60]}</code>\n\n"
-            f"\u23F3 Job is queued and will start shortly.\n"
-            f"You'll receive a notification when it completes.\n\n"
-            f"Use /status {job.id} or tap below to track progress:",
+            f"\U0001F4E6 <b>New Traffic Bot Order</b>\n\n"
+            f"<b>Service:</b> {service.name}\n"
+            f"<b>Link:</b> <code>{link[:60]}</code>\n\n"
+            f"<b>Step 4/4:</b> Enter the <b>quantity</b>:\n"
+            f"<i>Min: {service.min_quantity:,} \u2014 Max: {service.max_quantity:,}</i>\n\n"
+            f"<i>Send /cancel to abort.</i>",
+            parse_mode="HTML",
+        )
+        return
+
+    # ── Traffic bot: awaiting quantity input ───────────────────────
+    if context.user_data.get("tb_awaiting_quantity"):
+        user = await _require_user(update)
+        if not user:
+            return
+
+        try:
+            quantity = int(text.replace(",", ""))
+        except (ValueError, TypeError):
+            await update.message.reply_text("Please send a valid number.")
+            return
+
+        service_id = context.user_data.get("tb_service_id")
+        link = context.user_data.get("tb_link")
+
+        async with async_session() as db:
+            service = await tb_svc.get_service(db, service_id)
+
+        if not service:
+            _clear_tb_flow(context)
+            await update.message.reply_text("Service not found. Use /tborder to start over.")
+            return
+
+        if quantity < service.min_quantity or quantity > service.max_quantity:
+            await update.message.reply_text(
+                f"Quantity must be between {service.min_quantity:,} and {service.max_quantity:,}."
+            )
+            return
+
+        context.user_data["tb_awaiting_quantity"] = False
+        context.user_data["tb_quantity"] = quantity
+
+        # Calculate price
+        pricing = tb_svc.calculate_price(float(service.rate), quantity, float(service.fee_pct))
+
+        # Check wallet balance
+        async with async_session() as db:
+            wallet = await tb_svc.get_or_create_wallet(db, user.tenant_id)
+            await db.commit()
+
+        balance = float(wallet.balance)
+        total = pricing["total_cost"]
+        enough = balance >= total
+
+        balance_line = (
+            f"\U0001F4B0 <b>Wallet:</b> RM{balance:.2f} {'✅' if enough else '❌ Insufficient'}"
+        )
+
+        await update.message.reply_text(
+            f"\U0001F4E6 <b>Confirm Traffic Bot Order</b>\n\n"
+            f"<b>Service:</b> {service.name}\n"
+            f"<b>Link:</b> <code>{link[:60]}</code>\n"
+            f"<b>Quantity:</b> {quantity:,}\n\n"
+            f"<b>Base cost:</b> RM{pricing['base_cost']:.4f}\n"
+            f"<b>Fee:</b> RM{pricing['fee_amount']:.4f}\n"
+            f"<b>Total:</b> RM{total:.4f}\n\n"
+            f"{balance_line}",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"\U0001F4CA View Job", callback_data=f"job:{job.id}")],
-                [InlineKeyboardButton("\U0001F4CB My Jobs", callback_data="back:jobs")],
+                [
+                    InlineKeyboardButton("\u2705 Confirm Order", callback_data="tb_confirm"),
+                    InlineKeyboardButton("\u274C Cancel", callback_data="tb_cancel_flow"),
+                ],
+            ]) if enough else InlineKeyboardMarkup([
+                [InlineKeyboardButton("\u274C Cancel (Insufficient funds)", callback_data="tb_cancel_flow")],
             ]),
         )
+        return
+
+    # ── URL/input during scraping job creation flow ───────────────
+    if context.user_data.get("new_job_awaiting_input"):
+        user = await _require_user(update)
+        if not user:
+            return
+
+        platform_name = context.user_data.get("new_job_platform")
+        scrape_type_id = context.user_data.get("new_job_scrape_type")
+
+        if not platform_name or not scrape_type_id:
+            await update.message.reply_text("Session expired. Use /newjob to start over.")
+            _clear_job_flow(context)
+            return
+
+        scrape_types = SCRAPE_TYPES.get(platform_name, [])
+        st = next((s for s in scrape_types if s["id"] == scrape_type_id), None)
+        if not st:
+            await update.message.reply_text("Invalid configuration. Use /newjob to start over.")
+            _clear_job_flow(context)
+            return
+
+        input_value = update.message.text.strip()
+
+        # Basic validation
+        if not input_value:
+            await update.message.reply_text("Please send a valid URL or ID.")
+            return
+
+        # Clear flow state
+        _clear_job_flow(context)
+
+        # Create the job
+        async with async_session() as db:
+            result = await db.execute(
+                select(Platform).where(Platform.name == platform_name)
+            )
+            plat = result.scalar_one_or_none()
+            if not plat:
+                await update.message.reply_text("Platform not found. Use /newjob to start over.")
+                return
+
+            job = ScrapingJob(
+                tenant_id=user.tenant_id,
+                user_id=user.id,
+                platform_id=plat.id,
+                job_type=st["job_type"],
+                input_type=st["input_type"],
+                input_value=input_value,
+                status="queued",
+                settings={
+                    "include_replies": True,
+                    "profile_retry_count": 2,
+                },
+            )
+            db.add(job)
+            await db.flush()
+
+            # Dispatch Celery task
+            if st["job_type"] == "post_discovery":
+                from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
+                task = run_post_discovery_pipeline.delay(str(job.id))
+            else:
+                from app.scraping.pipeline import run_scraping_pipeline
+                task = run_scraping_pipeline.delay(str(job.id))
+
+            job.celery_task_id = task.id
+            await db.commit()
+
+            short_id = str(job.id)[:8]
+            await update.message.reply_text(
+                f"\u2705 <b>Job Created!</b>\n\n"
+                f"<b>ID:</b> <code>{short_id}...</code>\n"
+                f"<b>Platform:</b> {platform_name.title()}\n"
+                f"<b>Type:</b> {st['short']}\n"
+                f"<b>Input:</b> <code>{input_value[:60]}</code>\n\n"
+                f"\u23F3 Job is queued and will start shortly.\n"
+                f"You'll receive a notification when it completes.\n\n"
+                f"Use /status {job.id} or tap below to track progress:",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"\U0001F4CA View Job", callback_data=f"job:{job.id}")],
+                    [InlineKeyboardButton("\U0001F4CB My Jobs", callback_data="back:jobs")],
+                ]),
+            )
+        return
+
+    # ── Default: show help ────────────────────────────────────────
+    await update.message.reply_text(
+        "Use the buttons below or type /help for commands.",
+        reply_markup=MAIN_KEYBOARD,
+    )
 
 
 # ── Bot Application Builder ──────────────────────────────────────────────
@@ -885,10 +1844,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _post_init(app: Application) -> None:
     """Set bot commands menu after startup."""
     await app.bot.set_my_commands([
+        BotCommand("login", "Log in with your SocyBase account"),
         BotCommand("newjob", "Create a new scraping job"),
         BotCommand("jobs", "List your recent jobs"),
         BotCommand("credits", "Check credit balance"),
         BotCommand("status", "Check a specific job status"),
+        BotCommand("tborder", "Place a traffic bot order"),
+        BotCommand("tborders", "View your TB orders"),
+        BotCommand("tbwallet", "Check TB wallet balance"),
+        BotCommand("unlink", "Disconnect your Telegram account"),
         BotCommand("help", "Show all commands"),
         BotCommand("cancel", "Cancel current operation"),
     ])
@@ -908,11 +1872,16 @@ def create_bot_app() -> Application:
     )
 
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("login", login_command))
+    app.add_handler(CommandHandler("unlink", unlink_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("jobs", jobs_command))
     app.add_handler(CommandHandler("credits", credits_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("newjob", newjob_command))
+    app.add_handler(CommandHandler("tborder", tborder_command))
+    app.add_handler(CommandHandler("tborders", tborders_command))
+    app.add_handler(CommandHandler("tbwallet", tbwallet_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))

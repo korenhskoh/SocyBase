@@ -235,11 +235,6 @@ export interface EmailSettings {
   email_from: string;
 }
 
-export interface TelegramOrgSettings {
-  bot_token: string;
-  notification_chat_id: string;
-}
-
 export interface BusinessProfileSettings {
   business_name: string;
   business_type: string;
@@ -252,7 +247,6 @@ export interface BusinessProfileSettings {
 
 export interface TenantSettings {
   email: EmailSettings | null;
-  telegram: TelegramOrgSettings | null;
   business: BusinessProfileSettings | null;
   ai_suggestions: AIPageSuggestions | null;
 }
