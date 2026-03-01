@@ -1297,3 +1297,73 @@ async def send_whatsapp_test(
                 return {"success": False, "message": data.get("error", "Failed to send test message.")}
     except Exception as e:
         return {"success": False, "message": f"Cannot reach WhatsApp service: {str(e)}"}
+
+
+# ── Telegram Bot Settings ────────────────────────────────────────────────
+
+
+TELEGRAM_SETTINGS_KEY = "telegram_settings"
+TELEGRAM_TOKEN_MASKED = "tok_****"
+
+
+class TelegramSettingsUpdate(BaseModel):
+    bot_token: str | None = None
+    notification_chat_id: str | None = None
+
+
+@router.get("/telegram-settings")
+async def get_telegram_settings(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get Telegram bot settings (token is masked)."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == TELEGRAM_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {}
+    data = dict(setting.value)
+    # Mask the bot token for security
+    if data.get("bot_token"):
+        data["bot_token"] = TELEGRAM_TOKEN_MASKED
+    return data
+
+
+@router.put("/telegram-settings")
+async def update_telegram_settings(
+    data: TelegramSettingsUpdate,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update Telegram bot settings."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == TELEGRAM_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    existing = dict(setting.value) if setting else {}
+
+    new_value = data.model_dump(exclude_none=True)
+    # If token is the masked placeholder, keep the existing token
+    if new_value.get("bot_token") == TELEGRAM_TOKEN_MASKED:
+        new_value.pop("bot_token")
+    merged = {**existing, **new_value}
+
+    if setting:
+        setting.value = merged
+        setting.updated_by = admin.id
+    else:
+        setting = SystemSetting(
+            key=TELEGRAM_SETTINGS_KEY,
+            value=merged,
+            description="Telegram bot configuration",
+            updated_by=admin.id,
+        )
+        db.add(setting)
+
+    await db.commit()
+    # Mask token in response
+    resp = dict(merged)
+    if resp.get("bot_token"):
+        resp["bot_token"] = TELEGRAM_TOKEN_MASKED
+    return resp

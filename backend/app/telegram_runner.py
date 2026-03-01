@@ -17,20 +17,17 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    from app.config import get_settings
+    from app.services.telegram_bot import get_bot_token_sync, create_bot_app
 
-    settings = get_settings()
-    if not settings.telegram_bot_token:
+    token = get_bot_token_sync()
+    if not token:
         logger.warning(
-            "TELEGRAM_BOT_TOKEN is not set. "
-            "Global bot disabled — tenants can configure their own bots in tenant settings. "
-            "Set TELEGRAM_BOT_TOKEN env var to enable the global bot. Sleeping..."
+            "Telegram bot token not configured. "
+            "Set it via Admin Settings UI or TELEGRAM_BOT_TOKEN env var. Sleeping..."
         )
         # Sleep instead of exiting to prevent Railway restart loops
         while True:
             time.sleep(3600)
-
-    from app.services.telegram_bot import create_bot_app
 
     logger.info("Starting SocyBase Telegram bot (polling mode)...")
     app = create_bot_app()

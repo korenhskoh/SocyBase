@@ -1858,15 +1858,43 @@ async def _post_init(app: Application) -> None:
     ])
 
 
+def get_bot_token_sync() -> str:
+    """Get bot token from DB settings (sync), falling back to env var."""
+    import asyncio
+    from app.models.system import SystemSetting
+
+    token = None
+    try:
+        loop = asyncio.new_event_loop()
+        async def _fetch():
+            async with async_session() as db:
+                result = await db.execute(
+                    select(SystemSetting).where(
+                        SystemSetting.key == "telegram_settings"
+                    )
+                )
+                setting = result.scalar_one_or_none()
+                if setting and setting.value.get("bot_token"):
+                    return setting.value["bot_token"]
+            return None
+        token = loop.run_until_complete(_fetch())
+        loop.close()
+    except Exception:
+        pass
+    if not token:
+        token = get_settings().telegram_bot_token
+    return token or ""
+
+
 def create_bot_app() -> Application:
     """Build and configure the Telegram bot application."""
-    settings = get_settings()
-    if not settings.telegram_bot_token:
-        raise ValueError("TELEGRAM_BOT_TOKEN is not set")
+    token = get_bot_token_sync()
+    if not token:
+        raise ValueError("Telegram bot token not configured (set via Admin Settings or TELEGRAM_BOT_TOKEN env var)")
 
     app = (
         Application.builder()
-        .token(settings.telegram_bot_token)
+        .token(token)
         .post_init(_post_init)
         .build()
     )

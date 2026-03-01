@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback, Fragment } from "react";
+import { useEffect, useRef, useState, useCallback, Fragment } from "react";
 import { trafficBotApi } from "@/lib/api-client";
 import type { TrafficBotOrder, TrafficBotOrderList } from "@/types";
 
 const STATUS_TABS = ["all", "pending", "processing", "in_progress", "completed", "partial", "cancelled"];
+const ACTIVE_STATUSES = ["pending", "processing", "in_progress"];
+const POLL_INTERVAL = 15_000; // 15 seconds
 
 function statusColor(status: string) {
   const map: Record<string, string> = {
@@ -31,6 +33,7 @@ export default function TrafficBotOrdersPage() {
   const [offset, setOffset] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const limit = 20;
 
   const fetchOrders = useCallback(async () => {
@@ -47,9 +50,41 @@ export default function TrafficBotOrdersPage() {
     }
   }, [statusFilter, offset]);
 
+  // Silent refresh (no loading spinner) for polling
+  const silentRefresh = useCallback(async () => {
+    try {
+      const params: { status?: string; limit: number; offset: number } = { limit, offset };
+      if (statusFilter !== "all") params.status = statusFilter;
+      const r = await trafficBotApi.getOrders(params);
+      setData(r.data);
+    } catch {
+      // ignore
+    }
+  }, [statusFilter, offset]);
+
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
+
+  // Auto-poll when any visible orders have active statuses
+  useEffect(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
+    const hasActive = data?.items.some((o) => ACTIVE_STATUSES.includes(o.status));
+    if (hasActive) {
+      pollRef.current = setInterval(silentRefresh, POLL_INTERVAL);
+    }
+
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [data, silentRefresh]);
 
   async function handleRefreshStatus(orderId: string) {
     setRefreshingId(orderId);

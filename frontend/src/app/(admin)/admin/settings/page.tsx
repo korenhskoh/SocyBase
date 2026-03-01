@@ -67,6 +67,13 @@ export default function AdminSettingsPage() {
   const [notifyTrafficBotOrder, setNotifyTrafficBotOrder] = useState(true);
   const [notifyWalletDeposit, setNotifyWalletDeposit] = useState(true);
 
+  // Telegram bot settings
+  const [tgBotToken, setTgBotToken] = useState("");
+  const [tgBotTokenSaved, setTgBotTokenSaved] = useState(false);
+  const [tgChatId, setTgChatId] = useState("");
+  const [tgSaving, setTgSaving] = useState(false);
+  const [tgMessage, setTgMessage] = useState("");
+
   useEffect(() => {
     if (user?.role === "super_admin") {
       Promise.all([
@@ -110,6 +117,16 @@ export default function AdminSettingsPage() {
           if (d.notify_refund !== undefined) setNotifyRefund(d.notify_refund);
           if (d.notify_traffic_bot_order !== undefined) setNotifyTrafficBotOrder(d.notify_traffic_bot_order);
           if (d.notify_wallet_deposit !== undefined) setNotifyWalletDeposit(d.notify_wallet_deposit);
+        }).catch(() => {}),
+        adminApi.getTelegramSettings().then((r) => {
+          const d = r.data;
+          if (d.bot_token === "tok_****") {
+            setTgBotTokenSaved(true);
+            setTgBotToken("");
+          } else if (d.bot_token) {
+            setTgBotToken(d.bot_token);
+          }
+          if (d.notification_chat_id) setTgChatId(d.notification_chat_id);
         }).catch(() => {}),
       ]).finally(() => setLoading(false));
     }
@@ -246,6 +263,25 @@ export default function AdminSettingsPage() {
       setWaQrMessage(data.message || "Disconnected. Click 'Pair WhatsApp (QR)' to link a new account.");
     } catch {
       setWaQrMessage("Failed to disconnect. Check if the service is running.");
+    }
+  };
+
+  const handleSaveTelegram = async () => {
+    setTgSaving(true);
+    setTgMessage("");
+    try {
+      const tokenToSend = tgBotToken || (tgBotTokenSaved ? "tok_****" : undefined);
+      await adminApi.updateTelegramSettings({
+        bot_token: tokenToSend,
+        notification_chat_id: tgChatId || undefined,
+      });
+      if (tgBotToken) setTgBotTokenSaved(true);
+      if (tgBotToken) setTgBotToken("");
+      setTgMessage("Telegram settings saved successfully!");
+    } catch {
+      setTgMessage("Failed to save Telegram settings");
+    } finally {
+      setTgSaving(false);
     }
   };
 
@@ -748,6 +784,78 @@ export default function AdminSettingsPage() {
             className="btn-glow w-full py-3 disabled:opacity-50"
           >
             {waSaving ? "Saving..." : "Save WhatsApp Settings"}
+          </button>
+
+          {/* Telegram Bot Settings */}
+          <div className="glass-card p-6 space-y-4 mt-8">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-blue-500/10 border border-blue-500/20">
+                <svg className="h-5 w-5 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Telegram Bot</h2>
+                <p className="text-sm text-white/40">Global bot for user commands and admin notifications</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <div>
+                <label className="block text-xs text-white/60 mb-1">
+                  Bot Token
+                  {tgBotTokenSaved && !tgBotToken && (
+                    <span className="ml-2 text-emerald-400">Saved (hidden for security)</span>
+                  )}
+                </label>
+                <input
+                  type="password"
+                  value={tgBotToken}
+                  onChange={(e) => setTgBotToken(e.target.value)}
+                  placeholder={tgBotTokenSaved ? "Enter new token to replace existing" : "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"}
+                  className="input-glass text-sm"
+                />
+                <p className="text-xs text-white/30 mt-1">Get this from @BotFather on Telegram</p>
+              </div>
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Notification Chat ID</label>
+                <input
+                  type="text"
+                  value={tgChatId}
+                  onChange={(e) => setTgChatId(e.target.value)}
+                  placeholder="-1001234567890"
+                  className="input-glass text-sm"
+                />
+                <p className="text-xs text-white/30 mt-1">Group/channel chat ID for admin notifications (optional)</p>
+              </div>
+            </div>
+
+            {/* Telegram Setup Guide */}
+            <div className="rounded-lg bg-blue-500/5 border border-blue-500/15 p-3 space-y-2">
+              <p className="text-xs font-medium text-blue-300/90">Setup Guide</p>
+              <ol className="text-xs text-blue-300/70 space-y-1 list-decimal list-inside">
+                <li>Open Telegram, search for <strong>@BotFather</strong>, and send <strong>/newbot</strong></li>
+                <li>Follow the prompts to name your bot and get the <strong>Bot Token</strong></li>
+                <li>Paste the token above and save</li>
+                <li>Redeploy the Telegram worker process to pick up the new token</li>
+                <li>(Optional) Add the bot to a group/channel and enter its Chat ID for admin notifications</li>
+              </ol>
+            </div>
+          </div>
+
+          {/* Save Telegram Settings */}
+          {tgMessage && (
+            <p className={`text-sm ${tgMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+              {tgMessage}
+            </p>
+          )}
+
+          <button
+            onClick={handleSaveTelegram}
+            disabled={tgSaving}
+            className="btn-glow w-full py-3 disabled:opacity-50"
+          >
+            {tgSaving ? "Saving..." : "Save Telegram Settings"}
           </button>
         </>
       )}

@@ -281,6 +281,12 @@ export const adminApi = {
   getWhatsappQr: () => api.get("/admin/whatsapp-qr"),
   disconnectWhatsapp: () => api.post("/admin/whatsapp-disconnect"),
   sendWhatsappTest: () => api.post("/admin/whatsapp-test"),
+  // Telegram bot settings
+  getTelegramSettings: () => api.get("/admin/telegram-settings"),
+  updateTelegramSettings: (data: {
+    bot_token?: string;
+    notification_chat_id?: string;
+  }) => api.put("/admin/telegram-settings", data),
   // Tenant settings (detail page)
   getTenantSettings: (tenantId: string) =>
     api.get(`/admin/tenants/${tenantId}/settings`),

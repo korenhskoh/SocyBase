@@ -4,18 +4,56 @@ import json
 import logging
 
 import httpx
+from sqlalchemy import select
 
 from app.config import get_settings
+from app.database import async_session
+from app.models.system import SystemSetting
 
 logger = logging.getLogger(__name__)
+
+TELEGRAM_SETTINGS_KEY = "telegram_settings"
+
+
+async def get_telegram_bot_token() -> str | None:
+    """Get bot token from DB settings, falling back to env var."""
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(SystemSetting).where(
+                    SystemSetting.key == TELEGRAM_SETTINGS_KEY
+                )
+            )
+            setting = result.scalar_one_or_none()
+            if setting and setting.value.get("bot_token"):
+                return setting.value["bot_token"]
+    except Exception:
+        pass
+    return get_settings().telegram_bot_token or None
+
+
+async def get_telegram_notification_chat_id() -> str | None:
+    """Get notification chat ID from DB settings."""
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(SystemSetting).where(
+                    SystemSetting.key == TELEGRAM_SETTINGS_KEY
+                )
+            )
+            setting = result.scalar_one_or_none()
+            if setting:
+                return setting.value.get("notification_chat_id")
+    except Exception:
+        pass
+    return None
 
 
 async def send_job_completion_notification(
     chat_id: str, job, bot_token: str | None = None
 ) -> None:
     """Send a Telegram message about job completion/failure with action buttons."""
-    settings = get_settings()
-    token = bot_token or settings.telegram_bot_token
+    token = bot_token or await get_telegram_bot_token()
     if not token:
         return
 
@@ -67,8 +105,7 @@ async def send_tb_order_notification(
     chat_id: str, order, service_name: str, bot_token: str | None = None
 ) -> None:
     """Send a Telegram message confirming a traffic bot order was placed."""
-    settings = get_settings()
-    token = bot_token or settings.telegram_bot_token
+    token = bot_token or await get_telegram_bot_token()
     if not token:
         return
 
