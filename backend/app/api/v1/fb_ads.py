@@ -1125,6 +1125,17 @@ async def get_insights_summary(
 
     df, dt = _default_date_range(date_from, date_to)
 
+    # Scope to selected ad account's campaigns only
+    camp_r = await db.execute(
+        select(FBCampaign.campaign_id).where(
+            FBCampaign.tenant_id == user.tenant_id,
+            FBCampaign.ad_account_id == account.id,
+        )
+    )
+    campaign_meta_ids = [r[0] for r in camp_r.all()]
+    if not campaign_meta_ids:
+        return InsightSummary()
+
     result = await db.execute(
         select(
             func.sum(FBInsight.spend).label("spend"),
@@ -1135,6 +1146,7 @@ async def get_insights_summary(
         ).where(
             FBInsight.tenant_id == user.tenant_id,
             FBInsight.object_type == "campaign",
+            FBInsight.object_id.in_(campaign_meta_ids),
             FBInsight.date >= df,
             FBInsight.date <= dt,
         )
