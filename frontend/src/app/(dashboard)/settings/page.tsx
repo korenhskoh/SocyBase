@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
-import { authApi, telegramApi, tenantSettingsApi } from "@/lib/api-client";
+import { authApi, telegramApi, tenantSettingsApi, adminApi } from "@/lib/api-client";
 import type { TenantSettings } from "@/types";
 
 export default function SettingsPage() {
@@ -25,6 +25,14 @@ export default function SettingsPage() {
   const [telegramLoading, setTelegramLoading] = useState(true);
   const [telegramLink, setTelegramLink] = useState("");
 
+  // Telegram bot config (super_admin only)
+  const isSuperAdmin = user?.role === "super_admin";
+  const [tgBotToken, setTgBotToken] = useState("");
+  const [tgBotTokenSaved, setTgBotTokenSaved] = useState(false);
+  const [tgChatId, setTgChatId] = useState("");
+  const [tgSaving, setTgSaving] = useState(false);
+  const [tgMessage, setTgMessage] = useState("");
+
   useEffect(() => {
     telegramApi
       .getStatus()
@@ -32,6 +40,22 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setTelegramLoading(false));
   }, []);
+
+  // Load Telegram bot config for super_admin
+  useEffect(() => {
+    if (isSuperAdmin) {
+      adminApi.getTelegramSettings().then((r) => {
+        const d = r.data;
+        if (d.bot_token === "tok_****") {
+          setTgBotTokenSaved(true);
+          setTgBotToken("");
+        } else if (d.bot_token) {
+          setTgBotToken(d.bot_token);
+        }
+        if (d.notification_chat_id) setTgChatId(d.notification_chat_id);
+      }).catch(() => {});
+    }
+  }, [isSuperAdmin]);
 
   // Tenant settings (email)
   const isAdmin = user?.role === "tenant_admin" || user?.role === "super_admin";
@@ -117,6 +141,25 @@ export default function SettingsPage() {
       setEmailMessage("Failed to save email settings");
     } finally {
       setEmailSaving(false);
+    }
+  };
+
+  const handleSaveTelegram = async () => {
+    setTgSaving(true);
+    setTgMessage("");
+    try {
+      const tokenToSend = tgBotToken || (tgBotTokenSaved ? "tok_****" : undefined);
+      await adminApi.updateTelegramSettings({
+        bot_token: tokenToSend,
+        notification_chat_id: tgChatId || undefined,
+      });
+      if (tgBotToken) setTgBotTokenSaved(true);
+      if (tgBotToken) setTgBotToken("");
+      setTgMessage("Telegram settings saved successfully!");
+    } catch {
+      setTgMessage("Failed to save Telegram settings");
+    } finally {
+      setTgSaving(false);
     }
   };
 
@@ -328,6 +371,54 @@ export default function SettingsPage() {
                 </p>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Bot Configuration — super_admin only */}
+        {isSuperAdmin && (
+          <div className="border-t border-white/10 pt-4 mt-4 space-y-3">
+            <p className="text-xs font-semibold text-white/50 mb-2">Bot Configuration (Admin)</p>
+            <div>
+              <label className="block text-xs text-white/60 mb-1">
+                Bot Token
+                {tgBotTokenSaved && !tgBotToken && (
+                  <span className="ml-2 text-emerald-400">Saved (hidden for security)</span>
+                )}
+              </label>
+              <input
+                type="password"
+                value={tgBotToken}
+                onChange={(e) => setTgBotToken(e.target.value)}
+                placeholder={tgBotTokenSaved ? "Enter new token to replace existing" : "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"}
+                className="input-glass text-sm"
+              />
+              <p className="text-xs text-white/30 mt-1">Get this from @BotFather on Telegram</p>
+            </div>
+            <div>
+              <label className="block text-xs text-white/60 mb-1">Notification Chat ID</label>
+              <input
+                type="text"
+                value={tgChatId}
+                onChange={(e) => setTgChatId(e.target.value)}
+                placeholder="-1001234567890"
+                className="input-glass text-sm"
+              />
+              <p className="text-xs text-white/30 mt-1">Group/channel chat ID for admin notifications (optional)</p>
+            </div>
+
+            {tgMessage && (
+              <p className={`text-xs ${tgMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+                {tgMessage}
+              </p>
+            )}
+
+            <button
+              onClick={handleSaveTelegram}
+              disabled={tgSaving}
+              className="text-sm px-4 py-2 rounded-lg font-medium text-[#00AAFF] bg-[#00AAFF]/10 border border-[#00AAFF]/20 hover:bg-[#00AAFF]/20 transition disabled:opacity-50"
+            >
+              {tgSaving ? "Saving..." : "Save Bot Settings"}
+            </button>
           </div>
         )}
 
