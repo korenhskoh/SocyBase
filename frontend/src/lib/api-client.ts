@@ -157,6 +157,23 @@ export const exportApi = {
 // Platforms API
 export const platformsApi = {
   list: () => api.get("/platforms"),
+  adminList: () => api.get("/admin/platforms"),
+  create: (data: {
+    name: string;
+    display_name: string;
+    is_enabled?: boolean;
+    credit_cost_per_profile?: number;
+    credit_cost_per_comment_page?: number;
+    credit_cost_per_post?: number;
+  }) => api.post("/admin/platforms", data),
+  update: (id: string, data: {
+    display_name?: string;
+    is_enabled?: boolean;
+    credit_cost_per_profile?: number;
+    credit_cost_per_comment_page?: number;
+    credit_cost_per_post?: number;
+  }) => api.put(`/admin/platforms/${id}`, data),
+  delete: (id: string) => api.delete(`/admin/platforms/${id}`),
 };
 
 // Uploads API
@@ -201,6 +218,9 @@ export const adminApi = {
     bonus_credits?: number;
     is_active?: boolean;
     sort_order?: number;
+    max_concurrent_jobs?: number;
+    daily_job_limit?: number;
+    monthly_credit_limit?: number;
   }) => api.post("/admin/packages", data),
   updatePackage: (
     id: string,
@@ -214,6 +234,9 @@ export const adminApi = {
       bonus_credits?: number;
       is_active?: boolean;
       sort_order?: number;
+      max_concurrent_jobs?: number;
+      daily_job_limit?: number;
+      monthly_credit_limit?: number;
     }
   ) => api.put(`/admin/packages/${id}`, data),
   deletePackage: (id: string) => api.delete(`/admin/packages/${id}`),

@@ -48,6 +48,9 @@ class AdminCreditPackageResponse(BaseModel):
     bonus_credits: int
     is_active: bool
     sort_order: int
+    max_concurrent_jobs: int = 3
+    daily_job_limit: int = 0
+    monthly_credit_limit: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -63,6 +66,9 @@ class CreateCreditPackageRequest(BaseModel):
     bonus_credits: int = Field(ge=0, default=0)
     is_active: bool = True
     sort_order: int = 0
+    max_concurrent_jobs: int = Field(3, ge=1, le=50)
+    daily_job_limit: int = Field(0, ge=0)       # 0 = unlimited
+    monthly_credit_limit: int = Field(0, ge=0)  # 0 = unlimited
 
 
 class UpdateCreditPackageRequest(BaseModel):
@@ -75,3 +81,6 @@ class UpdateCreditPackageRequest(BaseModel):
     bonus_credits: int | None = Field(None, ge=0)
     is_active: bool | None = None
     sort_order: int | None = None
+    max_concurrent_jobs: int | None = Field(None, ge=1, le=50)
+    daily_job_limit: int | None = Field(None, ge=0)
+    monthly_credit_limit: int | None = Field(None, ge=0)

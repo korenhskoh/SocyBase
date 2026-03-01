@@ -21,6 +21,9 @@ class CreditPackage(Base):
     bonus_credits: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    max_concurrent_jobs: Mapped[int] = mapped_column(Integer, default=3)
+    daily_job_limit: Mapped[int] = mapped_column(Integer, default=0)       # 0 = unlimited
+    monthly_credit_limit: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unlimited
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

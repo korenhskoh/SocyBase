@@ -15,6 +15,9 @@ interface EditValues {
   billing_interval?: string;
   stripe_price_id?: string;
   sort_order?: number;
+  max_concurrent_jobs?: number;
+  daily_job_limit?: number;
+  monthly_credit_limit?: number;
 }
 
 const BILLING_OPTIONS = [
@@ -49,6 +52,9 @@ export default function AdminPackagesPage() {
     billing_interval: "one_time",
     stripe_price_id: "",
     sort_order: 0,
+    max_concurrent_jobs: 3,
+    daily_job_limit: 0,
+    monthly_credit_limit: 0,
   });
 
   const fetchPackages = () => {
@@ -73,7 +79,7 @@ export default function AdminPackagesPage() {
         stripe_price_id: newPkg.stripe_price_id || undefined,
       });
       setShowCreate(false);
-      setNewPkg({ name: "", credits: 100, price: 9.99, bonus_credits: 0, billing_interval: "one_time", stripe_price_id: "", sort_order: 0 });
+      setNewPkg({ name: "", credits: 100, price: 9.99, bonus_credits: 0, billing_interval: "one_time", stripe_price_id: "", sort_order: 0, max_concurrent_jobs: 3, daily_job_limit: 0, monthly_credit_limit: 0 });
       fetchPackages();
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to create package");
@@ -90,17 +96,23 @@ export default function AdminPackagesPage() {
       billing_interval: pkg.billing_interval,
       stripe_price_id: pkg.stripe_price_id || "",
       sort_order: pkg.sort_order,
+      max_concurrent_jobs: pkg.max_concurrent_jobs ?? 3,
+      daily_job_limit: pkg.daily_job_limit ?? 0,
+      monthly_credit_limit: pkg.monthly_credit_limit ?? 0,
     });
   };
 
   const saveEdit = async () => {
     if (!editingId) return;
     try {
-      const { price: editPrice, ...editRest } = editValues;
+      const { price: editPrice, max_concurrent_jobs, daily_job_limit, monthly_credit_limit, ...editRest } = editValues;
       await adminApi.updatePackage(editingId, {
         ...editRest,
         price_cents: editPrice != null ? Math.round(editPrice * 100) : undefined,
         stripe_price_id: editValues.stripe_price_id || undefined,
+        max_concurrent_jobs,
+        daily_job_limit,
+        monthly_credit_limit,
       });
       setEditingId(null);
       fetchPackages();
@@ -232,6 +244,45 @@ export default function AdminPackagesPage() {
               />
             </div>
           </div>
+          {/* Scraping Limits */}
+          <div>
+            <h4 className="text-xs font-medium text-white/40 uppercase tracking-wider mb-2">Scraping Limits</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs text-white/40 mb-1">Max Concurrent Jobs</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={newPkg.max_concurrent_jobs}
+                  onChange={(e) => setNewPkg({ ...newPkg, max_concurrent_jobs: parseInt(e.target.value) || 3 })}
+                  className="input-glass text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-white/40 mb-1">Daily Job Limit</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={newPkg.daily_job_limit}
+                  onChange={(e) => setNewPkg({ ...newPkg, daily_job_limit: parseInt(e.target.value) || 0 })}
+                  className="input-glass text-sm"
+                />
+                <p className="text-[10px] text-white/20 mt-0.5">0 = unlimited</p>
+              </div>
+              <div>
+                <label className="block text-xs text-white/40 mb-1">Monthly Credit Limit</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={newPkg.monthly_credit_limit}
+                  onChange={(e) => setNewPkg({ ...newPkg, monthly_credit_limit: parseInt(e.target.value) || 0 })}
+                  className="input-glass text-sm"
+                />
+                <p className="text-[10px] text-white/20 mt-0.5">0 = unlimited</p>
+              </div>
+            </div>
+          </div>
           {newPkg.billing_interval !== "one_time" && (
             <div className="rounded-lg bg-cyan-500/5 border border-cyan-500/15 p-3">
               <p className="text-xs text-cyan-300/80">
@@ -262,7 +313,7 @@ export default function AdminPackagesPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px]">
+          <table className="w-full min-w-[1050px]">
             <thead>
               <tr className="border-b border-white/5">
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Name</th>
@@ -270,6 +321,7 @@ export default function AdminPackagesPage() {
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Bonus</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Price</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Billing</th>
+                <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Limits</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Status</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Order</th>
                 <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Actions</th>
@@ -325,6 +377,13 @@ export default function AdminPackagesPage() {
                         </select>
                       </td>
                       <td className="px-6 py-3">
+                        <div className="space-y-1">
+                          <input type="number" min={1} max={50} value={editValues.max_concurrent_jobs ?? 3} onChange={(e) => setEditValues({ ...editValues, max_concurrent_jobs: parseInt(e.target.value) || 3 })} className="input-glass text-xs w-16" title="Concurrent" />
+                          <input type="number" min={0} value={editValues.daily_job_limit ?? 0} onChange={(e) => setEditValues({ ...editValues, daily_job_limit: parseInt(e.target.value) || 0 })} className="input-glass text-xs w-16" title="Daily" />
+                          <input type="number" min={0} value={editValues.monthly_credit_limit ?? 0} onChange={(e) => setEditValues({ ...editValues, monthly_credit_limit: parseInt(e.target.value) || 0 })} className="input-glass text-xs w-16" title="Monthly" />
+                        </div>
+                      </td>
+                      <td className="px-6 py-3">
                         <span className="text-xs text-white/40">-</span>
                       </td>
                       <td className="px-6 py-3">
@@ -367,6 +426,13 @@ export default function AdminPackagesPage() {
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${billingColor(pkg.billing_interval)}`}>
                           {billingLabel(pkg.billing_interval)}
                         </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="space-y-0.5 text-xs text-white/50">
+                          <p>{pkg.max_concurrent_jobs ?? 3} concurrent</p>
+                          <p>{(pkg.daily_job_limit ?? 0) === 0 ? "Unlimited" : pkg.daily_job_limit} daily</p>
+                          <p>{(pkg.monthly_credit_limit ?? 0) === 0 ? "Unlimited" : pkg.monthly_credit_limit} mo. credits</p>
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <button

@@ -161,6 +161,7 @@ async def approve_payment(
     )
     balance = balance_result.scalar_one_or_none()
 
+    package = None
     if payment.credit_package_id:
         from app.models.credit import CreditPackage
         pkg_result = await db.execute(
@@ -186,6 +187,20 @@ async def approve_payment(
             reference_id=payment.id,
         )
         db.add(transaction)
+
+    # Auto-apply package limits to tenant settings
+    if package:
+        tenant_result = await db.execute(
+            select(Tenant).where(Tenant.id == payment.tenant_id)
+        )
+        tenant = tenant_result.scalar_one_or_none()
+        if tenant:
+            tenant.plan = package.name
+            settings = dict(tenant.settings or {})
+            settings["max_concurrent_jobs"] = package.max_concurrent_jobs
+            settings["daily_job_limit"] = package.daily_job_limit
+            settings["monthly_credit_limit"] = package.monthly_credit_limit
+            tenant.settings = settings
 
     await db.flush()
     await notify_payment_approved(
@@ -971,6 +986,138 @@ async def update_payment_settings(
     if resp.get("stripe_webhook_secret"):
         resp["stripe_webhook_secret"] = PAYMENT_MASKED
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Platform Management
+# ---------------------------------------------------------------------------
+
+
+class CreatePlatformRequest(BaseModel):
+    name: str
+    display_name: str
+    is_enabled: bool = True
+    credit_cost_per_profile: int = Field(1, ge=0)
+    credit_cost_per_comment_page: int = Field(1, ge=0)
+    credit_cost_per_post: int = Field(1, ge=0)
+
+
+class UpdatePlatformRequest(BaseModel):
+    display_name: str | None = None
+    is_enabled: bool | None = None
+    credit_cost_per_profile: int | None = Field(None, ge=0)
+    credit_cost_per_comment_page: int | None = Field(None, ge=0)
+    credit_cost_per_post: int | None = Field(None, ge=0)
+
+
+@router.get("/platforms")
+async def admin_list_platforms(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all platforms (including disabled) for admin."""
+    from app.models.platform import Platform
+
+    result = await db.execute(select(Platform).order_by(Platform.name))
+    platforms = result.scalars().all()
+    return [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "display_name": p.display_name,
+            "is_enabled": p.is_enabled,
+            "credit_cost_per_profile": p.credit_cost_per_profile,
+            "credit_cost_per_comment_page": p.credit_cost_per_comment_page,
+            "credit_cost_per_post": p.credit_cost_per_post,
+        }
+        for p in platforms
+    ]
+
+
+@router.post("/platforms", status_code=201)
+async def create_platform(
+    data: CreatePlatformRequest,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new platform."""
+    from app.models.platform import Platform
+
+    existing = await db.execute(
+        select(Platform).where(Platform.name == data.name)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"Platform '{data.name}' already exists")
+
+    platform = Platform(
+        name=data.name,
+        display_name=data.display_name,
+        is_enabled=data.is_enabled,
+        credit_cost_per_profile=data.credit_cost_per_profile,
+        credit_cost_per_comment_page=data.credit_cost_per_comment_page,
+        credit_cost_per_post=data.credit_cost_per_post,
+    )
+    db.add(platform)
+    await db.flush()
+    return {
+        "id": str(platform.id),
+        "name": platform.name,
+        "display_name": platform.display_name,
+        "is_enabled": platform.is_enabled,
+        "credit_cost_per_profile": platform.credit_cost_per_profile,
+        "credit_cost_per_comment_page": platform.credit_cost_per_comment_page,
+        "credit_cost_per_post": platform.credit_cost_per_post,
+    }
+
+
+@router.put("/platforms/{platform_id}")
+async def update_platform(
+    platform_id: UUID,
+    data: UpdatePlatformRequest,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a platform's settings."""
+    from app.models.platform import Platform
+
+    result = await db.execute(
+        select(Platform).where(Platform.id == platform_id)
+    )
+    platform = result.scalar_one_or_none()
+    if not platform:
+        raise HTTPException(status_code=404, detail="Platform not found")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(platform, field, value)
+    await db.flush()
+    return {
+        "id": str(platform.id),
+        "name": platform.name,
+        "display_name": platform.display_name,
+        "is_enabled": platform.is_enabled,
+        "credit_cost_per_profile": platform.credit_cost_per_profile,
+        "credit_cost_per_comment_page": platform.credit_cost_per_comment_page,
+        "credit_cost_per_post": platform.credit_cost_per_post,
+    }
+
+
+@router.delete("/platforms/{platform_id}", status_code=204)
+async def delete_platform(
+    platform_id: UUID,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a platform."""
+    from app.models.platform import Platform
+
+    result = await db.execute(
+        select(Platform).where(Platform.id == platform_id)
+    )
+    platform = result.scalar_one_or_none()
+    if not platform:
+        raise HTTPException(status_code=404, detail="Platform not found")
+    await db.delete(platform)
+    await db.flush()
 
 
 # ── WhatsApp Notification Settings ───────────────────────────────────

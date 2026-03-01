@@ -155,6 +155,9 @@ export interface CreditPackage {
   bonus_credits: number;
   is_active: boolean;
   sort_order: number;
+  max_concurrent_jobs: number;
+  daily_job_limit: number;
+  monthly_credit_limit: number;
   created_at: string;
 }
 
@@ -183,6 +186,7 @@ export interface Platform {
   is_enabled: boolean;
   credit_cost_per_profile: number;
   credit_cost_per_comment_page: number;
+  credit_cost_per_post: number;
 }
 
 export interface AdminDashboard {
