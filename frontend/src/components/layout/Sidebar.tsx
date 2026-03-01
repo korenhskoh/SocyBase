@@ -65,9 +65,9 @@ export function Sidebar() {
   }, [mobileOpen]);
 
   const sidebarContent = (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       {/* Logo */}
-      <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
+      <div className="flex items-center justify-between px-6 py-5 border-b border-white/5 shrink-0">
         <LogoFull size="sm" />
         <button
           onClick={() => setMobileOpen(false)}
@@ -162,12 +162,12 @@ export function Sidebar() {
       </nav>
 
       {/* Currency selector */}
-      <div className="px-4 pb-2">
+      <div className="px-4 pb-2 shrink-0">
         <CurrencySelector className="w-full justify-center" />
       </div>
 
       {/* User section */}
-      <div className="border-t border-white/5 p-4">
+      <div className="border-t border-white/5 p-4 shrink-0">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center shrink-0">
             <span className="text-white text-sm font-medium">
@@ -223,7 +223,7 @@ export function Sidebar() {
       {/* Mobile drawer */}
       <aside
         className={cn(
-          "fixed left-0 top-0 z-50 h-screen w-72 border-r border-white/5 bg-navy-900/95 backdrop-blur-xl transition-transform duration-300 md:hidden",
+          "fixed left-0 top-0 z-50 h-[100dvh] w-72 border-r border-white/5 bg-navy-900/95 backdrop-blur-xl transition-transform duration-300 md:hidden",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
@@ -231,7 +231,7 @@ export function Sidebar() {
       </aside>
 
       {/* Desktop sidebar */}
-      <aside className="hidden md:block fixed left-0 top-0 z-40 h-screen w-64 border-r border-white/5 bg-navy-900/95 backdrop-blur-xl">
+      <aside className="hidden md:block fixed left-0 top-0 z-40 h-[100dvh] w-64 border-r border-white/5 bg-navy-900/95 backdrop-blur-xl">
         {sidebarContent}
       </aside>
     </>
