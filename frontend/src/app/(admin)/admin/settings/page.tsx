@@ -158,21 +158,10 @@ export default function AdminSettingsPage() {
     }
   };
 
-  const getWaBrowserUrl = () => {
-    if (!waServiceUrl) return "http://localhost:3001";
-    // If it's a public URL (https:// or a domain), use as-is
-    // If it's a Docker internal URL (e.g. http://whatsapp:3001), swap to localhost
-    if (waServiceUrl.includes("://localhost") || waServiceUrl.includes("://whatsapp")) {
-      return waServiceUrl.replace("whatsapp", "localhost");
-    }
-    return waServiceUrl;
-  };
-
   const checkWhatsAppStatus = async () => {
     setWaStatus(null);
     try {
-      const resp = await fetch(`${getWaBrowserUrl()}/status`);
-      const data = await resp.json();
+      const { data } = await adminApi.getWhatsappStatus();
       setWaStatus(data.status || "unknown");
     } catch {
       setWaStatus("unreachable");
@@ -184,8 +173,7 @@ export default function AdminSettingsPage() {
     setWaQr(null);
     setWaQrMessage("");
     try {
-      const resp = await fetch(`${getWaBrowserUrl()}/qr`);
-      const data = await resp.json();
+      const { data } = await adminApi.getWhatsappQr();
       if (data.status === "connected") {
         setWaQrMessage("Already connected! No QR scan needed.");
         setWaStatus("connected");
@@ -519,10 +507,10 @@ export default function AdminSettingsPage() {
                     type="text"
                     value={waServiceUrl}
                     onChange={(e) => setWaServiceUrl(e.target.value)}
-                    placeholder="http://whatsapp:3001"
+                    placeholder="http://whatsapp.railway.internal:3001"
                     className="input-glass text-sm"
                   />
-                  <p className="text-xs text-white/30 mt-1">URL of the Baileys WhatsApp microservice</p>
+                  <p className="text-xs text-white/30 mt-1">Internal URL of the WhatsApp service (backend connects to this)</p>
                 </div>
                 <div>
                   <label className="block text-xs text-white/60 mb-1">Admin Phone Number</label>
@@ -634,7 +622,7 @@ export default function AdminSettingsPage() {
             <div className="rounded-lg bg-green-500/5 border border-green-500/15 p-3 space-y-2">
               <p className="text-xs font-medium text-green-300/90">Setup Guide</p>
               <ol className="text-xs text-green-300/70 space-y-1 list-decimal list-inside">
-                <li>Enter the WhatsApp service URL (your Railway WhatsApp service public URL)</li>
+                <li>Enter the WhatsApp service URL (e.g. <strong>http://whatsapp.railway.internal:3001</strong> for Railway, or your service&apos;s internal/public URL)</li>
                 <li>Enter the admin phone number that will receive notifications</li>
                 <li>Click <strong>&quot;Pair WhatsApp (QR)&quot;</strong> and scan the QR code with WhatsApp on your phone (Settings &gt; Linked Devices &gt; Link a Device)</li>
                 <li>Once connected, save settings and enable the notifications you want</li>

@@ -27,7 +27,6 @@ async function startSocket() {
     version,
     auth: state,
     logger: pino({ level: "silent" }),
-    printQRInTerminal: true,
   });
 
   sock.ev.on("creds.update", saveCreds);

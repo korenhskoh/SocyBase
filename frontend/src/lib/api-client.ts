@@ -252,6 +252,8 @@ export const adminApi = {
     notify_traffic_bot_order?: boolean;
     notify_wallet_deposit?: boolean;
   }) => api.put("/admin/whatsapp-settings", data),
+  getWhatsappStatus: () => api.get("/admin/whatsapp-status"),
+  getWhatsappQr: () => api.get("/admin/whatsapp-qr"),
 };
 
 // Telegram API

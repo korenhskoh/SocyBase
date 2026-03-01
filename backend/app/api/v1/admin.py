@@ -829,3 +829,47 @@ async def update_whatsapp_settings(
 
     await db.commit()
     return merged
+
+
+@router.get("/whatsapp-status")
+async def proxy_whatsapp_status(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Proxy WhatsApp service /status through the backend so the browser doesn't need direct access."""
+    import httpx
+
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == WHATSAPP_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    service_url = (setting.value.get("whatsapp_service_url") if setting else None) or "http://localhost:3001"
+
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{service_url.rstrip('/')}/status")
+            return resp.json()
+    except Exception:
+        return {"status": "unreachable"}
+
+
+@router.get("/whatsapp-qr")
+async def proxy_whatsapp_qr(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Proxy WhatsApp service /qr through the backend for QR code pairing."""
+    import httpx
+
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == WHATSAPP_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    service_url = (setting.value.get("whatsapp_service_url") if setting else None) or "http://localhost:3001"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{service_url.rstrip('/')}/qr")
+            return resp.json()
+    except Exception:
+        return {"status": "error", "message": "Cannot reach WhatsApp service. Make sure it is running and the Service URL is correct."}
