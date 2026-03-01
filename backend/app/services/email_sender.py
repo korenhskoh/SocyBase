@@ -104,9 +104,12 @@ async def send_email(
 
     # ── Try Resend first (works on Railway where SMTP is blocked) ──
     if settings.resend_api_key:
-        # Resolve sender from SMTP config or default
+        # Use Resend default testing sender if no custom domain configured
         smtp_cfg = await _resolve_smtp_config()
         from_email = (smtp_cfg or {}).get("email_from", settings.email_from)
+        # Resend requires verified domain; fall back to their testing sender
+        if not from_email or "@gmail.com" in from_email or from_email == "noreply@socybase.com":
+            from_email = "SocyBase <onboarding@resend.dev>"
         return await _send_via_resend(to, subject, body_text, body_html, from_email, settings.resend_api_key)
 
     # ── Fallback: SMTP ──
