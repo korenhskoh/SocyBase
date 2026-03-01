@@ -1362,8 +1362,35 @@ async def update_telegram_settings(
         db.add(setting)
 
     await db.commit()
+
+    # Signal the Telegram bot runner to restart with new settings
+    try:
+        import redis as sync_redis
+        from app.config import get_settings
+        r = sync_redis.from_url(get_settings().redis_url, decode_responses=True)
+        r.setex("telegram_bot:restart", 60, "1")
+        r.close()
+    except Exception:
+        pass  # Non-critical — runner will pick up changes on next restart
+
     # Mask token in response
     resp = dict(merged)
     if resp.get("bot_token"):
         resp["bot_token"] = TELEGRAM_TOKEN_MASKED
     return resp
+
+
+@router.get("/telegram-bot/status")
+async def get_telegram_bot_status(
+    admin: User = Depends(get_super_admin),
+):
+    """Get the current status of the Telegram bot process."""
+    import redis as sync_redis
+    from app.config import get_settings
+    try:
+        r = sync_redis.from_url(get_settings().redis_url, decode_responses=True)
+        status = r.get("telegram_bot:status") or "offline"
+        r.close()
+    except Exception:
+        status = "offline"
+    return {"status": status}

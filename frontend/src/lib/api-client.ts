@@ -287,6 +287,7 @@ export const adminApi = {
     bot_token?: string;
     notification_chat_id?: string;
   }) => api.put("/admin/telegram-settings", data),
+  getTelegramBotStatus: () => api.get("/admin/telegram-bot/status"),
   // Tenant settings (detail page)
   getTenantSettings: (tenantId: string) =>
     api.get(`/admin/tenants/${tenantId}/settings`),

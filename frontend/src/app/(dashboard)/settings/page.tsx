@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { authApi, telegramApi, tenantSettingsApi, adminApi } from "@/lib/api-client";
 import type { TenantSettings } from "@/types";
@@ -32,6 +32,9 @@ export default function SettingsPage() {
   const [tgChatId, setTgChatId] = useState("");
   const [tgSaving, setTgSaving] = useState(false);
   const [tgMessage, setTgMessage] = useState("");
+  const [tgBotStatus, setTgBotStatus] = useState<"idle" | "restarting" | "online" | "timeout">("idle");
+  const tgPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tgPollStartRef = useRef<number>(0);
 
   useEffect(() => {
     telegramApi
@@ -144,6 +147,39 @@ export default function SettingsPage() {
     }
   };
 
+  const stopTgPoll = () => {
+    if (tgPollRef.current) {
+      clearInterval(tgPollRef.current);
+      tgPollRef.current = null;
+    }
+  };
+
+  const startTgBotStatusPoll = () => {
+    stopTgPoll();
+    setTgBotStatus("restarting");
+    tgPollStartRef.current = Date.now();
+    tgPollRef.current = setInterval(async () => {
+      const elapsed = Date.now() - tgPollStartRef.current;
+      try {
+        const res = await adminApi.getTelegramBotStatus();
+        if (res.data.status === "running") {
+          stopTgPoll();
+          setTgBotStatus("online");
+          setTimeout(() => setTgBotStatus("idle"), 8000);
+          return;
+        }
+      } catch { /* ignore */ }
+      if (elapsed > 45000) {
+        stopTgPoll();
+        setTgBotStatus("timeout");
+        setTimeout(() => setTgBotStatus("idle"), 10000);
+      }
+    }, 3000);
+  };
+
+  // Cleanup polling on unmount
+  useEffect(() => () => stopTgPoll(), []);
+
   const handleSaveTelegram = async () => {
     setTgSaving(true);
     setTgMessage("");
@@ -155,7 +191,8 @@ export default function SettingsPage() {
       });
       if (tgBotToken) setTgBotTokenSaved(true);
       if (tgBotToken) setTgBotToken("");
-      setTgMessage("Telegram settings saved successfully!");
+      setTgMessage("Settings saved! Restarting bot...");
+      startTgBotStatusPoll();
     } catch {
       setTgMessage("Failed to save Telegram settings");
     } finally {
@@ -406,18 +443,51 @@ export default function SettingsPage() {
               <p className="text-xs text-white/30 mt-1">Group/channel chat ID for admin notifications (optional)</p>
             </div>
 
-            {tgMessage && (
-              <p className={`text-xs ${tgMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+            {tgMessage && tgBotStatus === "idle" && (
+              <p className={`text-xs ${tgMessage.includes("Failed") ? "text-red-400" : "text-emerald-400"}`}>
                 {tgMessage}
               </p>
             )}
 
+            {/* Bot restart status indicator */}
+            {tgBotStatus === "restarting" && (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-400/10 border border-amber-400/20">
+                <div className="h-4 w-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-amber-400">Bot is restarting...</p>
+                  <p className="text-xs text-amber-400/60">Applying new settings. Estimated wait: ~15 seconds</p>
+                </div>
+              </div>
+            )}
+
+            {tgBotStatus === "online" && (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-emerald-400/10 border border-emerald-400/20">
+                <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-emerald-400">Bot is online and ready!</p>
+                  <p className="text-xs text-emerald-400/60">You can now use /start in Telegram</p>
+                </div>
+              </div>
+            )}
+
+            {tgBotStatus === "timeout" && (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-red-400/10 border border-red-400/20">
+                <svg className="h-4 w-4 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-medium text-red-400">Bot restart is taking longer than expected</p>
+                  <p className="text-xs text-red-400/60">Check your server logs or restart the telegram-bot service manually</p>
+                </div>
+              </div>
+            )}
+
             <button
               onClick={handleSaveTelegram}
-              disabled={tgSaving}
+              disabled={tgSaving || tgBotStatus === "restarting"}
               className="text-sm px-4 py-2 rounded-lg font-medium text-[#00AAFF] bg-[#00AAFF]/10 border border-[#00AAFF]/20 hover:bg-[#00AAFF]/20 transition disabled:opacity-50"
             >
-              {tgSaving ? "Saving..." : "Save Bot Settings"}
+              {tgSaving ? "Saving..." : tgBotStatus === "restarting" ? "Restarting Bot..." : "Save Bot Settings"}
             </button>
           </div>
         )}
