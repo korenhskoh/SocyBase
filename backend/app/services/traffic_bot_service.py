@@ -110,34 +110,40 @@ async def sync_services(db: AsyncSession) -> int:
     if not isinstance(raw_services, list):
         raise ValueError(f"Unexpected API response: {type(raw_services)}")
 
-    count = 0
+    rows = []
     for svc in raw_services:
-        stmt = pg_insert(TrafficBotService).values(
-            id=uuid.uuid4(),
-            external_service_id=int(svc["service"]),
-            name=svc.get("name", ""),
-            category=svc.get("category", "Other"),
-            type=svc.get("type", "Default"),
-            rate=Decimal(str(svc.get("rate", "0"))),
-            min_quantity=int(svc.get("min", 10)),
-            max_quantity=int(svc.get("max", 1000000)),
-        ).on_conflict_do_update(
-            index_elements=["external_service_id"],
-            set_={
-                "name": svc.get("name", ""),
-                "category": svc.get("category", "Other"),
-                "type": svc.get("type", "Default"),
-                "rate": Decimal(str(svc.get("rate", "0"))),
-                "min_quantity": int(svc.get("min", 10)),
-                "max_quantity": int(svc.get("max", 1000000)),
-                "updated_at": datetime.now(timezone.utc),
-            },
-        )
-        await db.execute(stmt)
-        count += 1
+        rows.append({
+            "id": uuid.uuid4(),
+            "external_service_id": int(svc["service"]),
+            "name": svc.get("name", ""),
+            "category": svc.get("category", "Other"),
+            "type": svc.get("type", "Default"),
+            "rate": Decimal(str(svc.get("rate", "0"))),
+            "min_quantity": int(svc.get("min", 10)),
+            "max_quantity": int(svc.get("max", 1000000)),
+        })
 
-    await db.flush()
-    return count
+    if rows:
+        # Batch upsert in chunks of 500 to avoid oversized statements
+        for i in range(0, len(rows), 500):
+            chunk = rows[i:i + 500]
+            stmt = pg_insert(TrafficBotService).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["external_service_id"],
+                set_={
+                    "name": stmt.excluded.name,
+                    "category": stmt.excluded.category,
+                    "type": stmt.excluded.type,
+                    "rate": stmt.excluded.rate,
+                    "min_quantity": stmt.excluded.min_quantity,
+                    "max_quantity": stmt.excluded.max_quantity,
+                    "updated_at": datetime.now(timezone.utc),
+                },
+            )
+            await db.execute(stmt)
+        await db.flush()
+
+    return len(rows)
 
 
 async def list_services(
@@ -297,7 +303,9 @@ async def list_orders(
 
 async def get_order(db: AsyncSession, order_id: uuid.UUID) -> TrafficBotOrder | None:
     result = await db.execute(
-        select(TrafficBotOrder).where(TrafficBotOrder.id == order_id)
+        select(TrafficBotOrder)
+        .where(TrafficBotOrder.id == order_id)
+        .options(selectinload(TrafficBotOrder.service))
     )
     return result.scalar_one_or_none()
 

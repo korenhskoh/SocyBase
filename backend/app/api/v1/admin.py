@@ -2,7 +2,7 @@ from uuid import UUID
 from datetime import datetime, timezone, date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from app.database import get_db
 from app.dependencies import get_super_admin
 from app.models.user import User
@@ -203,6 +203,7 @@ async def refund_payment(
     db: AsyncSession = Depends(get_db),
 ):
     """Refund a completed payment. For Stripe: auto-refund via API. For bank transfer: marks as refunded (admin handles manually)."""
+    import asyncio
     import stripe as stripe_lib
     from app.api.v1.payments import _get_stripe_keys
 
@@ -218,7 +219,7 @@ async def refund_payment(
         stripe_keys = await _get_stripe_keys(db)
         stripe_lib.api_key = stripe_keys["secret_key"]
         try:
-            stripe_lib.Refund.create(payment_intent=payment.stripe_payment_intent_id)
+            await asyncio.to_thread(stripe_lib.Refund.create, payment_intent=payment.stripe_payment_intent_id)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Stripe refund failed: {str(e)}")
 
@@ -326,6 +327,8 @@ async def grant_credits(
 async def list_credit_balances(
     admin: User = Depends(get_super_admin),
     db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
 ):
     """List all tenants with their credit balance info."""
     result = await db.execute(
@@ -338,6 +341,8 @@ async def list_credit_balances(
         )
         .outerjoin(CreditBalance, CreditBalance.tenant_id == Tenant.id)
         .order_by(Tenant.name)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
     rows = result.all()
     return [
@@ -494,12 +499,12 @@ async def update_tenant_status(
 
     if data.is_active is not None:
         tenant.is_active = data.is_active
-        # Also deactivate/reactivate all users under this tenant
-        users_result = await db.execute(
-            select(User).where(User.tenant_id == tenant_id)
+        # Bulk update all users under this tenant in a single statement
+        await db.execute(
+            update(User)
+            .where(User.tenant_id == tenant_id)
+            .values(is_active=data.is_active)
         )
-        for user in users_result.scalars().all():
-            user.is_active = data.is_active
 
     await db.flush()
     return {"tenant_id": str(tenant_id), "is_active": tenant.is_active}
@@ -514,6 +519,8 @@ async def update_tenant_status(
 async def scraping_overview(
     admin: User = Depends(get_super_admin),
     db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
 ):
     """Global scraping overview — stats per user for super admin."""
     from app.models.job import ScrapedProfile
@@ -531,6 +538,8 @@ async def scraping_overview(
         .outerjoin(ScrapingJob, ScrapingJob.user_id == User.id)
         .group_by(User.id, User.email, User.full_name)
         .order_by(func.count(ScrapingJob.id).desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
     user_stats = [
         {

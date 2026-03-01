@@ -29,7 +29,7 @@ class Payment(Base):
     stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(255))
     bank_transfer_proof_url: Mapped[str | None] = mapped_column(Text)
     bank_transfer_reference: Mapped[str | None] = mapped_column(String(255))
-    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255))
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), index=True)
     admin_notes: Mapped[str | None] = mapped_column(Text)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

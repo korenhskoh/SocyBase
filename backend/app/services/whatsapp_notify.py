@@ -45,9 +45,8 @@ async def _get_whatsapp_config(db: AsyncSession | None = None) -> dict:
     }
 
 
-async def _send_whatsapp(message: str, db: AsyncSession | None = None) -> None:
+async def _send_whatsapp(message: str, config: dict) -> None:
     """Send a WhatsApp message to the admin number via the Baileys microservice."""
-    config = await _get_whatsapp_config(db)
     if not config["enabled"] or not config["admin_number"]:
         return
 
@@ -79,7 +78,7 @@ async def notify_new_user(email: str, full_name: str, tenant_name: str, db: Asyn
         f"Tenant: {tenant_name}\n"
         f"Time: {now}"
     )
-    await _send_whatsapp(message, db)
+    await _send_whatsapp(message, config)
 
 
 async def notify_payment_approved(
@@ -97,7 +96,7 @@ async def notify_payment_approved(
         f"Credits: {credits:,}\n"
         f"Method: {method}"
     )
-    await _send_whatsapp(message, db)
+    await _send_whatsapp(message, config)
 
 
 async def notify_payment_completed(
@@ -114,7 +113,7 @@ async def notify_payment_completed(
         f"Amount: {amount}\n"
         f"Credits added: {credits_added:,}"
     )
-    await _send_whatsapp(message, db)
+    await _send_whatsapp(message, config)
 
 
 async def notify_refund_processed(
@@ -132,7 +131,7 @@ async def notify_refund_processed(
         f"Credits deducted: {credits_deducted:,}\n"
         f"Method: {method}"
     )
-    await _send_whatsapp(message, db)
+    await _send_whatsapp(message, config)
 
 
 async def notify_traffic_bot_order(
@@ -150,7 +149,7 @@ async def notify_traffic_bot_order(
         f"Cost: RM{total_cost:.4f}\n"
         f"Link: {link[:80]}"
     )
-    await _send_whatsapp(message, db)
+    await _send_whatsapp(message, config)
 
 
 async def notify_wallet_deposit_request(
@@ -166,4 +165,4 @@ async def notify_wallet_deposit_request(
         f"Amount: RM{amount:.2f}\n"
         f"Reference: {bank_reference}"
     )
-    await _send_whatsapp(message, db)
+    await _send_whatsapp(message, config)

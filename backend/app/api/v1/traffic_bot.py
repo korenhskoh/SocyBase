@@ -69,10 +69,10 @@ async def create_order(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    # Eager-load service name
-    service = await svc.get_service(db, order.service_id)
+    # Service already loaded by place_order -> get_service
+    await db.refresh(order, attribute_names=["service"])
     resp = OrderResponse.model_validate(order)
-    resp.service_name = service.name if service else None
+    resp.service_name = order.service.name if order.service else None
     await notify_traffic_bot_order(
         user.email, resp.service_name or "Unknown",
         body.quantity, float(order.total_cost), body.link, db,
@@ -112,8 +112,7 @@ async def get_order_detail(
     if refresh:
         order = await svc.refresh_order_status(db, order)
     resp = OrderResponse.model_validate(order)
-    service = await svc.get_service(db, order.service_id)
-    resp.service_name = service.name if service else None
+    resp.service_name = order.service.name if order.service else None
     return resp
 
 
@@ -194,6 +193,8 @@ async def submit_deposit_request(
 
 @router.get("/wallet/deposits", response_model=list[WalletDepositResponse])
 async def list_my_deposits(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -201,6 +202,7 @@ async def list_my_deposits(
         select(TrafficBotWalletDeposit)
         .where(TrafficBotWalletDeposit.tenant_id == user.tenant_id)
         .order_by(TrafficBotWalletDeposit.created_at.desc())
-        .limit(20)
+        .limit(limit)
+        .offset(offset)
     )
     return result.scalars().all()

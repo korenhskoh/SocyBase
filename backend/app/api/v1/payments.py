@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -54,7 +55,7 @@ async def _credit_tenant(
         return 0
 
     balance_result = await db.execute(
-        select(CreditBalance).where(CreditBalance.tenant_id == tenant_id)
+        select(CreditBalance).where(CreditBalance.tenant_id == tenant_id).with_for_update()
     )
     balance = balance_result.scalar_one_or_none()
 
@@ -119,7 +120,8 @@ async def create_stripe_checkout(
     checkout_mode = "subscription" if is_subscription else "payment"
 
     settings = get_settings()
-    session = stripe.checkout.Session.create(
+    session = await asyncio.to_thread(
+        stripe.checkout.Session.create,
         mode=checkout_mode,
         payment_method_types=["card"],
         line_items=[{"price": package.stripe_price_id, "quantity": 1}],
@@ -355,7 +357,7 @@ async def cancel_subscription(
     stripe.api_key = stripe_keys["secret_key"]
 
     try:
-        stripe.Subscription.cancel(payment.stripe_subscription_id)
+        await asyncio.to_thread(stripe.Subscription.cancel, payment.stripe_subscription_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to cancel subscription: {str(e)}")
 
@@ -387,7 +389,7 @@ async def get_subscription_status(
     stripe.api_key = stripe_keys["secret_key"]
 
     try:
-        sub = stripe.Subscription.retrieve(payment.stripe_subscription_id)
+        sub = await asyncio.to_thread(stripe.Subscription.retrieve, payment.stripe_subscription_id)
         return {
             "has_subscription": True,
             "subscription_id": sub.id,

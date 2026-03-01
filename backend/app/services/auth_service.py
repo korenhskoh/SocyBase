@@ -1,3 +1,4 @@
+import asyncio
 import re
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +45,7 @@ async def register_user(data: RegisterRequest, db: AsyncSession) -> tuple[User, 
     user = User(
         tenant_id=tenant.id,
         email=data.email,
-        password_hash=hash_password(data.password),
+        password_hash=await asyncio.to_thread(hash_password, data.password),
         full_name=data.full_name,
         role="tenant_admin",
         language=data.language,
@@ -75,7 +76,7 @@ async def login_user(data: LoginRequest, db: AsyncSession) -> tuple[User, TokenR
             detail="Invalid email or password",
         )
 
-    if not verify_password(data.password, user.password_hash):
+    if not await asyncio.to_thread(verify_password, data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
