@@ -53,8 +53,10 @@ export default function SettingsPage() {
   const [tgMessage, setTgMessage] = useState("");
 
 
+  // Telegram setup guide state
+  const [showTgGuide, setShowTgGuide] = useState(false);
+
   useEffect(() => {
-    if (!isAdmin) return;
     tenantSettingsApi
       .get()
       .then((r) => {
@@ -73,7 +75,7 @@ export default function SettingsPage() {
         }
       })
       .catch(() => {});
-  }, [isAdmin]);
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
@@ -364,45 +366,88 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Organization Telegram — admin only */}
-        {isAdmin && (
-          <div className="border-t border-white/10 pt-4 mt-4">
-            <h3 className="text-sm font-semibold text-white mb-1">Organization Notifications</h3>
-            <p className="text-xs text-white/30 mb-4">
-              Configure a custom bot token and notification channel for your team.
-              This is separate from your personal Telegram link above.
-            </p>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-white/60 mb-1">Bot Token</label>
-                <input
-                  type="password"
-                  value={tgBotToken}
-                  onChange={(e) => setTgBotToken(e.target.value)}
-                  placeholder="123456:ABC-DEF..."
-                  className="input-glass text-sm"
-                />
-                <p className="text-xs text-white/20 mt-1">Get this from @BotFather on Telegram.</p>
-              </div>
-              <div>
-                <label className="block text-xs text-white/60 mb-1">Notification Chat ID</label>
-                <input
-                  type="text"
-                  value={tgChatId}
-                  onChange={(e) => setTgChatId(e.target.value)}
-                  placeholder="-1001234567890"
-                  className="input-glass text-sm"
-                />
-                <p className="text-xs text-white/20 mt-1">Group or channel chat ID where job notifications are sent.</p>
-              </div>
+        {/* Organization Telegram Bot Setup */}
+        <div className="border-t border-white/10 pt-4 mt-4">
+          <h3 className="text-sm font-semibold text-white mb-1">Organization Bot Setup</h3>
+          <p className="text-xs text-white/30 mb-3">
+            Configure your own Telegram bot to receive job notifications and manage scraping remotely.
+          </p>
+
+          {/* Setup Guide Toggle */}
+          <button
+            onClick={() => setShowTgGuide(!showTgGuide)}
+            className="text-xs px-3 py-1.5 rounded-lg font-medium text-[#00AAFF] bg-[#00AAFF]/10 border border-[#00AAFF]/20 hover:bg-[#00AAFF]/20 transition mb-3 flex items-center gap-1.5"
+          >
+            <svg className={`h-3 w-3 transition-transform ${showTgGuide ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+            {showTgGuide ? "Hide Setup Guide" : "How to setup a Telegram Bot"}
+          </button>
+
+          {showTgGuide && (
+            <div className="rounded-lg bg-[#00AAFF]/5 border border-[#00AAFF]/15 p-4 mb-4 space-y-3">
+              <p className="text-xs font-semibold text-[#00AAFF]">Step-by-step Guide</p>
+              <ol className="space-y-2.5 text-xs text-white/60">
+                <li className="flex gap-2">
+                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">1</span>
+                  <span>Open Telegram and search for <span className="text-white font-medium">@BotFather</span></span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">2</span>
+                  <span>Send <span className="text-white font-mono font-medium">/newbot</span> and follow the prompts to create your bot</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">3</span>
+                  <span>Copy the <span className="text-white font-medium">Bot Token</span> (looks like <span className="text-white/40 font-mono">123456:ABC-DEF1234ghIkl-zyx57W2v...</span>)</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">4</span>
+                  <span>Paste the bot token below and save</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="shrink-0 h-5 w-5 rounded-full bg-[#00AAFF]/15 text-[#00AAFF] flex items-center justify-center text-[10px] font-bold">5</span>
+                  <div>
+                    <span>To get the <span className="text-white font-medium">Chat ID</span>: add the bot to your group/channel, then send a message and visit</span>
+                    <span className="block text-white/40 font-mono mt-0.5 break-all">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span>
+                    <span className="block mt-0.5">Look for <span className="font-mono text-white/40">&quot;chat&quot;:{`{`}&quot;id&quot;:-100xxx{`}`}</span> in the response</span>
+                  </div>
+                </li>
+              </ol>
             </div>
+          )}
 
-            {tgMessage && (
-              <p className={`text-sm mt-3 ${tgMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
-                {tgMessage}
-              </p>
-            )}
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-white/60 mb-1">Bot Token</label>
+              <input
+                type="password"
+                value={tgBotToken}
+                onChange={(e) => setTgBotToken(e.target.value)}
+                placeholder="123456:ABC-DEF..."
+                className="input-glass text-sm"
+                disabled={!isAdmin}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-white/60 mb-1">Notification Chat ID</label>
+              <input
+                type="text"
+                value={tgChatId}
+                onChange={(e) => setTgChatId(e.target.value)}
+                placeholder="-1001234567890"
+                className="input-glass text-sm"
+                disabled={!isAdmin}
+              />
+            </div>
+          </div>
 
+          {tgMessage && (
+            <p className={`text-sm mt-3 ${tgMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+              {tgMessage}
+            </p>
+          )}
+
+          {isAdmin && (
             <button
               onClick={handleSaveTelegram}
               disabled={tgSaving}
@@ -410,8 +455,28 @@ export default function SettingsPage() {
             >
               {tgSaving ? "Saving..." : "Save Telegram Settings"}
             </button>
+          )}
+
+          {/* Available Commands */}
+          <div className="mt-4 pt-4 border-t border-white/5">
+            <p className="text-xs font-semibold text-white/50 mb-2">Available Bot Commands</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {[
+                { cmd: "/jobs", desc: "List your recent scraping jobs" },
+                { cmd: "/newjob", desc: "Start a new scraping job" },
+                { cmd: "/status", desc: "Check active job progress" },
+                { cmd: "/credits", desc: "View your credit balance" },
+                { cmd: "/cancel", desc: "Cancel a running job" },
+                { cmd: "/help", desc: "Show all available commands" },
+              ].map((item) => (
+                <div key={item.cmd} className="flex items-center gap-2 px-2 py-1.5 rounded bg-white/[0.02]">
+                  <span className="text-xs font-mono text-[#00AAFF] font-medium w-16 shrink-0">{item.cmd}</span>
+                  <span className="text-xs text-white/40">{item.desc}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Scraping Defaults */}
