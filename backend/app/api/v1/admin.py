@@ -1344,6 +1344,9 @@ async def update_telegram_settings(
     existing = dict(setting.value) if setting else {}
 
     new_value = data.model_dump(exclude_none=True)
+    # Strip whitespace from token to prevent invalid token errors
+    if new_value.get("bot_token"):
+        new_value["bot_token"] = new_value["bot_token"].strip()
     # If token is the masked placeholder, keep the existing token
     if new_value.get("bot_token") == TELEGRAM_TOKEN_MASKED:
         new_value.pop("bot_token")

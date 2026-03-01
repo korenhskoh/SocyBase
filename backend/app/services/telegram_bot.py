@@ -1871,10 +1871,10 @@ async def get_bot_token() -> str:
             )
             setting = result.scalar_one_or_none()
             if setting and setting.value.get("bot_token"):
-                return setting.value["bot_token"]
+                return setting.value["bot_token"].strip()
     except Exception:
         pass
-    return get_settings().telegram_bot_token or ""
+    return (get_settings().telegram_bot_token or "").strip()
 
 
 def get_bot_token_sync() -> str:
