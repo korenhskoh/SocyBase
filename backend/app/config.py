@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     email_from: str = "noreply@socybase.com"
+    resend_api_key: str = ""
 
     # Super Admin
     super_admin_email: str = "admin@socybase.com"

@@ -1,18 +1,55 @@
 """Lightweight async email sender.
 
-Resolves SMTP config from:
-1. Global env-var settings (SMTP_HOST, etc.)
-2. Fallback: first tenant's DB email settings (for single-tenant / bot usage)
+Resolves email sending via:
+1. Resend HTTP API (if RESEND_API_KEY is set — works on Railway)
+2. SMTP from env vars or tenant DB settings (fallback)
 """
 
 import logging
 from email.message import EmailMessage
 
 import aiosmtplib
+import httpx
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+async def _send_via_resend(
+    to: str, subject: str, body_text: str, body_html: str | None,
+    from_email: str, api_key: str,
+) -> bool:
+    """Send email via Resend HTTP API."""
+    payload: dict = {
+        "from": from_email,
+        "to": [to],
+        "subject": subject,
+    }
+    if body_html:
+        payload["html"] = body_html
+    else:
+        payload["text"] = body_text
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        if resp.status_code in (200, 201):
+            logger.info("Email sent via Resend to %s", to)
+            return True
+        else:
+            logger.error("Resend API error (%d): %s", resp.status_code, resp.text)
+            return False
+    except Exception as e:
+        logger.error("Resend request failed: %s", e)
+        return False
 
 
 async def _resolve_smtp_config() -> dict | None:
@@ -21,7 +58,6 @@ async def _resolve_smtp_config() -> dict | None:
 
     # 1. Env-var config
     if settings.smtp_host and settings.smtp_user:
-        logger.info("Using env-var SMTP config (host=%s, user=%s)", settings.smtp_host, settings.smtp_user)
         return {
             "hostname": settings.smtp_host,
             "port": settings.smtp_port,
@@ -29,8 +65,6 @@ async def _resolve_smtp_config() -> dict | None:
             "password": settings.smtp_password,
             "email_from": settings.email_from,
         }
-
-    logger.info("Env-var SMTP not set (host=%r, user=%r), trying tenant DB...", settings.smtp_host, settings.smtp_user)
 
     # 2. Fallback: scan all tenants for one with email settings configured
     try:
@@ -41,12 +75,9 @@ async def _resolve_smtp_config() -> dict | None:
         async with async_session() as db:
             result = await db.execute(select(Tenant))
             tenants = result.scalars().all()
-            logger.info("Found %d tenant(s) in DB", len(tenants))
             for tenant in tenants:
                 email_cfg = (tenant.settings or {}).get("email", {})
-                logger.info("Tenant %s email config keys: %s", tenant.id, list(email_cfg.keys()) if email_cfg else "none")
                 if email_cfg.get("smtp_host") and email_cfg.get("smtp_user"):
-                    logger.info("Using tenant %s DB SMTP config (host=%s, user=%s)", tenant.id, email_cfg["smtp_host"], email_cfg["smtp_user"])
                     return {
                         "hostname": email_cfg["smtp_host"],
                         "port": email_cfg.get("smtp_port", 587),
@@ -54,20 +85,34 @@ async def _resolve_smtp_config() -> dict | None:
                         "password": email_cfg.get("smtp_password", ""),
                         "email_from": email_cfg.get("email_from", settings.email_from),
                     }
-            logger.warning("No tenant with complete email settings found")
     except Exception:
         logger.warning("Failed to load tenant SMTP config from DB", exc_info=True)
 
     return None
 
 
+def _resolve_from_email() -> str:
+    """Get the sender email address from env or tenant DB (sync-safe, best effort)."""
+    return get_settings().email_from
+
+
 async def send_email(
     to: str, subject: str, body_text: str, body_html: str | None = None,
 ) -> bool:
-    """Send an email using resolved SMTP config. Returns True on success."""
+    """Send an email. Tries Resend HTTP API first, then SMTP as fallback."""
+    settings = get_settings()
+
+    # ── Try Resend first (works on Railway where SMTP is blocked) ──
+    if settings.resend_api_key:
+        # Resolve sender from SMTP config or default
+        smtp_cfg = await _resolve_smtp_config()
+        from_email = (smtp_cfg or {}).get("email_from", settings.email_from)
+        return await _send_via_resend(to, subject, body_text, body_html, from_email, settings.resend_api_key)
+
+    # ── Fallback: SMTP ──
     cfg = await _resolve_smtp_config()
     if not cfg:
-        logger.warning("SMTP not configured, skipping email to %s", to)
+        logger.warning("No email config (Resend or SMTP), skipping email to %s", to)
         return False
 
     msg = EmailMessage()
@@ -79,7 +124,6 @@ async def send_email(
         msg.add_alternative(body_html, subtype="html")
 
     port = cfg["port"]
-    # Port 465 uses implicit SSL; port 587 uses STARTTLS
     use_tls = port == 465
     start_tls = not use_tls
 
