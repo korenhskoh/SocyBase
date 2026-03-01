@@ -52,6 +52,13 @@ export default function AdminSettingsPage() {
   const [waQrMessage, setWaQrMessage] = useState("");
   const [waQrLoading, setWaQrLoading] = useState(false);
 
+  // WhatsApp contact number for tenants
+  const [waContactNumber, setWaContactNumber] = useState("");
+
+  // Test notification
+  const [waTestSending, setWaTestSending] = useState(false);
+  const [waTestResult, setWaTestResult] = useState("");
+
   // Per-notification toggles
   const [notifyNewUser, setNotifyNewUser] = useState(true);
   const [notifyPaymentApproved, setNotifyPaymentApproved] = useState(true);
@@ -96,6 +103,7 @@ export default function AdminSettingsPage() {
           if (d.whatsapp_enabled !== undefined) setWaEnabled(d.whatsapp_enabled);
           if (d.whatsapp_service_url) setWaServiceUrl(d.whatsapp_service_url);
           if (d.whatsapp_admin_number) setWaAdminNumber(d.whatsapp_admin_number);
+          if (d.whatsapp_contact_number) setWaContactNumber(d.whatsapp_contact_number);
           if (d.notify_new_user !== undefined) setNotifyNewUser(d.notify_new_user);
           if (d.notify_payment_approved !== undefined) setNotifyPaymentApproved(d.notify_payment_approved);
           if (d.notify_payment_completed !== undefined) setNotifyPaymentCompleted(d.notify_payment_completed);
@@ -143,6 +151,7 @@ export default function AdminSettingsPage() {
         whatsapp_enabled: waEnabled,
         whatsapp_service_url: waServiceUrl || undefined,
         whatsapp_admin_number: waAdminNumber || undefined,
+        whatsapp_contact_number: waContactNumber || undefined,
         notify_new_user: notifyNewUser,
         notify_payment_approved: notifyPaymentApproved,
         notify_payment_completed: notifyPaymentCompleted,
@@ -573,9 +582,20 @@ export default function AdminSettingsPage() {
                   />
                   <p className="text-xs text-white/30 mt-1">Phone number that receives all admin notifications</p>
                 </div>
+                <div>
+                  <label className="block text-xs text-white/60 mb-1">Contact Us Number (Tenant-facing)</label>
+                  <input
+                    type="text"
+                    value={waContactNumber}
+                    onChange={(e) => setWaContactNumber(e.target.value)}
+                    placeholder="60123456789 (no + prefix)"
+                    className="input-glass text-sm"
+                  />
+                  <p className="text-xs text-white/30 mt-1">Shown as floating WhatsApp button for tenants. Leave empty to use admin number above.</p>
+                </div>
 
                 {/* Connection Status & QR Pairing */}
-                <div className="flex items-center gap-3 pt-1">
+                <div className="flex flex-wrap items-center gap-3 pt-1">
                   <button
                     type="button"
                     onClick={checkWhatsAppStatus}
@@ -592,13 +612,34 @@ export default function AdminSettingsPage() {
                     {waQrLoading ? "Loading..." : "Pair WhatsApp (QR)"}
                   </button>
                   {waStatus === "connected" && (
-                    <button
-                      type="button"
-                      onClick={disconnectWhatsApp}
-                      className="text-xs px-3 py-1.5 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition"
-                    >
-                      Disconnect
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setWaTestSending(true);
+                          setWaTestResult("");
+                          try {
+                            const { data } = await adminApi.sendWhatsappTest();
+                            setWaTestResult(data.success ? data.message : data.message || "Failed to send test");
+                          } catch {
+                            setWaTestResult("Failed to send test notification");
+                          } finally {
+                            setWaTestSending(false);
+                          }
+                        }}
+                        disabled={waTestSending}
+                        className="text-xs px-3 py-1.5 rounded-lg font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 hover:bg-amber-400/20 transition disabled:opacity-50"
+                      >
+                        {waTestSending ? "Sending..." : "Send Test"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={disconnectWhatsApp}
+                        className="text-xs px-3 py-1.5 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition"
+                      >
+                        Disconnect
+                      </button>
+                    </>
                   )}
                   {waStatus && (
                     <span className={`text-xs font-medium ${
@@ -615,6 +656,11 @@ export default function AdminSettingsPage() {
                     </span>
                   )}
                 </div>
+                {waTestResult && (
+                  <p className={`text-xs ${waTestResult.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+                    {waTestResult}
+                  </p>
+                )}
 
                 {/* QR Code Display */}
                 {(waQr || waQrMessage) && (

@@ -97,3 +97,17 @@ async def get_public_config(db: AsyncSession = Depends(get_db)):
     setting = result.scalar_one_or_none()
     data = setting.value if setting else {}
     return {"payment_model": data.get("payment_model", "one_time")}
+
+
+@router.get("/whatsapp-contact")
+async def get_whatsapp_contact(db: AsyncSession = Depends(get_db)):
+    """Public endpoint: returns WhatsApp contact number for tenant floating button."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "whatsapp_settings")
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {"whatsapp_contact_number": None}
+    data = setting.value if setting else {}
+    number = data.get("whatsapp_contact_number") or data.get("whatsapp_admin_number") or None
+    return {"whatsapp_contact_number": number}

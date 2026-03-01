@@ -774,6 +774,7 @@ WHATSAPP_SETTINGS_KEY = "whatsapp_settings"
 class WhatsAppSettingsUpdate(BaseModel):
     whatsapp_service_url: str | None = None
     whatsapp_admin_number: str | None = None
+    whatsapp_contact_number: str | None = None  # Tenant-facing "Contact Us" number
     whatsapp_enabled: bool = True
     # Per-notification toggles
     notify_new_user: bool | None = None
@@ -895,3 +896,49 @@ async def proxy_whatsapp_disconnect(
             return resp.json()
     except Exception:
         return {"success": False, "message": "Cannot reach WhatsApp service."}
+
+
+@router.post("/whatsapp-test")
+async def send_whatsapp_test(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a test notification to confirm WhatsApp is working."""
+    import httpx
+    from datetime import datetime, timezone
+
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == WHATSAPP_SETTINGS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        raise HTTPException(status_code=400, detail="WhatsApp settings not configured yet.")
+
+    config = dict(setting.value)
+    service_url = config.get("whatsapp_service_url") or "http://localhost:3001"
+    admin_number = config.get("whatsapp_admin_number")
+
+    if not admin_number:
+        raise HTTPException(status_code=400, detail="Admin phone number not set. Save settings first.")
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    message = (
+        f"*SocyBase Test Notification*\n\n"
+        f"This is a test message to confirm WhatsApp notifications are working.\n"
+        f"Time: {now}\n"
+        f"Sent by: {admin.email}"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{service_url.rstrip('/')}/send",
+                json={"to": admin_number, "message": message},
+            )
+            data = resp.json()
+            if resp.status_code == 200 and data.get("success"):
+                return {"success": True, "message": "Test notification sent successfully!"}
+            else:
+                return {"success": False, "message": data.get("error", "Failed to send test message.")}
+    except Exception as e:
+        return {"success": False, "message": f"Cannot reach WhatsApp service: {str(e)}"}

@@ -124,6 +124,7 @@ export const creditsApi = {
   getPackages: () => api.get("/credits/packages"),
   getPaymentInfo: () => api.get("/credits/payment-info"),
   getPublicConfig: () => api.get("/credits/public-config"),
+  getWhatsappContact: () => api.get("/credits/whatsapp-contact"),
 };
 
 // Payments API
@@ -244,6 +245,7 @@ export const adminApi = {
   updateWhatsappSettings: (data: {
     whatsapp_service_url?: string;
     whatsapp_admin_number?: string;
+    whatsapp_contact_number?: string;
     whatsapp_enabled?: boolean;
     notify_new_user?: boolean;
     notify_payment_approved?: boolean;
@@ -255,6 +257,7 @@ export const adminApi = {
   getWhatsappStatus: () => api.get("/admin/whatsapp-status"),
   getWhatsappQr: () => api.get("/admin/whatsapp-qr"),
   disconnectWhatsapp: () => api.post("/admin/whatsapp-disconnect"),
+  sendWhatsappTest: () => api.post("/admin/whatsapp-test"),
 };
 
 // Telegram API
