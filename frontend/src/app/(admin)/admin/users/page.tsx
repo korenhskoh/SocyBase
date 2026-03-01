@@ -393,18 +393,28 @@ export default function AdminUsersPage() {
                     {formatDate(u.created_at)}
                   </td>
                   <td className="px-4 md:px-6 py-4 text-right">
-                    {u.role !== "super_admin" && (
-                      <button
-                        onClick={() => handleDeactivateTenant(u.tenant_id, u.is_active)}
-                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition border ${
-                          u.is_active
-                            ? "text-red-400 bg-red-400/10 border-red-400/20 hover:bg-red-400/20"
-                            : "text-emerald-400 bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/20"
-                        }`}
-                      >
-                        {u.is_active ? "Deactivate" : "Reactivate"}
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2 justify-end">
+                      {u.role !== "super_admin" && (
+                        <>
+                          <Link
+                            href={`/admin/tenants/${u.tenant_id}`}
+                            className="text-xs px-2 py-1.5 rounded-lg font-medium text-primary-400/80 hover:text-primary-400 bg-primary-400/5 hover:bg-primary-400/10 border border-primary-400/10 transition"
+                          >
+                            Settings
+                          </Link>
+                          <button
+                            onClick={() => handleDeactivateTenant(u.tenant_id, u.is_active)}
+                            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition border ${
+                              u.is_active
+                                ? "text-red-400 bg-red-400/10 border-red-400/20 hover:bg-red-400/20"
+                                : "text-emerald-400 bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/20"
+                            }`}
+                          >
+                            {u.is_active ? "Deactivate" : "Reactivate"}
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
                 );

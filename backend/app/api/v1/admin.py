@@ -2,7 +2,7 @@ from uuid import UUID
 from datetime import datetime, timezone, date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, or_
 from app.database import get_db
 from app.dependencies import get_super_admin
 from app.models.user import User
@@ -511,6 +511,212 @@ async def update_tenant_status(
 
 
 # ---------------------------------------------------------------------------
+# Tenant Settings (unified)
+# ---------------------------------------------------------------------------
+
+
+class UpdateTenantSettingsRequest(BaseModel):
+    max_concurrent_jobs: int | None = Field(None, ge=1, le=50)
+    daily_job_limit: int | None = Field(None, ge=0)       # 0 = unlimited
+    monthly_credit_limit: int | None = Field(None, ge=0)   # 0 = unlimited
+
+
+@router.get("/tenants/{tenant_id}/settings")
+async def get_tenant_settings(
+    tenant_id: UUID,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get full tenant info + settings + usage stats for admin detail page."""
+    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    bal_result = await db.execute(
+        select(CreditBalance).where(CreditBalance.tenant_id == tenant_id)
+    )
+    balance = bal_result.scalar_one_or_none()
+
+    today_start = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
+    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    jobs_today = (await db.execute(
+        select(func.count(ScrapingJob.id)).where(
+            ScrapingJob.tenant_id == tenant_id,
+            ScrapingJob.created_at >= today_start,
+        )
+    )).scalar() or 0
+
+    credits_this_month = (await db.execute(
+        select(func.coalesce(func.sum(ScrapingJob.credits_used), 0)).where(
+            ScrapingJob.tenant_id == tenant_id,
+            ScrapingJob.created_at >= month_start,
+        )
+    )).scalar() or 0
+
+    active_jobs = (await db.execute(
+        select(func.count(ScrapingJob.id)).where(
+            ScrapingJob.tenant_id == tenant_id,
+            ScrapingJob.status.in_(["running", "queued"]),
+        )
+    )).scalar() or 0
+
+    settings = tenant.settings or {}
+    return {
+        "id": str(tenant.id),
+        "name": tenant.name,
+        "slug": tenant.slug,
+        "plan": tenant.plan,
+        "is_active": tenant.is_active,
+        "created_at": tenant.created_at.isoformat(),
+        "settings": {
+            "max_concurrent_jobs": settings.get("max_concurrent_jobs", 3),
+            "daily_job_limit": settings.get("daily_job_limit", 0),
+            "monthly_credit_limit": settings.get("monthly_credit_limit", 0),
+        },
+        "credit_balance": balance.balance if balance else 0,
+        "lifetime_purchased": balance.lifetime_purchased if balance else 0,
+        "lifetime_used": balance.lifetime_used if balance else 0,
+        "jobs_today": jobs_today,
+        "credits_this_month": credits_this_month,
+        "active_jobs": active_jobs,
+    }
+
+
+@router.put("/tenants/{tenant_id}/settings")
+async def update_tenant_settings(
+    tenant_id: UUID,
+    data: UpdateTenantSettingsRequest,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update all tenant scraping settings at once."""
+    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    settings = dict(tenant.settings or {})
+    for field, value in data.model_dump(exclude_unset=True).items():
+        settings[field] = value
+    tenant.settings = settings
+    await db.flush()
+    return {"settings": settings}
+
+
+# ---------------------------------------------------------------------------
+# Admin Job Management (cross-tenant)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/jobs")
+async def list_all_jobs(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status_filter: str | None = Query(None, alias="status"),
+    tenant_id: UUID | None = Query(None),
+    search: str | None = Query(None),
+):
+    """List all jobs across all tenants with filtering."""
+    query = (
+        select(ScrapingJob, User.email)
+        .join(User, ScrapingJob.user_id == User.id)
+        .order_by(ScrapingJob.created_at.desc())
+    )
+    count_query = select(func.count(ScrapingJob.id))
+
+    if status_filter:
+        query = query.where(ScrapingJob.status == status_filter)
+        count_query = count_query.where(ScrapingJob.status == status_filter)
+    if tenant_id:
+        query = query.where(ScrapingJob.tenant_id == tenant_id)
+        count_query = count_query.where(ScrapingJob.tenant_id == tenant_id)
+    if search:
+        search_filter = or_(
+            User.email.ilike(f"%{search}%"),
+            ScrapingJob.input_value.ilike(f"%{search}%"),
+        )
+        query = query.where(search_filter)
+        count_query = (
+            count_query.join(User, ScrapingJob.user_id == User.id)
+            .where(search_filter)
+        )
+
+    total = (await db.execute(count_query)).scalar() or 0
+    result = await db.execute(
+        query.offset((page - 1) * page_size).limit(page_size)
+    )
+    rows = result.all()
+
+    jobs = [
+        {
+            "id": str(row[0].id),
+            "tenant_id": str(row[0].tenant_id),
+            "user_email": row[1],
+            "input_value": row[0].input_value,
+            "job_type": row[0].job_type,
+            "status": row[0].status,
+            "progress_pct": float(row[0].progress_pct),
+            "result_row_count": row[0].result_row_count,
+            "credits_used": row[0].credits_used,
+            "created_at": row[0].created_at.isoformat(),
+            "started_at": row[0].started_at.isoformat() if row[0].started_at else None,
+            "completed_at": row[0].completed_at.isoformat() if row[0].completed_at else None,
+        }
+        for row in rows
+    ]
+
+    return {"items": jobs, "total": total, "page": page, "page_size": page_size}
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def admin_cancel_job(
+    job_id: UUID,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Force cancel any job (cross-tenant)."""
+    from app.api.v1.jobs import _revoke_celery_task
+
+    result = await db.execute(select(ScrapingJob).where(ScrapingJob.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("completed", "cancelled", "failed"):
+        raise HTTPException(status_code=400, detail=f"Cannot cancel job in '{job.status}' status")
+
+    job.status = "cancelled"
+    _revoke_celery_task(job.celery_task_id)
+    await db.flush()
+    return {"detail": "Job cancelled", "job_id": str(job.id)}
+
+
+@router.post("/jobs/{job_id}/pause")
+async def admin_pause_job(
+    job_id: UUID,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Force pause any job (cross-tenant)."""
+    from app.api.v1.jobs import _revoke_celery_task
+
+    result = await db.execute(select(ScrapingJob).where(ScrapingJob.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in ("running", "queued"):
+        raise HTTPException(status_code=400, detail=f"Cannot pause job in '{job.status}' status")
+
+    job.status = "paused"
+    _revoke_celery_task(job.celery_task_id)
+    await db.flush()
+    return {"detail": "Job paused", "job_id": str(job.id)}
+
+
+# ---------------------------------------------------------------------------
 # Admin Scraping Overview
 # ---------------------------------------------------------------------------
 
@@ -531,12 +737,13 @@ async def scraping_overview(
             User.id,
             User.email,
             User.full_name,
+            User.tenant_id,
             func.count(ScrapingJob.id).label("total_jobs"),
             func.coalesce(func.sum(ScrapingJob.result_row_count), 0).label("total_profiles"),
             func.coalesce(func.sum(ScrapingJob.credits_used), 0).label("total_credits_used"),
         )
         .outerjoin(ScrapingJob, ScrapingJob.user_id == User.id)
-        .group_by(User.id, User.email, User.full_name)
+        .group_by(User.id, User.email, User.full_name, User.tenant_id)
         .order_by(func.count(ScrapingJob.id).desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -546,9 +753,10 @@ async def scraping_overview(
             "user_id": str(row[0]),
             "email": row[1],
             "full_name": row[2],
-            "total_jobs": row[3],
-            "total_profiles": row[4],
-            "total_credits_used": row[5],
+            "tenant_id": str(row[3]),
+            "total_jobs": row[4],
+            "total_profiles": row[5],
+            "total_credits_used": row[6],
         }
         for row in user_stats_result.all()
     ]

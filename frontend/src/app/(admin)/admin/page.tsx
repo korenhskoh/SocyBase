@@ -61,6 +61,7 @@ export default function AdminDashboardPage() {
             { name: "Packages", href: "/admin/packages" },
             { name: "Platforms", href: "/admin/platforms" },
             { name: "Scraping Overview", href: "/admin/scraping" },
+            { name: "Job Management", href: "/admin/jobs" },
             { name: "Payment Settings", href: "/admin/settings" },
             { name: "Audit Logs", href: "/admin/audit-logs" },
           ].map((action) => (

@@ -1,5 +1,5 @@
 from uuid import UUID
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,6 +111,39 @@ async def create_job(
             detail=f"Concurrent job limit reached ({running_count}/{max_concurrent}). "
                    f"Wait for current jobs to finish or schedule for later.",
         )
+
+    # Daily job limit check
+    tenant_settings = tenant.settings or {} if tenant else {}
+    daily_job_limit = tenant_settings.get("daily_job_limit", 0)
+    if daily_job_limit > 0:
+        today_start = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
+        daily_count = (await db.execute(
+            select(func.count(ScrapingJob.id)).where(
+                ScrapingJob.tenant_id == user.tenant_id,
+                ScrapingJob.created_at >= today_start,
+            )
+        )).scalar() or 0
+        if daily_count >= daily_job_limit:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Daily job limit reached ({daily_count}/{daily_job_limit}). Try again tomorrow.",
+            )
+
+    # Monthly credit limit check
+    monthly_credit_limit = tenant_settings.get("monthly_credit_limit", 0)
+    if monthly_credit_limit > 0:
+        month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        monthly_usage = (await db.execute(
+            select(func.coalesce(func.sum(ScrapingJob.credits_used), 0)).where(
+                ScrapingJob.tenant_id == user.tenant_id,
+                ScrapingJob.created_at >= month_start,
+            )
+        )).scalar() or 0
+        if monthly_usage >= monthly_credit_limit:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Monthly credit limit reached ({monthly_usage}/{monthly_credit_limit}). Contact admin.",
+            )
 
     # Create job
     job = ScrapingJob(

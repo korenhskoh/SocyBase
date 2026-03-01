@@ -10,6 +10,7 @@ interface UserStat {
   user_id: string;
   email: string;
   full_name: string | null;
+  tenant_id: string;
   total_jobs: number;
   total_profiles: number;
   total_credits_used: number;
@@ -212,7 +213,9 @@ export default function AdminScrapingPage() {
               {data.user_stats.map((u) => (
                 <tr key={u.user_id} className="hover:bg-white/[0.02] transition">
                   <td className="px-6 py-4">
-                    <p className="text-sm text-white/80 font-medium">{u.email}</p>
+                    <Link href={`/admin/tenants/${u.tenant_id}`} className="text-sm text-primary-400/80 hover:text-primary-400 font-medium transition">
+                      {u.email}
+                    </Link>
                     {u.full_name && <p className="text-xs text-white/40">{u.full_name}</p>}
                   </td>
                   <td className="px-6 py-4 text-sm text-white/60">{u.total_jobs}</td>
@@ -227,8 +230,11 @@ export default function AdminScrapingPage() {
 
       {/* Recent Jobs (All Users) */}
       <div className="glass-card overflow-hidden">
-        <div className="p-6 border-b border-white/5">
+        <div className="p-6 border-b border-white/5 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Recent Jobs (All Users)</h2>
+          <Link href="/admin/jobs" className="text-xs text-primary-400 hover:text-primary-300 transition">
+            View All Jobs &rarr;
+          </Link>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[800px]">

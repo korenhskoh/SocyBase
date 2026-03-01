@@ -258,6 +258,26 @@ export const adminApi = {
   getWhatsappQr: () => api.get("/admin/whatsapp-qr"),
   disconnectWhatsapp: () => api.post("/admin/whatsapp-disconnect"),
   sendWhatsappTest: () => api.post("/admin/whatsapp-test"),
+  // Tenant settings (detail page)
+  getTenantSettings: (tenantId: string) =>
+    api.get(`/admin/tenants/${tenantId}/settings`),
+  updateTenantSettings: (tenantId: string, data: {
+    max_concurrent_jobs?: number;
+    daily_job_limit?: number;
+    monthly_credit_limit?: number;
+  }) => api.put(`/admin/tenants/${tenantId}/settings`, data),
+  // Admin job management (cross-tenant)
+  listAllJobs: (params?: {
+    page?: number;
+    page_size?: number;
+    status?: string;
+    tenant_id?: string;
+    search?: string;
+  }) => api.get("/admin/jobs", { params }),
+  adminCancelJob: (jobId: string) =>
+    api.post(`/admin/jobs/${jobId}/cancel`),
+  adminPauseJob: (jobId: string) =>
+    api.post(`/admin/jobs/${jobId}/pause`),
 };
 
 // Telegram API
