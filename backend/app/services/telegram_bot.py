@@ -1858,8 +1858,31 @@ async def _post_init(app: Application) -> None:
     ])
 
 
+async def get_bot_token() -> str:
+    """Get bot token from DB settings (async), falling back to env var."""
+    from app.models.system import SystemSetting
+
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(SystemSetting).where(
+                    SystemSetting.key == "telegram_settings"
+                )
+            )
+            setting = result.scalar_one_or_none()
+            if setting and setting.value.get("bot_token"):
+                return setting.value["bot_token"]
+    except Exception:
+        pass
+    return get_settings().telegram_bot_token or ""
+
+
 def get_bot_token_sync() -> str:
-    """Get bot token from DB settings (sync), falling back to env var."""
+    """Get bot token from DB settings (sync), falling back to env var.
+
+    NOTE: Only call this from outside an async event loop (e.g. module-level).
+    Inside async code, use ``get_bot_token()`` instead.
+    """
     import asyncio
     from app.models.system import SystemSetting
 
@@ -1886,9 +1909,10 @@ def get_bot_token_sync() -> str:
     return token or ""
 
 
-def create_bot_app() -> Application:
+def create_bot_app(token: str | None = None) -> Application:
     """Build and configure the Telegram bot application."""
-    token = get_bot_token_sync()
+    if not token:
+        token = get_bot_token_sync()
     if not token:
         raise ValueError("Telegram bot token not configured (set via Admin Settings or TELEGRAM_BOT_TOKEN env var)")
 

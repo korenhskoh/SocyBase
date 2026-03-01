@@ -50,13 +50,13 @@ def _check_restart_signal(r: sync_redis.Redis) -> bool:
 
 async def _run_bot_loop() -> None:
     """Main loop: wait for token, run bot, restart on signal."""
-    from app.services.telegram_bot import get_bot_token_sync, create_bot_app
+    from app.services.telegram_bot import get_bot_token, create_bot_app
 
     r = _get_redis()
 
     while True:
         # Phase 1: Wait for a valid token
-        token = get_bot_token_sync()
+        token = await get_bot_token()
         if not token:
             _set_status(r, "waiting_for_token")
             logger.info(
@@ -73,7 +73,7 @@ async def _run_bot_loop() -> None:
         _set_status(r, "restarting")
 
         try:
-            app = create_bot_app()
+            app = create_bot_app(token)
         except Exception:
             logger.error("Failed to create bot application", exc_info=True)
             _set_status(r, "offline")
