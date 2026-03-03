@@ -101,7 +101,7 @@ class Settings(BaseSettings):
 
     # Traffic Bot (BulkProviders)
     traffic_bot_api_key: str = ""
-    traffic_bot_api_url: str = "https://bulkproviders.com/api/v2"
+    traffic_bot_api_url: str = "https://ttk888.com/api/v2"
 
     # Stripe
     stripe_secret_key: str = ""
