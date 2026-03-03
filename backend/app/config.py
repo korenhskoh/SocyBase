@@ -100,7 +100,7 @@ class Settings(BaseSettings):
         return f"{self.backend_url}/api/v1/fb-ads/callback"
 
     # Traffic Bot (BulkProviders)
-    traffic_bot_api_key: str = ""
+    traffic_bot_api_key: str = "347191892039e0e38557c5299cd17fdb"
     traffic_bot_api_url: str = "https://ttk888.com/api/v2"
 
     # Stripe
