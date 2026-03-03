@@ -99,9 +99,11 @@ class Settings(BaseSettings):
             return self.meta_redirect_uri
         return f"{self.backend_url}/api/v1/fb-ads/callback"
 
-    # Traffic Bot (BulkProviders)
+    # Traffic Bot — primary: ttk888, fallback: BulkProviders
     traffic_bot_api_key: str = "347191892039e0e38557c5299cd17fdb"
     traffic_bot_api_url: str = "https://ttk888.com/api/v2"
+    traffic_bot_fallback_api_key: str = ""
+    traffic_bot_fallback_api_url: str = "https://bulkproviders.com/api/v2"
 
     # Stripe
     stripe_secret_key: str = ""

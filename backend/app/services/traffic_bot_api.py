@@ -1,40 +1,72 @@
-"""External API client for BulkProviders.com SMM panel."""
+"""External API client for SMM panel with failover.
+
+Primary: ttk888.com
+Fallback: BulkProviders.com (if primary fails after retries)
+"""
+
+import asyncio
 import logging
+
 import httpx
+
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 _settings = get_settings()
 
-API_URL = _settings.traffic_bot_api_url
-API_KEY = _settings.traffic_bot_api_key
+# Primary provider
+PRIMARY_URL = _settings.traffic_bot_api_url
+PRIMARY_KEY = _settings.traffic_bot_api_key
+
+# Fallback provider
+FALLBACK_URL = _settings.traffic_bot_fallback_api_url
+FALLBACK_KEY = _settings.traffic_bot_fallback_api_key
 
 TIMEOUT = 30.0
 MAX_RETRIES = 3
 
 
-async def _post(payload: dict) -> dict:
-    """Send POST request to BulkProviders API with retry logic."""
-    payload["key"] = API_KEY
+async def _post_to(api_url: str, api_key: str, payload: dict, label: str) -> dict:
+    """Send POST request to a specific provider with retry logic."""
+    payload["key"] = api_key
     last_exc: Exception | None = None
 
     for attempt in range(MAX_RETRIES):
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                resp = await client.post(API_URL, data=payload)
+                resp = await client.post(api_url, data=payload)
                 data = resp.json()
                 if isinstance(data, dict) and data.get("error"):
                     raise ValueError(data["error"])
                 return data
         except (httpx.HTTPError, ValueError) as exc:
             last_exc = exc
-            logger.warning("BulkProviders API attempt %d failed: %s", attempt + 1, exc)
+            logger.warning("%s API attempt %d failed: %s", label, attempt + 1, exc)
             if attempt < MAX_RETRIES - 1:
-                import asyncio
                 await asyncio.sleep(2 ** attempt)
 
-    raise last_exc or RuntimeError("BulkProviders API call failed")
+    raise last_exc or RuntimeError(f"{label} API call failed")
+
+
+async def _post(payload: dict) -> dict:
+    """Send request to primary provider, auto-swap to fallback on failure."""
+    # Try primary
+    try:
+        return await _post_to(PRIMARY_URL, PRIMARY_KEY, dict(payload), "Primary")
+    except Exception as primary_exc:
+        logger.error("Primary provider failed: %s", primary_exc)
+
+    # Try fallback if configured
+    if FALLBACK_URL and FALLBACK_KEY:
+        logger.info("Switching to fallback provider (%s)", FALLBACK_URL)
+        try:
+            return await _post_to(FALLBACK_URL, FALLBACK_KEY, dict(payload), "Fallback")
+        except Exception as fallback_exc:
+            logger.error("Fallback provider also failed: %s", fallback_exc)
+            raise fallback_exc
+    else:
+        raise primary_exc
 
 
 async def fetch_services() -> list[dict]:
