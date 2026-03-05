@@ -8,7 +8,7 @@ type View = "config" | "generating" | "review" | "history";
 type ReviewStep = "summary" | "campaign" | "adsets" | "ads" | "publish";
 
 function formatCents(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `RM ${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 const STAGES = ["analyze", "structure", "targeting", "creative", "finalize", "complete"];
@@ -164,7 +164,7 @@ export default function FBAILaunchPage() {
   // Form state
   const [name, setName] = useState("");
   const [objective, setObjective] = useState("LEADS");
-  const [dailyBudget, setDailyBudget] = useState("20");
+  const [dailyBudget, setDailyBudget] = useState("50"); // Default RM 50/day
   const [pageId, setPageId] = useState("");
   const [pixelId, setPixelId] = useState("");
   const [landingPage, setLandingPage] = useState("");
@@ -175,6 +175,22 @@ export default function FBAILaunchPage() {
   const [instructions, setInstructions] = useState("");
   const [creating, setCreating] = useState(false);
   const [configStep, setConfigStep] = useState<1 | 2 | 3>(1);
+
+  // Post boosting state
+  const [selectedPostId, setSelectedPostId] = useState("");
+  const [pagePosts, setPagePosts] = useState<Array<{id: string, message: string, created_time: string, type: string}>>([]);
+  const [loadingPosts, setLoadingPosts] = useState(false);
+  const [scheduleStart, setScheduleStart] = useState("");
+  const [scheduleEnd, setScheduleEnd] = useState("");
+
+  // Custom audience state
+  const [customAudiences, setCustomAudiences] = useState<Array<{id: string, name: string, approximate_count: number, subtype: string}>>([]);
+  const [selectedAudienceId, setSelectedAudienceId] = useState("");
+  const [loadingAudiences, setLoadingAudiences] = useState(false);
+
+  // Boost post specific state
+  const [boostGoal, setBoostGoal] = useState("GET_MORE_MESSAGES"); // Specific goal for boosted posts
+  const [audienceType, setAudienceType] = useState("CUSTOM_AUDIENCE"); // Audience targeting type
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -236,6 +252,14 @@ export default function FBAILaunchPage() {
 
   const handleCreate = async () => {
     if (!name.trim()) { alert("Please enter a campaign name."); return; }
+    if (objective === "POST_ENGAGEMENT" && !selectedPostId) {
+      alert("Please select a post to boost");
+      return;
+    }
+    if (objective === "POST_ENGAGEMENT" && audienceType === "CUSTOM_AUDIENCE" && !selectedAudienceId) {
+      alert("Please select a custom audience for your boost");
+      return;
+    }
     setCreating(true);
     try {
       const res = await fbAdsApi.createAICampaign({
@@ -250,6 +274,12 @@ export default function FBAILaunchPage() {
         creative_strategy: creativeStrategy,
         historical_data_range: parseInt(historicalRange),
         custom_instructions: instructions || null,
+        boosted_post_id: objective === "POST_ENGAGEMENT" ? selectedPostId : null,
+        schedule_start_time: scheduleStart || null,
+        schedule_end_time: scheduleEnd || null,
+        custom_audience_id: objective === "POST_ENGAGEMENT" && audienceType === "CUSTOM_AUDIENCE" ? selectedAudienceId : null,
+        boost_goal: objective === "POST_ENGAGEMENT" ? boostGoal : null,
+        audience_type: objective === "POST_ENGAGEMENT" ? audienceType : null,
       });
 
       // Start generation
@@ -1081,13 +1111,13 @@ export default function FBAILaunchPage() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-white/40 block mb-1.5">Max Daily Budget ($)</label>
+                    <label className="text-xs text-white/40 block mb-1.5">Max Daily Budget (RM)</label>
                     <input
                       type="number"
                       value={dailyBudget}
                       onChange={e => setDailyBudget(e.target.value)}
-                      min="1"
-                      step="1"
+                      min="5"
+                      step="5"
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition"
                     />
                   </div>
@@ -1096,10 +1126,12 @@ export default function FBAILaunchPage() {
                 {/* Objective */}
                 <div>
                   <label className="text-xs text-white/40 block mb-2">Campaign Objective</label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     {[
                       { value: "LEADS", label: "Leads", desc: "Collect leads from forms", icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" },
                       { value: "SALES", label: "Sales", desc: "Drive purchases on your site", icon: "M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" },
+                      { value: "ENGAGEMENT", label: "Engagement", desc: "Get more likes, comments & shares", icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" },
+                      { value: "POST_ENGAGEMENT", label: "Boost Post", desc: "Boost specific posts or livestreams", icon: "M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" },
                     ].map(o => (
                       <button
                         key={o.value}
@@ -1125,6 +1157,174 @@ export default function FBAILaunchPage() {
                     ))}
                   </div>
                 </div>
+
+                {/* Boost Post Settings (for POST_ENGAGEMENT objective) */}
+                {objective === "POST_ENGAGEMENT" && (
+                  <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-5 space-y-5">
+                    {/* Goal Selection */}
+                    <div>
+                      <label className="text-xs text-blue-400/90 font-medium block mb-3">Goal - What results would you like?</label>
+                      <div className="space-y-2">
+                        {[
+                          { value: "GET_MORE_MESSAGES", label: "Get more messages", desc: "Show your ad to people who are likely to send you messages", tag: "Engagement", icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" },
+                          { value: "GET_MORE_VIDEO_VIEWS", label: "Get more video views", desc: "Show your ad to people who are likely to watch your video", tag: "Engagement", icon: "M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" },
+                          { value: "GET_MORE_LEADS", label: "Grow customer base", desc: "Use a form to collect contact information from potential customers", tag: "Sales", icon: "M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" },
+                          { value: "GET_MORE_CALLS", label: "Get more calls", desc: "Show your ad to people who are likely to call your business", tag: "Sales", icon: "M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" },
+                          { value: "GET_MORE_WEBSITE_VISITORS", label: "Get more website visitors", desc: "Show your ad to people who are likely to click on a URL in it", tag: "Traffic", icon: "M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" },
+                        ].map(g => (
+                          <button
+                            key={g.value}
+                            onClick={() => setBoostGoal(g.value)}
+                            className={`w-full p-3.5 rounded-xl border text-left transition flex items-start gap-3 ${
+                              boostGoal === g.value
+                                ? "bg-blue-500/15 border-blue-500/40"
+                                : "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10"
+                            }`}
+                          >
+                            <div className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 ${
+                              boostGoal === g.value ? "bg-blue-500/25" : "bg-white/5"
+                            }`}>
+                              <svg className={`h-4.5 w-4.5 ${boostGoal === g.value ? "text-blue-400" : "text-white/30"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d={g.icon} />
+                              </svg>
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <p className={`text-sm font-medium ${boostGoal === g.value ? "text-white" : "text-white/60"}`}>{g.label}</p>
+                                <span className={`px-2 py-0.5 text-xs rounded-full ${
+                                  g.tag === "Engagement" ? "bg-purple-500/20 text-purple-300" :
+                                  g.tag === "Sales" ? "bg-green-500/20 text-green-300" :
+                                  "bg-blue-500/20 text-blue-300"
+                                }`}>{g.tag}</span>
+                              </div>
+                              <p className="text-xs text-white/30 mt-0.5">{g.desc}</p>
+                            </div>
+                            {boostGoal === g.value && (
+                              <svg className="h-5 w-5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Audience Type Selection */}
+                    <div>
+                      <label className="text-xs text-blue-400/90 font-medium block mb-3">Audience - Who should see your ad?</label>
+                      <div className="space-y-2">
+                        {[
+                          { value: "ADVANTAGE_PLUS", label: "Advantage+ audience", desc: "Let our ad technology automatically find your audience and adjust over time", recommended: true },
+                          { value: "TARGETING", label: "People you choose through targeting", desc: "Choose your own targeting options" },
+                          { value: "PAGE_FANS", label: "People who like your Page", desc: "Show ads to people who already follow you" },
+                          { value: "PAGE_FANS_SIMILAR", label: "People who like your Page and similar", desc: "Expand reach to lookalikes" },
+                          { value: "LOCAL_AREA", label: "People in your local area", desc: "Target people near your business location" },
+                          { value: "CUSTOM_AUDIENCE", label: "Your Custom Audiences", desc: "Target your high-value audiences from comment profiling" },
+                        ].map(a => (
+                          <button
+                            key={a.value}
+                            onClick={() => setAudienceType(a.value)}
+                            className={`w-full p-3 rounded-xl border text-left transition flex items-start gap-2.5 ${
+                              audienceType === a.value
+                                ? "bg-blue-500/15 border-blue-500/40"
+                                : "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10"
+                            }`}
+                          >
+                            <div className={`mt-0.5 h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                              audienceType === a.value ? "border-blue-400 bg-blue-400" : "border-white/20"
+                            }`}>
+                              {audienceType === a.value && (
+                                <div className="h-2 w-2 rounded-full bg-white"></div>
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <p className={`text-sm font-medium ${audienceType === a.value ? "text-white" : "text-white/60"}`}>
+                                {a.label} {a.recommended && <span className="text-xs text-blue-400">(Recommended)</span>}
+                              </p>
+                              <p className="text-xs text-white/30 mt-0.5">{a.desc}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Post Selection */}
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <label className="text-xs text-blue-400/90 font-medium">Select Post to Boost</label>
+                        <button
+                          onClick={async () => {
+                            if (!pageId) { alert("Please select a Facebook Page first"); return; }
+                            setLoadingPosts(true);
+                            try {
+                              const res = await fbAdsApi.getPagePosts(pageId);
+                              setPagePosts(res.data.posts || []);
+                            } catch (err: any) {
+                              alert(err?.response?.data?.detail || "Failed to load posts");
+                            } finally {
+                              setLoadingPosts(false);
+                            }
+                          }}
+                          disabled={!pageId || loadingPosts}
+                          className="px-3 py-1.5 text-xs bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg text-blue-300 transition disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          {loadingPosts && <div className="h-3 w-3 border-2 border-blue-300/30 border-t-blue-300 rounded-full animate-spin" />}
+                          {loadingPosts ? "Loading..." : "Load Posts"}
+                        </button>
+                    </div>
+
+                    <select
+                      value={selectedPostId}
+                      onChange={e => setSelectedPostId(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition"
+                    >
+                      <option value="">Select a post or livestream...</option>
+                      {pagePosts.map(post => (
+                        <option key={post.id} value={post.id}>
+                          [{post.type?.toUpperCase() || 'POST'}] {post.message?.substring(0, 80) || post.id} - {new Date(post.created_time).toLocaleDateString()}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Schedule Start/End Time */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-white/5">
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1.5">Start Date & Time</label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleStart}
+                          onChange={e => setScheduleStart(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition"
+                        />
+                        <p className="text-xs text-white/25 mt-1">
+                          {scheduleStart ? `Timezone: GMT+8 (Malaysia)` : 'Leave empty to start immediately'}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1.5">End Date & Time</label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleEnd}
+                          onChange={e => setScheduleEnd(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition"
+                        />
+                        <p className="text-xs text-white/25 mt-1">
+                          {scheduleEnd ? `Timezone: GMT+8 (Malaysia)` : 'Leave empty to run continuously'}
+                        </p>
+                      </div>
+                      {scheduleStart && scheduleEnd && (
+                        <div className="col-span-2">
+                          <p className="text-xs text-blue-400/80 flex items-center gap-1.5">
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Duration: {Math.ceil((new Date(scheduleEnd).getTime() - new Date(scheduleStart).getTime()) / (1000 * 60 * 60 * 24))} days
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -1247,6 +1447,57 @@ export default function FBAILaunchPage() {
                   </div>
                 </div>
 
+                {/* Custom Audience (Optional) - Only show for POST_ENGAGEMENT with CUSTOM_AUDIENCE type */}
+                {objective === "POST_ENGAGEMENT" && audienceType === "CUSTOM_AUDIENCE" && (
+                  <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-xs text-purple-400/90 font-medium">Custom Audience (Required)</label>
+                        <p className="text-xs text-white/40 mt-0.5">Select your high-value audience from comment profiling</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setLoadingAudiences(true);
+                          try {
+                            const res = await fbAdsApi.listCustomAudiences();
+                            setCustomAudiences(res.data.audiences || []);
+                          } catch (err: any) {
+                            alert(err?.response?.data?.detail || "Failed to load audiences");
+                          } finally {
+                            setLoadingAudiences(false);
+                          }
+                        }}
+                        disabled={loadingAudiences}
+                        className="px-3 py-1.5 text-xs bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 rounded-lg text-purple-300 transition disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {loadingAudiences && <div className="h-3 w-3 border-2 border-purple-300/30 border-t-purple-300 rounded-full animate-spin" />}
+                        {loadingAudiences ? "Loading..." : "Load Audiences"}
+                      </button>
+                    </div>
+
+                    <select
+                      value={selectedAudienceId}
+                      onChange={e => setSelectedAudienceId(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-purple-500/50 transition"
+                    >
+                      <option value="">Select a custom audience...</option>
+                      {customAudiences.map(aud => (
+                        <option key={aud.id} value={aud.id}>
+                          {aud.name} ({aud.approximate_count?.toLocaleString() || 0} people) - {aud.subtype}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedAudienceId && (
+                      <p className="text-xs text-green-400/80 flex items-center gap-1.5">
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Campaign will target this custom audience
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <div>
                   <label className="text-xs text-white/40 block mb-1.5">Historical Data Range</label>
                   <select value={historicalRange} onChange={e => setHistoricalRange(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition md:w-64">
@@ -1297,7 +1548,7 @@ export default function FBAILaunchPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
                     { label: "Campaign Name", value: name || "Not set", highlight: !name },
-                    { label: "Daily Budget", value: `$${dailyBudget}`, highlight: false },
+                    { label: "Daily Budget", value: `RM ${dailyBudget}`, highlight: false },
                     { label: "Objective", value: objective, highlight: false },
                     { label: "Conversion Event", value: conversionEvent, highlight: false },
                     { label: "Audience Strategy", value: audienceStrategy === "conservative" ? "Conservative" : "Experimental", highlight: false },

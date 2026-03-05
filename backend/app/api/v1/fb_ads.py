@@ -193,13 +193,14 @@ class WinningAdResponse(BaseModel):
 class CreateCustomAudienceRequest(BaseModel):
     job_id: str  # scraping job UUID
     audience_name: str | None = None  # optional custom name
+    create_lookalike: bool = False  # create 1% Malaysia LLA
 
 
 # Phase 5 schemas
 
 class CreateCampaignRequest(BaseModel):
     name: str
-    objective: str  # LEADS, SALES
+    objective: str  # LEADS, SALES, ENGAGEMENT, POST_ENGAGEMENT
     daily_budget: int  # in cents
     page_id: str | None = None
     pixel_id: str | None = None
@@ -209,6 +210,14 @@ class CreateCampaignRequest(BaseModel):
     creative_strategy: str = "proven_winners"
     historical_data_range: int = 90
     custom_instructions: str | None = None
+    # Post boosting fields
+    boosted_post_id: str | None = None  # For POST_ENGAGEMENT objective
+    schedule_start_time: str | None = None  # ISO datetime string
+    schedule_end_time: str | None = None  # ISO datetime string
+    boost_goal: str | None = None  # GET_MORE_MESSAGES, GET_MORE_VIDEO_VIEWS, GET_MORE_LEADS, GET_MORE_CALLS, GET_MORE_WEBSITE_VISITORS
+    audience_type: str | None = None  # ADVANTAGE_PLUS, TARGETING, PAGE_FANS, PAGE_FANS_SIMILAR, LOCAL_AREA, CUSTOM_AUDIENCE
+    # Custom audience targeting
+    custom_audience_id: str | None = None  # Meta custom audience ID
 
 
 class AICampaignAdResponse(BaseModel):
@@ -687,6 +696,53 @@ async def select_page(
     page.is_selected = True
     await db.commit()
     return {"detail": "Page selected.", "page_id": page.page_id}
+
+
+@router.get("/pages/{page_id}/posts")
+async def get_page_posts(
+    page_id: str,
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch posts from a Facebook Page (including livestreams)."""
+    conn, _ = await _get_active_connection(db, user.tenant_id)
+    if not conn:
+        raise HTTPException(status_code=400, detail="No active Facebook connection.")
+
+    meta = MetaAPIService()
+    token = meta.decrypt_token(conn.access_token_encrypted)
+
+    try:
+        posts = await meta.get_page_posts(token, page_id, limit)
+        return {"posts": posts}
+    except Exception as e:
+        logger.exception("Failed to fetch page posts")
+        raise HTTPException(status_code=502, detail=f"Failed to fetch posts: {str(e)}")
+
+
+@router.get("/custom-audiences")
+async def list_custom_audiences(
+    limit: int = 100,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List custom audiences for the selected ad account."""
+    conn, account = await _get_active_connection(db, user.tenant_id)
+    if not conn:
+        raise HTTPException(status_code=400, detail="No active Facebook connection.")
+    if not account:
+        raise HTTPException(status_code=400, detail="No ad account selected.")
+
+    meta = MetaAPIService()
+    token = meta.decrypt_token(conn.access_token_encrypted)
+
+    try:
+        audiences = await meta.list_custom_audiences(token, account.account_id, limit)
+        return {"audiences": audiences}
+    except Exception as e:
+        logger.exception("Failed to fetch custom audiences")
+        raise HTTPException(status_code=502, detail=f"Failed to fetch audiences: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -1694,9 +1750,16 @@ async def create_custom_audience(
     meta = MetaAPIService()
     token = meta.decrypt_token(conn.access_token_encrypted)
 
-    # Build audience name
-    audience_name = body.audience_name or f"SocyBase - {job.input_value or str(job.id)[:8]}"
-    audience_name = audience_name[:50]  # Meta 50-char limit
+    # Build audience name with profile count and date
+    # Format: "{profile_count} profiles - SocyBase - {input_value} - {date}"
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    input_display = job.input_value or str(job.id)[:8]
+
+    if body.audience_name:
+        audience_name = body.audience_name[:37]  # Leave room for "[High Value] " prefix (13 chars)
+    else:
+        audience_name = f"{len(profiles)} profiles - {input_display} - {today}"[:37]
 
     # 1. Create the Custom Audience
     ca_resp = await meta.create_custom_audience(
@@ -1724,12 +1787,37 @@ async def create_custom_audience(
     # 3. Upload users (hashed by MetaAPIService)
     upload_resp = await meta.add_users_to_audience(token, audience_id, users)
 
-    return {
+    # 4. Create Lookalike Audience if requested
+    lla_id = None
+    lla_name = None
+    if body.create_lookalike:
+        lla_name = f"LLA 1% MY - {audience_name}"[:50]
+        try:
+            lla_resp = await meta.create_lookalike_audience(
+                token,
+                account.account_id,
+                audience_id,
+                name=lla_name,
+                country="MY",
+                ratio=0.01,  # 1%
+            )
+            lla_id = lla_resp.get("id")
+        except Exception as e:
+            logger.warning(f"Failed to create lookalike audience: {e}")
+            # Don't fail the whole request if LLA creation fails
+
+    result = {
         "audience_id": audience_id,
-        "audience_name": audience_name,
+        "audience_name": f"[High Value] {audience_name}",  # Include prefix in response
         "profiles_uploaded": len(profiles),
         "num_received": upload_resp.get("num_received", len(profiles)),
     }
+
+    if lla_id:
+        result["lookalike_audience_id"] = lla_id
+        result["lookalike_audience_name"] = lla_name
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1841,9 +1929,25 @@ async def create_ai_campaign(
     if not account:
         raise HTTPException(status_code=400, detail="No ad account selected.")
 
-    # Validate budget
-    if body.daily_budget < 100:  # min $1.00
-        raise HTTPException(status_code=400, detail="Daily budget must be at least $1.00 (100 cents).")
+    # Validate budget (in sen/cents, 1 RM = 100 sen)
+    if body.daily_budget < 500:  # min RM 5.00
+        raise HTTPException(status_code=400, detail="Daily budget must be at least RM 5.00 (500 sen).")
+
+    # Parse schedule times if provided
+    schedule_start = None
+    schedule_end = None
+    if body.schedule_start_time:
+        from datetime import datetime as dt
+        try:
+            schedule_start = dt.fromisoformat(body.schedule_start_time.replace('Z', '+00:00'))
+        except Exception:
+            pass
+    if body.schedule_end_time:
+        from datetime import datetime as dt
+        try:
+            schedule_end = dt.fromisoformat(body.schedule_end_time.replace('Z', '+00:00'))
+        except Exception:
+            pass
 
     campaign = AICampaign(
         tenant_id=user.tenant_id,
@@ -1860,6 +1964,12 @@ async def create_ai_campaign(
         creative_strategy=body.creative_strategy,
         historical_data_range=body.historical_data_range,
         custom_instructions=body.custom_instructions,
+        boosted_post_id=body.boosted_post_id,
+        schedule_start_time=schedule_start,
+        schedule_end_time=schedule_end,
+        custom_audience_id=body.custom_audience_id,
+        boost_goal=body.boost_goal,
+        audience_type=body.audience_type,
     )
     db.add(campaign)
     await db.commit()

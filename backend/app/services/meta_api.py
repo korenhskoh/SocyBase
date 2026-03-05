@@ -453,16 +453,24 @@ class MetaAPIService:
     async def create_custom_audience(
         self, access_token: str, ad_account_id: str, name: str, description: str = "",
     ) -> dict:
-        """Create a Custom Audience (customer_list subtype) and return its ID."""
+        """Create a Custom Audience (customer_list subtype) and return its ID.
+
+        Automatically labels audience as "High value" in the name and sets value-based flag.
+        """
+        # Add "High value" label to the audience name
+        labeled_name = f"[High Value] {name}"[:50]  # Meta 50-char limit
+
         async with httpx.AsyncClient(timeout=30) as client:
+            # Create the audience with value-based flag
             resp = await client.post(
                 f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
                 params=self._auth_params(access_token),
                 data={
-                    "name": name,
+                    "name": labeled_name,
                     "subtype": "CUSTOM",
-                    "description": description,
+                    "description": f"High value audience - {description}" if description else "High value audience",
                     "customer_file_source": "USER_PROVIDED_ONLY",
+                    "is_value_based": "true",  # Mark as value-based audience
                 },
             )
             resp.raise_for_status()
@@ -513,3 +521,240 @@ class MetaAPIService:
                 results.append(resp.json())
 
         return results[-1] if results else {}
+
+    async def create_lookalike_audience(
+        self,
+        access_token: str,
+        ad_account_id: str,
+        source_audience_id: str,
+        name: str,
+        country: str = "MY",
+        ratio: float = 0.01,
+    ) -> dict:
+        """Create a Lookalike Audience from a Custom Audience.
+
+        Args:
+            access_token: Meta access token
+            ad_account_id: Ad account ID (e.g., "act_123456")
+            source_audience_id: ID of the source custom audience
+            name: Name for the lookalike audience
+            country: Two-letter country code (default: MY for Malaysia)
+            ratio: Lookalike ratio, 0.01 = 1% (default: 0.01)
+
+        Returns:
+            dict with lookalike audience ID
+        """
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
+                params=self._auth_params(access_token),
+                data={
+                    "name": name,
+                    "subtype": "LOOKALIKE",
+                    "lookalike_spec": json.dumps({
+                        "origin": [{"id": source_audience_id, "type": "custom_audience"}],
+                        "starting_ratio": 0.0,
+                        "ratio": ratio,
+                        "country": country,
+                        "type": "similarity",
+                    }),
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()  # {"id": "lookalike_audience_id"}
+
+    async def get_page_posts(
+        self, access_token: str, page_id: str, limit: int = 50
+    ) -> list[dict]:
+        """Fetch posts from a Facebook Page (including livestreams, videos, photos).
+
+        Args:
+            access_token: Meta access token
+            page_id: Facebook Page ID
+            limit: Maximum number of posts to fetch (default: 50)
+
+        Returns:
+            List of post dicts with id, message, created_time, type, etc.
+        """
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{GRAPH_BASE}/{page_id}/posts",
+                params={
+                    **self._auth_params(access_token),
+                    "fields": "id,message,created_time,type,status_type,full_picture,permalink_url",
+                    "limit": limit,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("data", [])
+
+    async def list_custom_audiences(
+        self, access_token: str, ad_account_id: str, limit: int = 100
+    ) -> list[dict]:
+        """List custom audiences for an ad account.
+
+        Args:
+            access_token: Meta access token
+            ad_account_id: Ad account ID (e.g., "act_123456")
+            limit: Maximum number of audiences to fetch (default: 100)
+
+        Returns:
+            List of audience dicts with id, name, approximate_count, etc.
+        """
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
+                params={
+                    **self._auth_params(access_token),
+                    "fields": "id,name,approximate_count,subtype,time_created,time_updated",
+                    "limit": limit,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("data", [])
+
+    @staticmethod
+    def _map_boost_goal_to_optimization(boost_goal: str | None) -> str:
+        """Map boost goal to Meta API optimization_goal parameter.
+
+        Args:
+            boost_goal: One of GET_MORE_MESSAGES, GET_MORE_VIDEO_VIEWS, GET_MORE_LEADS,
+                       GET_MORE_CALLS, GET_MORE_WEBSITE_VISITORS
+
+        Returns:
+            Meta API optimization_goal value
+        """
+        goal_mapping = {
+            "GET_MORE_MESSAGES": "CONVERSATIONS",
+            "GET_MORE_VIDEO_VIEWS": "THRUPLAY",  # Video views optimization
+            "GET_MORE_LEADS": "LEAD_GENERATION",
+            "GET_MORE_CALLS": "CONVERSATIONS",  # Same as messages
+            "GET_MORE_WEBSITE_VISITORS": "LINK_CLICKS",
+        }
+        return goal_mapping.get(boost_goal, "REACH")  # Default to REACH if not specified
+
+    @staticmethod
+    def _build_targeting_from_type(
+        audience_type: str | None,
+        custom_audience_id: str | None = None,
+        page_id: str | None = None,
+    ) -> dict:
+        """Build Meta API targeting spec based on audience type.
+
+        Args:
+            audience_type: One of ADVANTAGE_PLUS, TARGETING, PAGE_FANS, PAGE_FANS_SIMILAR,
+                          LOCAL_AREA, CUSTOM_AUDIENCE
+            custom_audience_id: Required when audience_type is CUSTOM_AUDIENCE
+            page_id: Page ID for PAGE_FANS targeting
+
+        Returns:
+            Targeting specification dict for Meta API
+        """
+        targeting = {
+            "geo_locations": {"countries": ["MY"]},  # Default to Malaysia
+        }
+
+        if audience_type == "ADVANTAGE_PLUS":
+            # Advantage+ uses flexible targeting
+            targeting["advantage_audience"] = 1
+            targeting["targeting_optimization"] = "expansion_all"
+        elif audience_type == "CUSTOM_AUDIENCE" and custom_audience_id:
+            targeting["custom_audiences"] = [{"id": custom_audience_id}]
+        elif audience_type == "PAGE_FANS" and page_id:
+            targeting["connections"] = [{"id": page_id, "type": "page"}]
+        elif audience_type == "PAGE_FANS_SIMILAR" and page_id:
+            targeting["connections"] = [{"id": page_id, "type": "page"}]
+            targeting["flexible_spec"] = [{"interests": [{"id": page_id, "name": "Page fans and similar"}]}]
+        elif audience_type == "LOCAL_AREA":
+            # Add radius targeting (e.g., 25km radius)
+            if "geo_locations" in targeting:
+                targeting["geo_locations"]["location_types"] = ["home", "recent"]
+            targeting["radius"] = "25"
+            targeting["distance_unit"] = "kilometer"
+        # For TARGETING, return basic targeting (will be enhanced by AI)
+
+        return targeting
+
+    async def create_promoted_post(
+        self,
+        access_token: str,
+        ad_account_id: str,
+        post_id: str,
+        daily_budget: int,
+        targeting: dict,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        boost_goal: str | None = None,
+        audience_type: str | None = None,
+        custom_audience_id: str | None = None,
+        page_id: str | None = None,
+    ) -> dict:
+        """Create a promoted/boosted post ad.
+
+        Args:
+            access_token: Meta access token
+            ad_account_id: Ad account ID (e.g., "act_123456")
+            post_id: Facebook post ID to promote
+            daily_budget: Daily budget in cents (MYR)
+            targeting: Targeting specification dict (optional, will be built from audience_type if provided)
+            start_time: ISO 8601 datetime string (optional, GMT+8)
+            end_time: ISO 8601 datetime string (optional, GMT+8)
+            boost_goal: Boost goal for optimization (e.g., GET_MORE_MESSAGES)
+            audience_type: Audience targeting type (e.g., CUSTOM_AUDIENCE, ADVANTAGE_PLUS)
+            custom_audience_id: Custom audience ID if audience_type is CUSTOM_AUDIENCE
+            page_id: Page ID for PAGE_FANS targeting
+
+        Returns:
+            dict with promoted post details including ad_id
+        """
+        # Convert ISO datetime to Unix timestamp if provided
+        start_timestamp = None
+        end_timestamp = None
+
+        if start_time:
+            from datetime import datetime
+            dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            start_timestamp = int(dt.timestamp())
+
+        if end_time:
+            from datetime import datetime
+            dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            end_timestamp = int(dt.timestamp())
+
+        # Build targeting from audience_type if provided
+        if audience_type:
+            targeting = self._build_targeting_from_type(audience_type, custom_audience_id, page_id)
+
+        # Map boost goal to optimization goal
+        optimization_goal = self._map_boost_goal_to_optimization(boost_goal)
+
+        # Build ad creative referencing the post
+        creative_data = {
+            "object_story_id": post_id,  # Use existing post as creative
+        }
+
+        # Prepare API data
+        api_data = {
+            "post_id": post_id,
+            "ad_account_id": ad_account_id,
+            "daily_budget": daily_budget,
+            "targeting": json.dumps(targeting) if targeting else None,
+            "optimization_goal": optimization_goal,
+        }
+
+        if start_timestamp:
+            api_data["start_time"] = start_timestamp
+        if end_timestamp:
+            api_data["end_time"] = end_timestamp
+
+        # Use simplified promoted post API
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{GRAPH_BASE}/{ad_account_id}/promotable_posts",
+                params=self._auth_params(access_token),
+                data=api_data,
+            )
+            resp.raise_for_status()
+            return resp.json()

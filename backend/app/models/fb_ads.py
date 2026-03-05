@@ -330,6 +330,13 @@ class AICampaign(Base):
     credits_used: Mapped[int] = mapped_column(Integer, default=0)
     meta_campaign_id: Mapped[str | None] = mapped_column(String(50))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Boosted post and scheduling fields
+    boosted_post_id: Mapped[str | None] = mapped_column(String(100))
+    schedule_start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    schedule_end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    custom_audience_id: Mapped[str | None] = mapped_column(String(100))
+    boost_goal: Mapped[str | None] = mapped_column(String(50))  # GET_MORE_MESSAGES, GET_MORE_VIDEO_VIEWS, etc.
+    audience_type: Mapped[str | None] = mapped_column(String(50))  # ADVANTAGE_PLUS, CUSTOM_AUDIENCE, etc.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)

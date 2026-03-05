@@ -329,6 +329,31 @@ async def _run_publish(campaign_id: str) -> dict:
         await db.flush()
 
         try:
+            # Special handling for POST_ENGAGEMENT (boosted posts)
+            if campaign.objective == "POST_ENGAGEMENT" and campaign.boosted_post_id:
+                # Use the simplified promoted post API
+                result = await meta.create_promoted_post(
+                    access_token=token,
+                    ad_account_id=account.account_id,
+                    post_id=campaign.boosted_post_id,
+                    daily_budget=campaign.daily_budget,
+                    targeting={},  # Will be built from audience_type
+                    start_time=campaign.schedule_start_time.isoformat() if campaign.schedule_start_time else None,
+                    end_time=campaign.schedule_end_time.isoformat() if campaign.schedule_end_time else None,
+                    boost_goal=campaign.boost_goal,
+                    audience_type=campaign.audience_type,
+                    custom_audience_id=campaign.custom_audience_id,
+                    page_id=page.page_id if page else None,
+                )
+
+                # Store the promoted post ID as meta_campaign_id for tracking
+                campaign.meta_campaign_id = result.get("id")
+                campaign.status = "published"
+                campaign.published_at = datetime.now(timezone.utc)
+                await db.commit()
+                return {"status": "published", "meta_campaign_id": campaign.meta_campaign_id}
+
+            # Standard campaign flow for other objectives
             async with httpx.AsyncClient(timeout=30) as client:
                 # 1. Create campaign
                 resp = await client.post(
