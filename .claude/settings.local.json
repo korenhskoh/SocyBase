@@ -74,7 +74,11 @@
       "Bash(done)",
       "Bash(for i in 1 2 3 4 5 6)",
       "Bash(do curl -s -w \"\\\\n%{http_code}\" http://localhost:8000/api/v1/auth/register -H \"Content-Type: application/json\" -d '{\"\"email\"\":\"\"test@test.com\"\",\"\"password\"\":\"\"test\"\",\"\"full_name\"\":\"\"Test\"\",\"\"tenant_name\"\":\"\"Test\"\"}')",
-      "Bash(git remote add:*)"
+      "Bash(git remote add:*)",
+      "Bash(git ls-tree -r --name-only origin/main -- 'frontend/src/app/\\(dashboard\\)/fb-ads/')",
+      "Bash(git fetch origin main)",
+      "Bash(cat -n 'frontend/src/app/\\(dashboard\\)/fb-ads/launch/page.tsx')",
+      "Bash(git checkout origin/main -- frontend/src/app/'\\(dashboard\\)'/fb-ads/ frontend/src/types/index.ts)"
     ],
     "additionalDirectories": [
       "\\tmp"
