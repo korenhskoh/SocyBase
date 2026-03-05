@@ -86,17 +86,7 @@ export const jobsApi = {
     settings?: Record<string, unknown>;
   }) => api.post("/jobs", data),
   list: (params?: { page?: number; page_size?: number; status?: string }) =>
-    api.get("/jobs", { params }).then((res) => {
-      // Handle both new paginated response {items, total, ...} and old array format
-      if (res.data && Array.isArray(res.data.items)) {
-        return res;
-      }
-      // Backwards compat: wrap old array response
-      if (Array.isArray(res.data)) {
-        res.data = { items: res.data, total: res.data.length, page: 1, page_size: res.data.length };
-      }
-      return res;
-    }),
+    api.get("/jobs", { params }),
   get: (id: string) => api.get(`/jobs/${id}`),
   getProgress: (id: string) => api.get(`/jobs/${id}/progress`),
   cancel: (id: string) => api.delete(`/jobs/${id}`),
@@ -115,7 +105,7 @@ export const jobsApi = {
   hardDelete: (id: string) => api.delete(`/jobs/${id}/delete`),
   batchAction: (data: { action: string; job_ids: string[] }) => api.post("/jobs/batch", data),
   getLogs: (id: string) => api.get(`/jobs/${id}/logs`),
-  getPosts: (id: string, params?: { page?: number; page_size?: number; sort_by?: string; sort_order?: string }) =>
+  getPosts: (id: string, params?: { page?: number; page_size?: number }) =>
     api.get(`/jobs/${id}/posts`, { params }),
   createFromPosts: (data: { post_ids: string[]; settings?: Record<string, unknown> }) =>
     api.post("/jobs/create-from-posts", data),
@@ -132,6 +122,8 @@ export const creditsApi = {
   getHistory: (params?: { page?: number; page_size?: number }) =>
     api.get("/credits/history", { params }),
   getPackages: () => api.get("/credits/packages"),
+  getPaymentInfo: () => api.get("/credits/payment-info"),
+  getPublicConfig: () => api.get("/credits/public-config"),
 };
 
 // Payments API
@@ -145,6 +137,8 @@ export const paymentsApi = {
   }) => api.post("/payments/bank-transfer", data),
   getHistory: (params?: { page?: number }) =>
     api.get("/payments/history", { params }),
+  getSubscriptionStatus: () => api.get("/payments/subscription-status"),
+  cancelSubscription: () => api.post("/payments/stripe/cancel-subscription"),
 };
 
 // Export API
@@ -188,8 +182,11 @@ export const adminApi = {
     api.post(`/admin/payments/${id}/approve`, { admin_notes: notes }),
   rejectPayment: (id: string, notes?: string) =>
     api.post(`/admin/payments/${id}/reject`, { admin_notes: notes }),
+  refundPayment: (id: string, notes?: string) =>
+    api.post(`/admin/payments/${id}/refund`, { admin_notes: notes }),
   grantCredits: (data: { tenant_id: string; amount: number; description: string }) =>
     api.post("/admin/credits/grant", data),
+  getCreditBalances: () => api.get("/admin/credits/balances"),
   getAuditLogs: (params?: { page?: number }) =>
     api.get("/admin/audit-logs", { params }),
   listPackages: () => api.get("/admin/packages"),
@@ -199,6 +196,7 @@ export const adminApi = {
     price_cents: number;
     currency?: string;
     stripe_price_id?: string;
+    billing_interval?: string;
     bonus_credits?: number;
     is_active?: boolean;
     sort_order?: number;
@@ -211,6 +209,7 @@ export const adminApi = {
       price_cents?: number;
       currency?: string;
       stripe_price_id?: string;
+      billing_interval?: string;
       bonus_credits?: number;
       is_active?: boolean;
       sort_order?: number;
@@ -222,9 +221,37 @@ export const adminApi = {
     api.get(`/admin/tenants/${tenantId}/concurrency`),
   setTenantConcurrency: (tenantId: string, maxConcurrentJobs: number) =>
     api.put(`/admin/tenants/${tenantId}/concurrency`, { max_concurrent_jobs: maxConcurrentJobs }),
+  updateTenantStatus: (tenantId: string, isActive: boolean) =>
+    api.put(`/admin/tenants/${tenantId}/status`, { is_active: isActive }),
   getFeatureFlags: () => api.get("/admin/feature-flags"),
   updateFeatureFlag: (key: string, enabled: boolean) =>
     api.put("/admin/feature-flags", { key, enabled }),
+  getPaymentSettings: () => api.get("/admin/payment-settings"),
+  updatePaymentSettings: (data: {
+    stripe_publishable_key?: string;
+    stripe_secret_key?: string;
+    stripe_webhook_secret?: string;
+    bank_name?: string;
+    bank_account_name?: string;
+    bank_account_number?: string;
+    bank_duitnow_id?: string;
+    bank_swift_code?: string;
+    stripe_enabled?: boolean;
+    bank_transfer_enabled?: boolean;
+    payment_model?: string;
+  }) => api.put("/admin/payment-settings", data),
+  getWhatsappSettings: () => api.get("/admin/whatsapp-settings"),
+  updateWhatsappSettings: (data: {
+    whatsapp_service_url?: string;
+    whatsapp_admin_number?: string;
+    whatsapp_enabled?: boolean;
+    notify_new_user?: boolean;
+    notify_payment_approved?: boolean;
+    notify_payment_completed?: boolean;
+    notify_refund?: boolean;
+    notify_traffic_bot_order?: boolean;
+    notify_wallet_deposit?: boolean;
+  }) => api.put("/admin/whatsapp-settings", data),
 };
 
 // Telegram API
@@ -258,10 +285,12 @@ export const tenantSettingsApi = {
       business_name: string;
       business_type: string;
       industry: string;
+      country: string;
       facebook_page_url: string;
       product_service_links: string[];
       target_audience_description: string;
     };
+    ai_suggestions?: Record<string, unknown>;
   }) => api.put("/tenant/settings", data),
 };
 
@@ -281,9 +310,133 @@ export const fanAnalysisApi = {
     api.get(`/fan-analysis/export/${jobId}`, { params: { format }, responseType: "blob" }),
 };
 
+// Trends API
+export const trendsApi = {
+  getViralPosts: (params?: {
+    page_id?: string;
+    min_score?: number;
+    content_type?: string;
+    days?: number;
+    page?: number;
+    page_size?: number;
+    sort_by?: string;
+  }) => api.get("/trends/viral-posts", { params }),
+  getContentInsights: (params?: { page_id?: string; days?: number }) =>
+    api.get("/trends/content-insights", { params }),
+  getGoogleTrends: (params?: { keywords?: string; days?: number }) =>
+    api.get("/trends/google-trends", { params }),
+  getSourcePages: () => api.get("/trends/source-pages"),
+};
+
 // Business Profile API
 export const businessProfileApi = {
   getSuggestions: () => api.post("/business-profile/suggest-pages"),
+};
+
+// Facebook Ads API
+export const fbAdsApi = {
+  // OAuth
+  getConnectUrl: () => api.get("/fb-ads/connect/url"),
+  getConnection: () => api.get("/fb-ads/connection"),
+  disconnect: () => api.delete("/fb-ads/connection"),
+  // Ad Accounts
+  listAdAccounts: () => api.get("/fb-ads/ad-accounts"),
+  selectAdAccount: (id: string) => api.post("/fb-ads/ad-accounts/select", { id }),
+  // Pages
+  listPages: () => api.get("/fb-ads/pages"),
+  selectPage: (id: string) => api.post("/fb-ads/pages/select", { id }),
+  // Pixels
+  listPixels: () => api.get("/fb-ads/pixels"),
+  selectPixel: (id: string) => api.post("/fb-ads/pixels/select", { id }),
+  // Performance (Phase 2)
+  listCampaigns: (params: {
+    date_from?: string; date_to?: string;
+    page?: number; per_page?: number;
+    sort_by?: string; sort_order?: string;
+    status_filter?: string;
+  } = {}) =>
+    api.get("/fb-ads/campaigns", { params }),
+  listCampaignAdSets: (campaignId: string, dateFrom?: string, dateTo?: string) =>
+    api.get(`/fb-ads/campaigns/${campaignId}/adsets`, { params: { date_from: dateFrom, date_to: dateTo } }),
+  listAdSetAds: (adsetId: string, dateFrom?: string, dateTo?: string) =>
+    api.get(`/fb-ads/adsets/${adsetId}/ads`, { params: { date_from: dateFrom, date_to: dateTo } }),
+  getInsightsSummary: (dateFrom?: string, dateTo?: string) =>
+    api.get("/fb-ads/insights/summary", { params: { date_from: dateFrom, date_to: dateTo } }),
+  triggerSync: () => api.post("/fb-ads/sync"),
+  debugToken: () => api.get("/fb-ads/debug-token"),
+  updateCampaignStatus: (id: string, status: string) =>
+    api.post(`/fb-ads/campaigns/${id}/status`, { status }),
+  updateAdSetStatus: (id: string, status: string) =>
+    api.post(`/fb-ads/adsets/${id}/status`, { status }),
+  updateAdStatus: (id: string, status: string) =>
+    api.post(`/fb-ads/ads/${id}/status`, { status }),
+  // AI Insights (Phase 3)
+  listInsightScores: (groupType: string, dateFrom?: string, dateTo?: string) =>
+    api.get("/fb-ads/insights/scores", { params: { group_type: groupType, date_from: dateFrom, date_to: dateTo } }),
+  runAIScoring: (groupType: string, dateFrom?: string, dateTo?: string) =>
+    api.post("/fb-ads/insights/score", { group_type: groupType, date_from: dateFrom, date_to: dateTo }),
+  // Winning Ads (Phase 4)
+  listWinningAds: () => api.get("/fb-ads/winning-ads"),
+  detectWinningAds: () => api.post("/fb-ads/winning-ads/detect"),
+  // Custom Audience
+  createCustomAudience: (jobId: string, audienceName?: string) =>
+    api.post("/fb-ads/custom-audience", { job_id: jobId, audience_name: audienceName }),
+  // AI Launch (Phase 5)
+  createAICampaign: (data: Record<string, unknown>) => api.post("/fb-ads/launch", data),
+  listAICampaigns: () => api.get("/fb-ads/launch/history"),
+  getAICampaign: (id: string) => api.get(`/fb-ads/launch/${id}`),
+  updateAICampaign: (id: string, data: Record<string, unknown>) => api.put(`/fb-ads/launch/${id}`, data),
+  generateAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/generate`),
+  publishAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/publish`),
+  deleteAICampaign: (id: string) => api.delete(`/fb-ads/launch/${id}`),
+  regenerateAd: (campaignId: string, adId: string, instructions?: string) =>
+    api.post(`/fb-ads/launch/${campaignId}/ads/${adId}/regenerate`, { custom_instructions: instructions || null }),
+  duplicateAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/duplicate`),
+};
+
+// Traffic Bot API
+export const trafficBotApi = {
+  // Services
+  getServices: (category?: string) =>
+    api.get("/traffic-bot/services", { params: category ? { category } : {} }),
+  getCategories: () => api.get("/traffic-bot/services/categories"),
+  calculatePrice: (serviceId: string, quantity: number) =>
+    api.get(`/traffic-bot/services/${serviceId}/price`, { params: { quantity } }),
+  // Orders
+  createOrder: (data: { service_id: string; link: string; quantity: number }) =>
+    api.post("/traffic-bot/orders", data),
+  getOrders: (params?: { status?: string; limit?: number; offset?: number }) =>
+    api.get("/traffic-bot/orders", { params }),
+  getOrder: (id: string, refresh?: boolean) =>
+    api.get(`/traffic-bot/orders/${id}`, { params: refresh ? { refresh: true } : {} }),
+  cancelOrder: (id: string) => api.post(`/traffic-bot/orders/${id}/cancel`),
+  refillOrder: (id: string) => api.post(`/traffic-bot/orders/${id}/refill`),
+  // Wallet
+  getWallet: () => api.get("/traffic-bot/wallet"),
+  getTransactions: (params?: { limit?: number; offset?: number }) =>
+    api.get("/traffic-bot/wallet/transactions", { params }),
+  submitDepositRequest: (data: { amount: number; bank_reference: string; proof_url?: string }) =>
+    api.post("/traffic-bot/wallet/deposit-request", data),
+  getMyDeposits: () => api.get("/traffic-bot/wallet/deposits"),
+  // Admin
+  syncServices: () => api.post("/admin/traffic-bot/services/sync"),
+  getAllServices: (category?: string) =>
+    api.get("/admin/traffic-bot/services", { params: category ? { category } : {} }),
+  updateService: (id: string, data: { fee_pct?: number; is_enabled?: boolean; sort_order?: number }) =>
+    api.patch(`/admin/traffic-bot/services/${id}`, data),
+  bulkUpdateFee: (data: { category: string; fee_pct: number }) =>
+    api.patch("/admin/traffic-bot/services/bulk-fee", data),
+  getAllOrders: (params?: { status?: string; limit?: number; offset?: number }) =>
+    api.get("/admin/traffic-bot/orders", { params }),
+  depositWallet: (data: { tenant_id: string; amount: number; description?: string }) =>
+    api.post("/admin/traffic-bot/wallet/deposit", data),
+  getApiBalance: () => api.get("/admin/traffic-bot/api-balance"),
+  getDepositRequests: (status?: string) =>
+    api.get("/admin/traffic-bot/wallet/deposits", { params: status ? { status } : {} }),
+  approveDeposit: (id: string, admin_notes?: string) =>
+    api.post(`/admin/traffic-bot/wallet/deposits/${id}/approve`, { admin_notes }),
+  rejectDeposit: (id: string, admin_notes?: string) =>
+    api.post(`/admin/traffic-bot/wallet/deposits/${id}/reject`, { admin_notes }),
 };
 
 export default api;
