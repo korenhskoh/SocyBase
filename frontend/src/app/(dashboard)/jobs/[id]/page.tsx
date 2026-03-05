@@ -422,9 +422,15 @@ export default function JobDetailPage() {
   const handleCreateCustomAudience = async () => {
     setCreatingAudience(true);
     try {
-      const res = await fbAdsApi.createCustomAudience(jobId);
+      const res = await fbAdsApi.createCustomAudience(jobId, undefined, createLLA);
       const d = res.data;
-      alert(`Custom Audience created!\n\nName: ${d.audience_name}\nProfiles uploaded: ${d.profiles_uploaded}\nAudience ID: ${d.audience_id}`);
+      let message = `Custom Audience created!\n\nName: ${d.audience_name}\nProfiles uploaded: ${d.profiles_uploaded}\nAudience ID: ${d.audience_id}`;
+
+      if (createLLA && d.lookalike_audience_id) {
+        message += `\n\n✨ Lookalike Audience created!\nName: ${d.lookalike_audience_name}\nCountry: Malaysia\nSize: 1%\nLLA ID: ${d.lookalike_audience_id}`;
+      }
+
+      alert(message);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to create Custom Audience";
       alert(msg);
@@ -519,6 +525,7 @@ export default function JobDetailPage() {
 
   const [continuingDiscovery, setContinuingDiscovery] = useState(false);
   const [creatingAudience, setCreatingAudience] = useState(false);
+  const [createLLA, setCreateLLA] = useState(false);
 
   const handleContinueDiscovery = async (direction: "older" | "newer") => {
     if (!job) return;
@@ -1044,16 +1051,44 @@ export default function JobDetailPage() {
               >
                 Export for FB Ads Manager
               </button>
-              <button
-                onClick={handleCreateCustomAudience}
-                disabled={creatingAudience}
-                className="relative overflow-hidden rounded-lg bg-gradient-to-r from-[#1877F2] to-[#42b72a] px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(66,183,42,0.5)] hover:scale-105 text-center disabled:opacity-50 flex items-center gap-2 justify-center"
-              >
-                {creatingAudience && (
-                  <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                )}
-                {creatingAudience ? "Creating..." : "Create Custom Audience"}
-              </button>
+              <div className="flex flex-col gap-3 w-full">
+                <button
+                  onClick={handleCreateCustomAudience}
+                  disabled={creatingAudience}
+                  className="relative overflow-hidden rounded-lg bg-gradient-to-r from-[#1877F2] to-[#42b72a] px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(66,183,42,0.5)] hover:scale-105 text-center disabled:opacity-50 flex items-center gap-2 justify-center"
+                >
+                  {creatingAudience && (
+                    <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  )}
+                  {creatingAudience ? "Creating..." : "Create Custom Audience"}
+                </button>
+
+                <div className="flex flex-col gap-2 px-2">
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={createLLA}
+                      onChange={(e) => setCreateLLA(e.target.checked)}
+                      disabled={creatingAudience}
+                      className="w-4 h-4 rounded border-white/20 bg-white/5 text-[#42b72a] focus:ring-2 focus:ring-[#42b72a] focus:ring-offset-0 disabled:opacity-50 cursor-pointer"
+                    />
+                    <span className="text-sm text-white/80 group-hover:text-white transition-colors">
+                      Also create 1% Lookalike Audience (Malaysia)
+                    </span>
+                  </label>
+
+                  {profilesTotal < 1000 && profilesTotal >= 100 && (
+                    <p className="text-xs text-amber-400/80 pl-6">
+                      ⚠️ Recommended: At least 1,000 profiles for better LLA quality (currently {profilesTotal.toLocaleString()})
+                    </p>
+                  )}
+                  {profilesTotal < 100 && (
+                    <p className="text-xs text-red-400/80 pl-6">
+                      ❌ Minimum 100 profiles required (currently {profilesTotal.toLocaleString()})
+                    </p>
+                  )}
+                </div>
+              </div>
               <Link
                 href={`/jobs/${jobId}/report`}
                 className="relative overflow-hidden rounded-lg bg-gradient-to-r from-accent-purple to-primary-500 px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(124,92,255,0.4)] hover:scale-105 text-center"

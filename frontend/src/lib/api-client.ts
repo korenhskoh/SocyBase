@@ -397,6 +397,8 @@ export const fbAdsApi = {
   // Pages
   listPages: () => api.get("/fb-ads/pages"),
   selectPage: (id: string) => api.post("/fb-ads/pages/select", { id }),
+  getPagePosts: (pageId: string, limit?: number) =>
+    api.get(`/fb-ads/pages/${pageId}/posts`, { params: { limit: limit || 50 } }),
   // Pixels
   listPixels: () => api.get("/fb-ads/pixels"),
   selectPixel: (id: string) => api.post("/fb-ads/pixels/select", { id }),
@@ -431,8 +433,14 @@ export const fbAdsApi = {
   listWinningAds: () => api.get("/fb-ads/winning-ads"),
   detectWinningAds: () => api.post("/fb-ads/winning-ads/detect"),
   // Custom Audience
-  createCustomAudience: (jobId: string, audienceName?: string) =>
-    api.post("/fb-ads/custom-audience", { job_id: jobId, audience_name: audienceName }),
+  createCustomAudience: (jobId: string, audienceName?: string, createLookalike?: boolean) =>
+    api.post("/fb-ads/custom-audience", {
+      job_id: jobId,
+      audience_name: audienceName,
+      create_lookalike: createLookalike || false,
+    }),
+  listCustomAudiences: (limit?: number) =>
+    api.get("/fb-ads/custom-audiences", { params: { limit: limit || 100 } }),
   // AI Launch (Phase 5)
   createAICampaign: (data: Record<string, unknown>) => api.post("/fb-ads/launch", data),
   listAICampaigns: () => api.get("/fb-ads/launch/history"),
