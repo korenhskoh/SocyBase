@@ -1762,15 +1762,19 @@ async def create_custom_audience(
         audience_name = f"{len(profiles)} profiles - {input_display} - {today}"[:37]
 
     # 1. Create the Custom Audience
-    ca_resp = await meta.create_custom_audience(
-        token,
-        account.account_id,
-        name=audience_name,
-        description=f"Created from SocyBase job {str(job.id)[:8]} ({len(profiles)} profiles)",
-    )
-    audience_id = ca_resp.get("id")
-    if not audience_id:
-        raise HTTPException(status_code=502, detail="Failed to create Custom Audience on Meta.")
+    try:
+        ca_resp = await meta.create_custom_audience(
+            token,
+            account.account_id,
+            name=audience_name,
+            description=f"Created from SocyBase job {str(job.id)[:8]} ({len(profiles)} profiles)",
+        )
+        audience_id = ca_resp.get("id")
+        if not audience_id:
+            raise HTTPException(status_code=502, detail="Failed to create Custom Audience on Meta.")
+    except Exception as e:
+        logger.exception("Failed to create custom audience")
+        raise HTTPException(status_code=502, detail=f"Failed to create Custom Audience: {str(e)}")
 
     # 2. Build user records from scraped profiles
     users = []
@@ -1785,7 +1789,11 @@ async def create_custom_audience(
         })
 
     # 3. Upload users (hashed by MetaAPIService)
-    upload_resp = await meta.add_users_to_audience(token, audience_id, users)
+    try:
+        upload_resp = await meta.add_users_to_audience(token, audience_id, users)
+    except Exception as e:
+        logger.exception("Failed to upload users to custom audience")
+        raise HTTPException(status_code=502, detail=f"Failed to upload users to audience: {str(e)}")
 
     # 4. Create Lookalike Audience if requested
     lla_id = None
