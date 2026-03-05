@@ -68,8 +68,8 @@ const features = [
     mockup: <MockupCompetitorDiscovery />,
   },
   {
-    titleKey: "landing.feature_2_title",
-    descKey: "landing.feature_2_desc",
+    title: "CSV Import + Custom Audiences",
+    desc: "Import comment profiles from CSV and instantly create Facebook Custom Audiences with SHA-256 hashed PII data. Includes optional 1% Malaysia Lookalike Audiences for expanded reach.",
     icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z",
     color: "#00AAFF",
     mockup: <MockupAudienceExtraction />,
@@ -82,15 +82,15 @@ const features = [
     mockup: <MockupEngagementScoring />,
   },
   {
-    titleKey: "landing.feature_4_title",
-    descKey: "landing.feature_4_desc",
-    icon: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3",
-    color: "#FFAA00",
+    title: "Lookalike Audience Expansion",
+    desc: "Automatically create 1% similarity Lookalike Audiences targeting Malaysia from your high-value custom audiences. Scale your reach while maintaining targeting precision with minimum 100 profiles (recommended 1000+).",
+    icon: "M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z",
+    color: "#A855F7",
     mockup: <MockupFBAdsExport />,
   },
   {
-    titleKey: "landing.feature_5_title",
-    descKey: "landing.feature_5_desc",
+    title: "AI-Powered Ad Campaign Builder",
+    desc: "Launch Facebook ads with AI-generated copy, targeting, and creatives. Includes boost post features with specific goals (messages, video views, leads, calls, website visitors) and 6 audience targeting options including Advantage+ and custom audiences.",
     icon: "M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-1.12 4.461M21.86 8.818l-4.46 1.12",
     color: "#1877F2",
     mockup: <MockupAIFBAds />,
@@ -561,8 +561,12 @@ export default function LandingPage() {
                   {/* Text side */}
                   <div className={`${isEven ? "md:order-2" : "md:order-1"}`}>
                     <div className="accent-line mb-6" style={{ background: f.color }} />
-                    <h3 className="text-2xl font-semibold text-white mb-3">{t(f.titleKey)}</h3>
-                    <p className="text-white/40 leading-relaxed max-w-md">{t(f.descKey)}</p>
+                    <h3 className="text-2xl font-semibold text-white mb-3">
+                      {'title' in f ? f.title : t(f.titleKey)}
+                    </h3>
+                    <p className="text-white/40 leading-relaxed max-w-md">
+                      {'desc' in f ? f.desc : t(f.descKey)}
+                    </p>
                   </div>
 
                   {/* Mockup side */}
@@ -717,6 +721,180 @@ export default function LandingPage() {
               ))}
             </motion.div>
           </div>
+        </div>
+      </section>
+
+      {/* ══════════════════ CSV TO AI ADS WORKFLOW ══════════════════ */}
+      <section className="py-24 md:py-32 relative overflow-hidden border-y border-white/[0.04]">
+        {/* Background gradient */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute left-0 top-0 w-96 h-96 bg-[#1877F2]/10 rounded-full blur-[120px]" />
+          <div className="absolute right-0 bottom-0 w-96 h-96 bg-[#A855F7]/10 rounded-full blur-[120px]" />
+        </div>
+
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <motion.div
+            className="text-center mb-16"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            viewport={{ once: true }}
+          >
+            <p className="text-sm font-semibold uppercase tracking-widest mb-3" style={{ color: "#1877F2" }}>
+              Complete Facebook Ads Pipeline
+            </p>
+            <h2 className="text-3xl md:text-5xl font-bold">
+              From <span className="gradient-text">CSV Import</span> to <span className="gradient-text">AI Campaigns</span>
+            </h2>
+            <p className="mt-4 text-white/40 max-w-2xl mx-auto text-lg">
+              The only platform that handles your entire Facebook Ads workflow — import profiles, create custom audiences with LLA, and launch AI-powered campaigns.
+            </p>
+          </motion.div>
+
+          <motion.div
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"
+            variants={staggerContainer}
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, margin: "-50px" }}
+          >
+            {[
+              {
+                step: "1",
+                title: "Import CSV Profiles",
+                desc: "Upload comment profiles from your scraping jobs",
+                icon: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5",
+                color: "#00AAFF",
+              },
+              {
+                step: "2",
+                title: "Create Custom Audience",
+                desc: "SHA-256 hashed PII data synced to Meta instantly",
+                icon: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z",
+                color: "#7C5CFF",
+              },
+              {
+                step: "3",
+                title: "Generate LLA (Optional)",
+                desc: "1% Malaysia Lookalike for expanded reach",
+                icon: "M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z",
+                color: "#A855F7",
+              },
+              {
+                step: "4",
+                title: "Launch AI Campaign",
+                desc: "AI-generated ads with boost post targeting",
+                icon: "M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-1.12 4.461M21.86 8.818l-4.46 1.12",
+                color: "#1877F2",
+              },
+            ].map((item) => (
+              <motion.div
+                key={item.step}
+                variants={fadeInUp}
+                className="glass-card-soft p-6 relative group hover:border-white/15 transition-all"
+              >
+                <div
+                  className="absolute top-3 right-3 h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold"
+                  style={{ background: `${item.color}20`, color: item.color }}
+                >
+                  {item.step}
+                </div>
+
+                <div
+                  className="h-12 w-12 rounded-xl mb-4 flex items-center justify-center group-hover:scale-110 transition-transform"
+                  style={{ background: `${item.color}15` }}
+                >
+                  <svg
+                    className="h-6 w-6"
+                    style={{ color: item.color }}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
+                  </svg>
+                </div>
+
+                <h3 className="text-base font-semibold text-white mb-2">{item.title}</h3>
+                <p className="text-sm text-white/40 leading-relaxed">{item.desc}</p>
+              </motion.div>
+            ))}
+          </motion.div>
+
+          {/* Key Benefits */}
+          <motion.div
+            className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.3 }}
+            viewport={{ once: true }}
+          >
+            {[
+              {
+                label: "5 Boost Goals",
+                desc: "Messages, Video Views, Leads, Calls, Website Visitors",
+                color: "#1877F2",
+              },
+              {
+                label: "6 Audience Types",
+                desc: "Advantage+, Custom, Page Fans, Local Area & More",
+                color: "#A855F7",
+              },
+              {
+                label: "Auto High-Value Label",
+                desc: "Custom audiences tagged with [High Value] prefix",
+                color: "#00AAFF",
+              },
+            ].map((benefit) => (
+              <div
+                key={benefit.label}
+                className="glass-card-soft p-5 flex items-start gap-3 group hover:border-white/15 transition-all"
+              >
+                <div
+                  className="h-10 w-10 rounded-lg flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform"
+                  style={{ background: `${benefit.color}15` }}
+                >
+                  <svg
+                    className="h-5 w-5"
+                    style={{ color: benefit.color }}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-white mb-1">{benefit.label}</h4>
+                  <p className="text-xs text-white/40">{benefit.desc}</p>
+                </div>
+              </div>
+            ))}
+          </motion.div>
+
+          {/* CTA */}
+          <motion.div
+            className="mt-12 text-center"
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            transition={{ duration: 0.6, delay: 0.5 }}
+            viewport={{ once: true }}
+          >
+            <Link
+              href="/register"
+              className="btn-glow-refined !px-8 !py-3 text-base inline-flex items-center gap-2"
+            >
+              Start Your Free Trial
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+              </svg>
+            </Link>
+            <p className="mt-3 text-xs text-white/30">
+              No credit card required • Full access to CSV import, Custom Audiences & AI Campaigns
+            </p>
+          </motion.div>
         </div>
       </section>
 
