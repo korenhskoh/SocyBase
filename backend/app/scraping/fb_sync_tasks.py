@@ -385,13 +385,18 @@ async def _run_publish(campaign_id: str) -> dict:
             is_lifetime = getattr(campaign, "budget_type", "DAILY") == "LIFETIME"
 
             async with httpx.AsyncClient(timeout=30) as client:
-                # 1. Create campaign
-                campaign_payload = {
+                # 1. Create campaign — ODAX objectives may need promoted_object
+                campaign_payload: dict = {
                     "name": campaign.name,
                     "objective": odax_objective,
                     "status": "PAUSED",
-                    "special_ad_categories": "[]",
+                    "special_ad_categories": json.dumps([]),
+                    "buying_type": "AUCTION",
                 }
+                # OUTCOME_ENGAGEMENT, OUTCOME_LEADS need promoted_object with page_id
+                if page and odax_objective in ("OUTCOME_ENGAGEMENT", "OUTCOME_LEADS"):
+                    campaign_payload["promoted_object"] = json.dumps({"page_id": page.page_id})
+
                 resp = await client.post(
                     f"{GRAPH_BASE}/{account.account_id}/campaigns",
                     params=auth,
@@ -414,6 +419,9 @@ async def _run_publish(campaign_id: str) -> dict:
                         "status": "PAUSED",
                         "targeting": json.dumps(adset.targeting) if adset.targeting else "{}",
                     }
+                    # promoted_object at ad set level (required for ENGAGEMENT/LEADS)
+                    if page and odax_objective in ("OUTCOME_ENGAGEMENT", "OUTCOME_LEADS"):
+                        adset_data["promoted_object"] = json.dumps({"page_id": page.page_id})
                     # Budget: daily vs lifetime
                     if is_lifetime and campaign.lifetime_budget:
                         adset_data["lifetime_budget"] = str(campaign.lifetime_budget)

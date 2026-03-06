@@ -799,19 +799,39 @@ class MetaAPIService:
         auth = self._auth_params(access_token)
 
         async with httpx.AsyncClient(timeout=30) as client:
-            # 1. Create campaign
-            campaign_data = {
+            # Helper to raise with full Meta error details
+            def _raise_meta(resp: httpx.Response, step: str):
+                if resp.status_code >= 400:
+                    body = {}
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        pass
+                    meta_err = body.get("error", {})
+                    detail = meta_err.get("error_user_msg") or meta_err.get("message") or resp.text
+                    logger.error(
+                        "create_promoted_post %s failed: status=%s body=%s",
+                        step, resp.status_code, json.dumps(body)[:1000],
+                    )
+                    raise Exception(f"Meta API error at {step}: {detail}")
+
+            # 1. Create campaign — ODAX objectives need promoted_object
+            campaign_data: dict = {
                 "name": f"Boost — {post_id[:30]}",
                 "objective": campaign_objective,
                 "status": "PAUSED",
-                "special_ad_categories": "[]",
+                "special_ad_categories": json.dumps([]),
+                "buying_type": "AUCTION",
             }
+            if page_id:
+                campaign_data["promoted_object"] = json.dumps({"page_id": page_id})
+
             resp = await client.post(
                 f"{GRAPH_BASE}/{act_id}/campaigns",
                 params=auth,
                 data=campaign_data,
             )
-            resp.raise_for_status()
+            _raise_meta(resp, "campaign_create")
             meta_campaign_id = resp.json()["id"]
 
             # 2. Create ad set
@@ -823,6 +843,9 @@ class MetaAPIService:
                 "status": "PAUSED",
                 "targeting": json.dumps(targeting),
             }
+            # promoted_object at ad set level (required for ENGAGEMENT/LEADS)
+            if page_id:
+                adset_data["promoted_object"] = json.dumps({"page_id": page_id})
             if lifetime_budget:
                 adset_data["lifetime_budget"] = str(lifetime_budget)
             elif daily_budget:
@@ -837,7 +860,7 @@ class MetaAPIService:
                 params=auth,
                 data=adset_data,
             )
-            resp.raise_for_status()
+            _raise_meta(resp, "adset_create")
             meta_adset_id = resp.json()["id"]
 
             # 3. Create ad creative referencing the existing post
@@ -846,7 +869,7 @@ class MetaAPIService:
                 params=auth,
                 data={"object_story_id": post_id},
             )
-            resp.raise_for_status()
+            _raise_meta(resp, "creative_create")
             creative_id = resp.json()["id"]
 
             # 4. Create ad
@@ -860,7 +883,7 @@ class MetaAPIService:
                     "status": "PAUSED",
                 },
             )
-            resp.raise_for_status()
+            _raise_meta(resp, "ad_create")
             ad_id = resp.json()["id"]
 
             return {"id": meta_campaign_id, "ad_id": ad_id}
