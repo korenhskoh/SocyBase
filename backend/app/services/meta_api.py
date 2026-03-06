@@ -718,8 +718,9 @@ class MetaAPIService:
         access_token: str,
         ad_account_id: str,
         post_id: str,
-        daily_budget: int,
-        targeting: dict,
+        daily_budget: int | None = None,
+        lifetime_budget: int | None = None,
+        targeting: dict = None,
         start_time: str | None = None,
         end_time: str | None = None,
         boost_goal: str | None = None,
@@ -733,7 +734,8 @@ class MetaAPIService:
             access_token: Meta access token
             ad_account_id: Ad account ID (e.g., "act_123456")
             post_id: Facebook post ID to promote
-            daily_budget: Daily budget in cents (MYR)
+            daily_budget: Daily budget in cents (MYR) - required if lifetime_budget not provided
+            lifetime_budget: Lifetime budget in cents (MYR) - required if daily_budget not provided
             targeting: Targeting specification dict (optional, will be built from audience_type if provided)
             start_time: ISO 8601 datetime string (optional, GMT+8)
             end_time: ISO 8601 datetime string (optional, GMT+8)
@@ -775,10 +777,15 @@ class MetaAPIService:
         api_data = {
             "post_id": post_id,
             "ad_account_id": ad_account_id,
-            "daily_budget": daily_budget,
             "targeting": json.dumps(targeting) if targeting else None,
             "optimization_goal": optimization_goal,
         }
+
+        # Add budget parameter (either daily or lifetime, not both)
+        if lifetime_budget:
+            api_data["lifetime_budget"] = lifetime_budget
+        elif daily_budget:
+            api_data["daily_budget"] = daily_budget
 
         if start_timestamp:
             api_data["start_time"] = start_timestamp

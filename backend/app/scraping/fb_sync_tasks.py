@@ -332,11 +332,18 @@ async def _run_publish(campaign_id: str) -> dict:
             # Special handling for POST_ENGAGEMENT (boosted posts)
             if campaign.objective == "POST_ENGAGEMENT" and campaign.boosted_post_id:
                 # Use the simplified promoted post API
+                # Determine budget parameter based on budget_type
+                budget_param = {}
+                if campaign.budget_type == "LIFETIME":
+                    budget_param["lifetime_budget"] = campaign.lifetime_budget
+                else:
+                    budget_param["daily_budget"] = campaign.daily_budget
+
                 result = await meta.create_promoted_post(
                     access_token=token,
                     ad_account_id=account.account_id,
                     post_id=campaign.boosted_post_id,
-                    daily_budget=campaign.daily_budget,
+                    **budget_param,
                     targeting={},  # Will be built from audience_type
                     start_time=campaign.schedule_start_time.isoformat() if campaign.schedule_start_time else None,
                     end_time=campaign.schedule_end_time.isoformat() if campaign.schedule_end_time else None,

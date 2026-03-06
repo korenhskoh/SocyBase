@@ -316,7 +316,9 @@ class AICampaign(Base):
     status: Mapped[str] = mapped_column(String(30), default="draft")
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     objective: Mapped[str] = mapped_column(String(50), nullable=False)
-    daily_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    budget_type: Mapped[str] = mapped_column(String(20), default="DAILY")  # DAILY or LIFETIME
+    daily_budget: Mapped[int | None] = mapped_column(Integer)  # in cents/sen, for DAILY budget type
+    lifetime_budget: Mapped[int | None] = mapped_column(Integer)  # in cents/sen, for LIFETIME budget type
     page_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("fb_pages.id"))
     pixel_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("fb_pixels.id"))
     conversion_event: Mapped[str | None] = mapped_column(String(50))

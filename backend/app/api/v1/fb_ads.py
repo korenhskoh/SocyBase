@@ -201,7 +201,9 @@ class CreateCustomAudienceRequest(BaseModel):
 class CreateCampaignRequest(BaseModel):
     name: str
     objective: str  # LEADS, SALES, ENGAGEMENT, POST_ENGAGEMENT
-    daily_budget: int  # in cents
+    budget_type: str = "DAILY"  # DAILY or LIFETIME
+    daily_budget: int | None = None  # in cents/sen, required if budget_type=DAILY
+    lifetime_budget: int | None = None  # in cents/sen, required if budget_type=LIFETIME
     page_id: str | None = None
     pixel_id: str | None = None
     conversion_event: str | None = None
@@ -244,7 +246,9 @@ class AICampaignResponse(BaseModel):
     status: str
     name: str
     objective: str
-    daily_budget: int
+    budget_type: str
+    daily_budget: int | None = None
+    lifetime_budget: int | None = None
     landing_page_url: str | None = None
     conversion_event: str | None = None
     audience_strategy: str
@@ -262,7 +266,9 @@ class AICampaignResponse(BaseModel):
 class UpdateCampaignRequest(BaseModel):
     """Edit a campaign draft before publishing."""
     name: str | None = None
+    budget_type: str | None = None  # DAILY or LIFETIME
     daily_budget: int | None = None
+    lifetime_budget: int | None = None
     landing_page_url: str | None = None
     conversion_event: str | None = None
     custom_instructions: str | None = None
@@ -1866,7 +1872,9 @@ def _build_campaign_response(campaign: AICampaign, adsets: list | None = None) -
         status=campaign.status,
         name=campaign.name,
         objective=campaign.objective,
+        budget_type=campaign.budget_type,
         daily_budget=campaign.daily_budget,
+        lifetime_budget=campaign.lifetime_budget,
         landing_page_url=campaign.landing_page_url,
         conversion_event=campaign.conversion_event,
         audience_strategy=campaign.audience_strategy,
@@ -1961,9 +1969,20 @@ async def create_ai_campaign(
     if not account:
         raise HTTPException(status_code=400, detail="No ad account selected.")
 
-    # Validate budget (in sen/cents, 1 RM = 100 sen)
-    if body.daily_budget < 500:  # min RM 5.00
-        raise HTTPException(status_code=400, detail="Daily budget must be at least RM 5.00 (500 sen).")
+    # Validate budget type and amounts (in sen/cents, 1 RM = 100 sen)
+    if body.budget_type not in ("DAILY", "LIFETIME"):
+        raise HTTPException(status_code=400, detail="budget_type must be either DAILY or LIFETIME.")
+
+    if body.budget_type == "DAILY":
+        if not body.daily_budget:
+            raise HTTPException(status_code=400, detail="daily_budget is required when budget_type is DAILY.")
+        if body.daily_budget < 500:  # min RM 5.00
+            raise HTTPException(status_code=400, detail="Daily budget must be at least RM 5.00 (500 sen).")
+    elif body.budget_type == "LIFETIME":
+        if not body.lifetime_budget:
+            raise HTTPException(status_code=400, detail="lifetime_budget is required when budget_type is LIFETIME.")
+        if body.lifetime_budget < 500:  # min RM 5.00
+            raise HTTPException(status_code=400, detail="Lifetime budget must be at least RM 5.00 (500 sen).")
 
     # Parse schedule times if provided
     schedule_start = None
@@ -1987,7 +2006,9 @@ async def create_ai_campaign(
         ad_account_id=account.id,
         name=body.name,
         objective=body.objective,
+        budget_type=body.budget_type,
         daily_budget=body.daily_budget,
+        lifetime_budget=body.lifetime_budget,
         page_id=uuid.UUID(body.page_id) if body.page_id else None,
         pixel_id=uuid.UUID(body.pixel_id) if body.pixel_id else None,
         conversion_event=body.conversion_event,
@@ -2066,8 +2087,12 @@ async def update_ai_campaign(
     # Update campaign-level fields
     if body.name is not None:
         campaign.name = body.name
+    if body.budget_type is not None:
+        campaign.budget_type = body.budget_type
     if body.daily_budget is not None:
         campaign.daily_budget = body.daily_budget
+    if body.lifetime_budget is not None:
+        campaign.lifetime_budget = body.lifetime_budget
     if body.landing_page_url is not None:
         campaign.landing_page_url = body.landing_page_url
     if body.conversion_event is not None:
