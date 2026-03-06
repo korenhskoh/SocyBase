@@ -700,12 +700,14 @@ class MetaAPIService:
         """
         goal_mapping = {
             "GET_MORE_MESSAGES": "CONVERSATIONS",
-            "GET_MORE_VIDEO_VIEWS": "THRUPLAY",  # Video views optimization
+            "GET_MORE_VIDEO_VIEWS": "THRUPLAY",
+            "GET_MORE_ENGAGEMENT": "POST_ENGAGEMENT",
             "GET_MORE_LEADS": "LEAD_GENERATION",
-            "GET_MORE_CALLS": "CONVERSATIONS",  # Same as messages
+            "GET_MORE_CALLS": "CONVERSATIONS",
             "GET_MORE_WEBSITE_VISITORS": "LINK_CLICKS",
+            "GET_MORE_LINK_CLICKS": "LINK_CLICKS",
         }
-        return goal_mapping.get(boost_goal, "REACH")  # Default to REACH if not specified
+        return goal_mapping.get(boost_goal, "POST_ENGAGEMENT")
 
     @staticmethod
     def _build_targeting_from_type(
@@ -822,7 +824,8 @@ class MetaAPIService:
                     )
                     raise Exception(f"Meta API error at {step}: {detail}")
 
-            # 1. Create campaign — ODAX objectives need promoted_object
+            # 1. Create campaign — ODAX objectives do NOT accept promoted_object
+            #    at campaign level; it goes on the ad set instead.
             campaign_data: dict = {
                 "name": f"Boost — {post_id[:30]}",
                 "objective": campaign_objective,
@@ -831,9 +834,6 @@ class MetaAPIService:
                 "buying_type": "AUCTION",
                 "is_adset_budget_sharing_enabled": "false",
             }
-            # Only OUTCOME_ENGAGEMENT and OUTCOME_LEADS accept promoted_object at campaign level
-            if page_id and campaign_objective in ("OUTCOME_ENGAGEMENT", "OUTCOME_LEADS"):
-                campaign_data["promoted_object"] = json.dumps({"page_id": page_id})
 
             resp = await client.post(
                 f"{GRAPH_BASE}/{act_id}/campaigns",
@@ -852,8 +852,8 @@ class MetaAPIService:
                 "status": "PAUSED",
                 "targeting": json.dumps(targeting),
             }
-            # promoted_object at ad set level (only for ENGAGEMENT/LEADS)
-            if page_id and campaign_objective in ("OUTCOME_ENGAGEMENT", "OUTCOME_LEADS"):
+            # promoted_object at ad set level — required for page-based campaigns
+            if page_id:
                 adset_data["promoted_object"] = json.dumps({"page_id": page_id})
             if lifetime_budget:
                 adset_data["lifetime_budget"] = str(lifetime_budget)
