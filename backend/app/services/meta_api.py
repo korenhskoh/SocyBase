@@ -601,7 +601,7 @@ class MetaAPIService:
                 f"{GRAPH_BASE}/{page_id}/posts",
                 params={
                     **self._auth_params(access_token),
-                    "fields": "id,message,created_time,type,status_type,full_picture,permalink_url",
+                    "fields": "id,message,created_time,full_picture,permalink_url",
                     "limit": limit,
                 },
             )
