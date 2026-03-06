@@ -758,76 +758,112 @@ class MetaAPIService:
         custom_audience_id: str | None = None,
         page_id: str | None = None,
     ) -> dict:
-        """Create a promoted/boosted post ad.
+        """Create a promoted/boosted post via the Marketing API.
 
-        Args:
-            access_token: Meta access token
-            ad_account_id: Ad account ID (e.g., "act_123456")
-            post_id: Facebook post ID to promote
-            daily_budget: Daily budget in cents (MYR) - required if lifetime_budget not provided
-            lifetime_budget: Lifetime budget in cents (MYR) - required if daily_budget not provided
-            targeting: Targeting specification dict (optional, will be built from audience_type if provided)
-            start_time: ISO 8601 datetime string (optional, GMT+8)
-            end_time: ISO 8601 datetime string (optional, GMT+8)
-            boost_goal: Boost goal for optimization (e.g., GET_MORE_MESSAGES)
-            audience_type: Audience targeting type (e.g., CUSTOM_AUDIENCE, ADVANTAGE_PLUS)
-            custom_audience_id: Custom audience ID if audience_type is CUSTOM_AUDIENCE
-            page_id: Page ID for PAGE_FANS targeting
+        Uses the standard campaign → ad set → ad flow with ``object_story_id``
+        referencing the existing post.
 
         Returns:
-            dict with promoted post details including ad_id
+            dict with ``id`` (the Meta campaign ID) and ``ad_id``.
         """
+        from datetime import datetime as _dt
+
         # Convert ISO datetime to Unix timestamp if provided
         start_timestamp = None
         end_timestamp = None
-
         if start_time:
-            from datetime import datetime
-            dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            dt = _dt.fromisoformat(start_time.replace("Z", "+00:00"))
             start_timestamp = int(dt.timestamp())
-
         if end_time:
-            from datetime import datetime
-            dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            dt = _dt.fromisoformat(end_time.replace("Z", "+00:00"))
             end_timestamp = int(dt.timestamp())
 
-        # Build targeting from audience_type if provided
+        # Build targeting from audience_type
         if audience_type:
             targeting = self._build_targeting_from_type(audience_type, custom_audience_id, page_id)
+        if not targeting:
+            targeting = {"geo_locations": {"countries": ["MY"]}}
 
-        # Map boost goal to optimization goal
+        # Map boost goal → campaign objective + ad set optimization_goal
+        objective_map = {
+            "GET_MORE_MESSAGES": "OUTCOME_ENGAGEMENT",
+            "GET_MORE_VIDEO_VIEWS": "OUTCOME_AWARENESS",
+            "GET_MORE_ENGAGEMENT": "OUTCOME_ENGAGEMENT",
+            "GET_MORE_LEADS": "OUTCOME_LEADS",
+            "GET_MORE_CALLS": "OUTCOME_ENGAGEMENT",
+            "GET_MORE_WEBSITE_VISITORS": "OUTCOME_TRAFFIC",
+            "GET_MORE_LINK_CLICKS": "OUTCOME_TRAFFIC",
+        }
         optimization_goal = self._map_boost_goal_to_optimization(boost_goal)
+        campaign_objective = objective_map.get(boost_goal or "", "OUTCOME_ENGAGEMENT")
 
-        # Build ad creative referencing the post
-        creative_data = {
-            "object_story_id": post_id,  # Use existing post as creative
-        }
+        # Ensure ad_account_id has act_ prefix
+        act_id = ad_account_id if ad_account_id.startswith("act_") else f"act_{ad_account_id}"
+        auth = self._auth_params(access_token)
 
-        # Prepare API data
-        api_data = {
-            "post_id": post_id,
-            "ad_account_id": ad_account_id,
-            "targeting": json.dumps(targeting) if targeting else None,
-            "optimization_goal": optimization_goal,
-        }
-
-        # Add budget parameter (either daily or lifetime, not both)
-        if lifetime_budget:
-            api_data["lifetime_budget"] = lifetime_budget
-        elif daily_budget:
-            api_data["daily_budget"] = daily_budget
-
-        if start_timestamp:
-            api_data["start_time"] = start_timestamp
-        if end_timestamp:
-            api_data["end_time"] = end_timestamp
-
-        # Use simplified promoted post API
         async with httpx.AsyncClient(timeout=30) as client:
+            # 1. Create campaign
+            campaign_data = {
+                "name": f"Boost — {post_id[:30]}",
+                "objective": campaign_objective,
+                "status": "PAUSED",
+                "special_ad_categories": "[]",
+            }
             resp = await client.post(
-                f"{GRAPH_BASE}/{ad_account_id}/promotable_posts",
-                params=self._auth_params(access_token),
-                data=api_data,
+                f"{GRAPH_BASE}/{act_id}/campaigns",
+                params=auth,
+                data=campaign_data,
             )
             resp.raise_for_status()
-            return resp.json()
+            meta_campaign_id = resp.json()["id"]
+
+            # 2. Create ad set
+            adset_data: dict = {
+                "name": f"Boost adset — {post_id[:30]}",
+                "campaign_id": meta_campaign_id,
+                "billing_event": "IMPRESSIONS",
+                "optimization_goal": optimization_goal,
+                "status": "PAUSED",
+                "targeting": json.dumps(targeting),
+            }
+            if lifetime_budget:
+                adset_data["lifetime_budget"] = str(lifetime_budget)
+            elif daily_budget:
+                adset_data["daily_budget"] = str(daily_budget)
+            if start_timestamp:
+                adset_data["start_time"] = str(start_timestamp)
+            if end_timestamp:
+                adset_data["end_time"] = str(end_timestamp)
+
+            resp = await client.post(
+                f"{GRAPH_BASE}/{act_id}/adsets",
+                params=auth,
+                data=adset_data,
+            )
+            resp.raise_for_status()
+            meta_adset_id = resp.json()["id"]
+
+            # 3. Create ad creative referencing the existing post
+            resp = await client.post(
+                f"{GRAPH_BASE}/{act_id}/adcreatives",
+                params=auth,
+                data={"object_story_id": post_id},
+            )
+            resp.raise_for_status()
+            creative_id = resp.json()["id"]
+
+            # 4. Create ad
+            resp = await client.post(
+                f"{GRAPH_BASE}/{act_id}/ads",
+                params=auth,
+                data={
+                    "name": f"Boost ad — {post_id[:30]}",
+                    "adset_id": meta_adset_id,
+                    "creative": json.dumps({"creative_id": creative_id}),
+                    "status": "PAUSED",
+                },
+            )
+            resp.raise_for_status()
+            ad_id = resp.json()["id"]
+
+            return {"id": meta_campaign_id, "ad_id": ad_id}

@@ -416,8 +416,9 @@ export default function FBAILaunchPage() {
       }
       // Poll for publish completion
       startPolling(activeCampaign.id, () => setPublishing(false));
-    } catch {
-      alert("Failed to publish campaign.");
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      alert(axiosErr?.response?.data?.detail || "Failed to publish campaign.");
       setPublishing(false);
     }
   };

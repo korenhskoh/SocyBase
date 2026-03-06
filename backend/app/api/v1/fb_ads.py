@@ -2259,7 +2259,16 @@ async def publish_campaign(
         if campaign.status == "publishing":
             campaign.status = "ready"
             await db.commit()
-        raise HTTPException(status_code=500, detail=f"Publishing failed: {str(e)}")
+        # Extract Meta API error message if available
+        detail = str(e)
+        if hasattr(e, "response"):
+            try:
+                body = e.response.json()
+                meta_err = body.get("error", {})
+                detail = meta_err.get("message") or meta_err.get("error_user_msg") or detail
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"Publishing failed: {detail}")
 
 
 @router.delete("/launch/{campaign_id}")
