@@ -555,12 +555,14 @@ class MetaAPIService:
             dict with lookalike audience ID
         """
         lookalike_spec_data = {
-            "origin_audience_id": source_audience_id,  # Plain string ID — correct Meta API field name
-            "type": "similarity",  # "similarity" or "reach"
-            "country": country,  # ISO country code (e.g., MY, US)
-            "ratio": ratio,  # 0.01 = 1% of population
+            "origin": {
+                "id": source_audience_id,
+                "type": "custom_audience"
+            },
+            "ratio": ratio,
+            "country": country,
         }
-        logger.warning(f"Creating LLA with spec: {lookalike_spec_data}")
+        logger.info(f"Creating LLA with spec: {lookalike_spec_data}")
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
