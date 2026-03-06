@@ -391,10 +391,11 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                 while pages_fetched < max_pages:
                     # Rate limit before each API call
-                    await rate_limiter.wait_for_slot(
+                    if not await rate_limiter.wait_for_slot(
                         "akng_api_global",
                         max_requests=settings_rate_limit(),
-                    )
+                    ):
+                        logger.warning(f"[Job {job_id}] Rate limiter timeout, proceeding anyway")
 
                     # Retry wrapper for timeout and transient AKNG errors
                     raw_response = None

@@ -944,7 +944,10 @@ export default function JobDetailPage() {
                     <div className="bg-white/5 rounded-lg p-3">
                       <p className="text-white/40">Comments + Replies</p>
                       <p className="text-white/70 font-semibold text-base mt-0.5">
-                        {pipelineState.top_level_comments ?? "?"} + {pipelineState.reply_comments ?? "?"} = {pipelineState.total_comments_fetched}
+                        {(pipelineState.top_level_comments != null && pipelineState.reply_comments != null &&
+                          (pipelineState.top_level_comments + pipelineState.reply_comments) === pipelineState.total_comments_fetched)
+                          ? `${pipelineState.top_level_comments} + ${pipelineState.reply_comments} = ${pipelineState.total_comments_fetched}`
+                          : pipelineState.total_comments_fetched}
                       </p>
                     </div>
                   )}

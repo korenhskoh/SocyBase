@@ -160,8 +160,9 @@ async def create_job(
     db.add(job)
     await db.flush()
 
-    # Dispatch Celery task if not scheduled
+    # Commit BEFORE dispatching Celery task so the worker can find the job row
     if not data.scheduled_at:
+        await db.commit()
         if data.job_type == "post_discovery":
             from app.scraping.tasks import run_post_discovery_pipeline
             task = run_post_discovery_pipeline.delay(str(job.id))
@@ -397,7 +398,7 @@ async def resume_job(
         status="queued",
     )
     db.add(new_job)
-    await db.flush()
+    await db.commit()
 
     if original_job.job_type == "post_discovery":
         from app.scraping.tasks import run_post_discovery_pipeline
@@ -498,9 +499,9 @@ async def batch_action(
                 status="queued",
             )
             db.add(new_job)
-            await db.flush()
+            await db.commit()
             if job.job_type == "post_discovery":
-                from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
+                from app.scraping.tasks import run_post_discovery_pipeline
                 task = run_post_discovery_pipeline.delay(str(new_job.id))
             else:
                 from app.scraping.tasks import run_scraping_pipeline
@@ -704,7 +705,7 @@ async def create_jobs_from_posts(
             status="queued",
         )
         db.add(job)
-        await db.flush()
+        await db.commit()
 
         from app.scraping.tasks import run_scraping_pipeline
         task = run_scraping_pipeline.delay(str(job.id))

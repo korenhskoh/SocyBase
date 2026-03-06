@@ -15,6 +15,7 @@ import asyncio
 import logging
 import traceback as tb_module
 from datetime import datetime, timezone
+import httpx
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, PageAuthorProfile
@@ -31,13 +32,26 @@ logger = logging.getLogger(__name__)
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
+def _parse_comment_time(val) -> datetime | None:
+    """Parse a comment timestamp string into a timezone-aware datetime."""
+    if not val:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(val).replace("+0000", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, TypeError):
+        return None
+
+
 def _calc_stage_progress(stage: str, **ctx) -> float:
     """Calculate overall progress percentage based on current pipeline stage.
 
     Stage weights:
       parse_input   →  0-5%
       fetch_author  →  5-8%
-      fetch_comments→  8-35%  (scales with pages fetched)
+      fetch_comments→  8-35%  (scales with pages fetched, asymptotic)
       deduplicate   → 35-40%
       enrich_profiles→ 40-98% (scales with profiles done)
       finalize      → 100%
@@ -48,7 +62,8 @@ def _calc_stage_progress(stage: str, **ctx) -> float:
         return 8.0
     if stage == "fetch_comments":
         pages = ctx.get("pages_fetched", 0)
-        return min(8.0 + pages * 2.0, 35.0)
+        # Asymptotic approach to 35%: keeps moving even with many pages
+        return round(8.0 + 27.0 * (1 - 1 / (1 + pages * 0.15)), 2)
     if stage == "deduplicate":
         return 38.0
     if stage == "enrich_profiles":
@@ -311,6 +326,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                             commenter_user_id=ec.commenter_user_id,
                             commenter_name=ec.commenter_name,
                             comment_text=ec.comment_text,
+                            comment_time=ec.comment_time,
                         )
                         db.add(new_comment)
                         all_comments.append({
@@ -321,6 +337,10 @@ async def _execute_pipeline(job_id: str, celery_task):
                         })
                     await db.commit()
                     page_count = len(existing_comments) // 25 + (1 if existing_comments else 0)
+
+                    # Restore top-level/reply breakdown from original job state
+                    total_top_level = orig_state.get("top_level_comments", 0) or len(existing_comments)
+                    total_replies = orig_state.get("reply_comments", 0)
 
                     logger.info(
                         f"[Job {job_id}] Resumed: copied {len(existing_comments)} comments from job {resume_from_job_id}"
@@ -343,17 +363,48 @@ async def _execute_pipeline(job_id: str, celery_task):
                 # Pagination loop (normal or continuing from cursor)
                 if not resume_from_job_id or next_cursor:
                     while True:
-                        await rate_limiter.wait_for_slot(
+                        if not await rate_limiter.wait_for_slot(
                             "akng_api_global",
                             max_requests=settings_rate_limit(),
-                        )
+                        ):
+                            logger.warning(f"[Job {job_id}] Rate limiter timeout, proceeding anyway")
 
-                        response = await client.get_post_comments(
-                            post_id,
-                            is_group=is_group,
-                            after=next_cursor,
-                            limit=25,
-                        )
+                        # Retry timeout errors up to 3 times per page, then
+                        # gracefully break if we already have comments
+                        response = None
+                        for _attempt in range(3):
+                            try:
+                                response = await client.get_post_comments(
+                                    post_id,
+                                    is_group=is_group,
+                                    after=next_cursor,
+                                    limit=25,
+                                )
+                                break
+                            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as timeout_err:
+                                wait = 5 * (_attempt + 1)
+                                logger.warning(
+                                    f"[Job {job_id}] Timeout fetching page {page_count + 1} "
+                                    f"(attempt {_attempt + 1}/3): {timeout_err}, retrying in {wait}s..."
+                                )
+                                await _append_log(db, job, "warn", "fetch_comments",
+                                    f"Timeout on page {page_count + 1}, retrying ({_attempt + 1}/3)")
+                                await asyncio.sleep(wait)
+
+                        if response is None:
+                            # All 3 retries failed for this page
+                            if all_comments:
+                                logger.warning(
+                                    f"[Job {job_id}] Timeout after 3 retries on page {page_count + 1}. "
+                                    f"Continuing with {len(all_comments)} comments already fetched."
+                                )
+                                await _append_log(db, job, "warn", "fetch_comments",
+                                    f"Timeout after retries — continuing with {len(all_comments)} comments collected so far")
+                                break
+                            else:
+                                raise httpx.ReadTimeout(
+                                    f"Timeout fetching comments page {page_count + 1} with no data collected"
+                                )
 
                         logger.info(
                             "[Job %s] Raw comments response keys: %s, first 500 chars: %s",
@@ -375,6 +426,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 commenter_user_id=c["user_id"],
                                 commenter_name=c["user_name"],
                                 comment_text=c["message"],
+                                comment_time=_parse_comment_time(c.get("created_time")),
                             )
                             db.add(comment)
 
