@@ -554,6 +554,13 @@ class MetaAPIService:
         Returns:
             dict with lookalike audience ID
         """
+        lookalike_spec_data = {
+            "origin_audience_id": source_audience_id,
+            "ratio": ratio,
+            "country": country,
+        }
+        logger.info(f"Creating LLA with spec: {lookalike_spec_data}")
+
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
@@ -561,11 +568,7 @@ class MetaAPIService:
                 data={
                     "name": name,
                     "subtype": "LOOKALIKE",
-                    "lookalike_spec": json.dumps({
-                        "origin_audience_id": source_audience_id,
-                        "ratio": ratio,
-                        "country": country,
-                    }),
+                    "lookalike_spec": json.dumps(lookalike_spec_data),
                 },
             )
             try:
