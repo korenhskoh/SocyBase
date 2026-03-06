@@ -710,11 +710,23 @@ async def get_page_posts(
     if not conn:
         raise HTTPException(status_code=400, detail="No active Facebook connection.")
 
+    # Look up the actual Facebook Page ID from our database
+    # The frontend sends the database UUID, but we need Meta's Page ID
+    page = await db.scalar(
+        select(FBPage).where(
+            FBPage.id == page_id,
+            FBPage.connection_id == conn.id,
+        )
+    )
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found.")
+
     meta = MetaAPIService()
     token = meta.decrypt_token(conn.access_token_encrypted)
 
     try:
-        posts = await meta.get_page_posts(token, page_id, limit)
+        # Use the actual Facebook Page ID from Meta
+        posts = await meta.get_page_posts(token, page.page_id, limit)
         return {"posts": posts}
     except Exception as e:
         logger.exception("Failed to fetch page posts")
