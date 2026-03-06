@@ -461,16 +461,15 @@ class MetaAPIService:
         labeled_name = f"[High Value] {name}"[:50]  # Meta 50-char limit
 
         async with httpx.AsyncClient(timeout=30) as client:
-            # Create the audience with value-based flag
+            # Create the audience
             resp = await client.post(
                 f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
                 params=self._auth_params(access_token),
                 data={
                     "name": labeled_name,
-                    "subtype": "CUSTOMER_FILE",  # Correct subtype for customer list audiences
+                    "subtype": "CUSTOM",  # CUSTOM subtype for customer list audiences
                     "description": f"High value audience - {description}" if description else "High value audience",
                     "customer_file_source": "USER_PROVIDED_ONLY",
-                    "is_value_based": "true",  # Mark as value-based audience
                 },
             )
             try:
