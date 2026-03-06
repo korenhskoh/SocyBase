@@ -562,10 +562,15 @@ class MetaAPIService:
                     "name": name,
                     "subtype": "LOOKALIKE",
                     "lookalike_spec": json.dumps({
-                        "origin": {"id": source_audience_id},
-                        "starting_ratio": 0.0,
+                        "type": "custom_ratio",
                         "ratio": ratio,
                         "country": country,
+                        "origin": [
+                            {
+                                "id": source_audience_id,
+                                "type": "custom_audience",
+                            }
+                        ],
                     }),
                 },
             )
@@ -601,7 +606,7 @@ class MetaAPIService:
                 f"{GRAPH_BASE}/{page_id}/posts",
                 params={
                     **self._auth_params(access_token),
-                    "fields": "id,message,created_time,type,status_type,full_picture,permalink_url",
+                    "fields": "id,message,created_time,full_picture,permalink_url,attachments{type,media_type,title,url}",
                     "limit": limit,
                 },
             )

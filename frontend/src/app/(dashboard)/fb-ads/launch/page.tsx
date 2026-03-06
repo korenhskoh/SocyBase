@@ -1282,7 +1282,7 @@ export default function FBAILaunchPage() {
                       <option value="">Select a post or livestream...</option>
                       {pagePosts.map(post => (
                         <option key={post.id} value={post.id}>
-                          [{post.type?.toUpperCase() || 'POST'}] {post.message?.substring(0, 80) || post.id} - {new Date(post.created_time).toLocaleDateString()}
+                          [{post.attachments?.data?.[0]?.type?.toUpperCase() || 'POST'}] {post.message?.substring(0, 80) || post.id} - {new Date(post.created_time).toLocaleDateString()}
                         </option>
                       ))}
                     </select>
