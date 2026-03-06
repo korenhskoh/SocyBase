@@ -1271,6 +1271,7 @@ export default function FBAILaunchPage() {
                           {loadingPosts && <div className="h-3 w-3 border-2 border-blue-300/30 border-t-blue-300 rounded-full animate-spin" />}
                           {loadingPosts ? "Loading..." : "Load Posts"}
                         </button>
+                      </div>
                     </div>
 
                     <select
