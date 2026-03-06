@@ -1816,6 +1816,10 @@ async def create_custom_audience(
     lla_id = None
     lla_name = None
     if body.create_lookalike:
+        # Wait for Meta to process the Custom Audience before creating LLA
+        import asyncio
+        await asyncio.sleep(3)  # Give Meta 3 seconds to propagate the audience
+
         lla_name = f"LLA 1% MY - {audience_name}"[:50]
         try:
             lla_resp = await meta.create_lookalike_audience(
