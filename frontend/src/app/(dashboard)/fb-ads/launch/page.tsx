@@ -282,10 +282,14 @@ export default function FBAILaunchPage() {
         audience_type: objective === "POST_ENGAGEMENT" ? audienceType : null,
       });
 
-      // Start generation
+      // Show generating view immediately so user sees progress
+      setActiveCampaign({ id: res.data.id, status: "generating", generation_progress: { stage: "analyze", pct: 0 } } as AICampaignItem);
+      setView("generating");
+
+      // Start generation (runs inline on backend)
       const genRes = await fbAdsApi.generateAICampaign(res.data.id);
 
-      // If inline generation returned the campaign directly
+      // Inline generation returned the campaign directly
       if (genRes.data.campaign) {
         setActiveCampaign(genRes.data.campaign);
         setReviewStep("summary");
@@ -293,9 +297,7 @@ export default function FBAILaunchPage() {
         return;
       }
 
-      // Set generating view and start polling
-      setActiveCampaign({ id: res.data.id, status: "generating", generation_progress: { stage: "analyze", pct: 0 } } as AICampaignItem);
-      setView("generating");
+      // Fallback: poll if backend returned a task_id instead
       startPolling(res.data.id, (data) => {
         if (data.status === "ready") {
           setReviewStep("summary");
@@ -306,6 +308,9 @@ export default function FBAILaunchPage() {
       const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } };
       const msg = axiosErr?.response?.data?.detail || "Failed to create campaign.";
       alert(msg);
+      // Reset to config view so user isn't stuck on generating screen
+      setView("config");
+      setActiveCampaign(null);
     } finally {
       setCreating(false);
     }
@@ -315,6 +320,10 @@ export default function FBAILaunchPage() {
     if (!activeCampaign || !confirm("Regenerate this campaign? This will replace all existing ad sets and ads.\n\nCosts 20 credits.")) return;
     setCreating(true);
     try {
+      // Show generating view immediately
+      setActiveCampaign({ ...activeCampaign, status: "generating", generation_progress: { stage: "analyze", pct: 0 } } as AICampaignItem);
+      setView("generating");
+
       const genRes = await fbAdsApi.generateAICampaign(activeCampaign.id);
       if (genRes.data.campaign) {
         setActiveCampaign(genRes.data.campaign);
@@ -323,7 +332,8 @@ export default function FBAILaunchPage() {
         setCreating(false);
         return;
       }
-      setView("generating");
+
+      // Fallback: poll if backend returned a task_id instead
       startPolling(activeCampaign.id, (data) => {
         setCreating(false);
         if (data.status === "ready") {
@@ -335,6 +345,11 @@ export default function FBAILaunchPage() {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
       alert(axiosErr?.response?.data?.detail || "Failed to regenerate.");
       setCreating(false);
+      // Go back to review on failure
+      if (activeCampaign) {
+        await refreshCampaign(activeCampaign.id);
+        setView("review");
+      }
     }
   };
 

@@ -728,12 +728,14 @@ async def get_page_posts(
         raise HTTPException(status_code=404, detail="Page not found.")
 
     meta = MetaAPIService()
-    # Use the page-specific access token, not the user connection token
-    if page.access_token_encrypted:
-        token = meta.decrypt_token(page.access_token_encrypted)
-    else:
-        # Fallback to connection token if page token not available
-        token = meta.decrypt_token(conn.access_token_encrypted)
+    # Use the page access token – /{page_id}/posts requires a page token
+    # (user tokens only work if the user is admin/editor/moderator of the page)
+    if not page.access_token_encrypted:
+        raise HTTPException(
+            status_code=400,
+            detail="No page access token stored. Please reconnect the page.",
+        )
+    token = meta.decrypt_token(page.access_token_encrypted)
 
     try:
         # Use the actual Facebook Page ID from Meta
@@ -2171,15 +2173,9 @@ async def trigger_generation(
     )
     await db.commit()
 
-    # Try Celery first, fall back to inline generation
-    try:
-        from app.scraping.fb_sync_tasks import generate_ai_campaign
-        task = generate_ai_campaign.delay(str(campaign.id))
-        return {"detail": "Generation started.", "task_id": task.id}
-    except Exception:
-        logger.info("Celery not available, running AI generation inline for campaign %s", campaign_id)
-
-    # Inline generation
+    # Run AI generation inline (Celery workers are not guaranteed to be running,
+    # and .delay() can silently succeed even without workers, causing the campaign
+    # to stay stuck in "generating" state forever).
     try:
         from app.services.ai_campaign_gen import generate_campaign
         await generate_campaign(db, str(campaign.id))
