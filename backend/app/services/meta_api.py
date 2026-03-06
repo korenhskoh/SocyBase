@@ -829,6 +829,7 @@ class MetaAPIService:
                 "status": "PAUSED",
                 "special_ad_categories": json.dumps([]),
                 "buying_type": "AUCTION",
+                "is_adset_budget_sharing_enabled": "false",
             }
             if page_id:
                 campaign_data["promoted_object"] = json.dumps({"page_id": page_id})

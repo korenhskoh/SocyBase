@@ -392,6 +392,7 @@ async def _run_publish(campaign_id: str) -> dict:
                     "status": "PAUSED",
                     "special_ad_categories": json.dumps([]),
                     "buying_type": "AUCTION",
+                    "is_adset_budget_sharing_enabled": "false",
                 }
                 # OUTCOME_ENGAGEMENT, OUTCOME_LEADS need promoted_object with page_id
                 if page and odax_objective in ("OUTCOME_ENGAGEMENT", "OUTCOME_LEADS"):
