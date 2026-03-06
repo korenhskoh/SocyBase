@@ -589,6 +589,7 @@ class MetaAPIService:
                         "type": "custom_ratio",
                         "ratio": ratio,
                         "country": country,
+                        "origin_audience_id": source_audience_id,
                     }),
                 },
             )
@@ -624,7 +625,7 @@ class MetaAPIService:
                 f"{GRAPH_BASE}/{page_id}/posts",
                 params={
                     **self._auth_params(access_token),
-                    "fields": "id,message,created_time,picture,permalink_url,attachments{type,media_type,title,url,media{image{src}}}",
+                    "fields": "id,message,created_time,permalink_url,attachments{type,media_type,title,url,media{image{src}}}",
                     "limit": limit,
                 },
             )
