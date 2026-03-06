@@ -722,7 +722,12 @@ async def get_page_posts(
         raise HTTPException(status_code=404, detail="Page not found.")
 
     meta = MetaAPIService()
-    token = meta.decrypt_token(conn.access_token_encrypted)
+    # Use the page-specific access token, not the user connection token
+    if page.access_token_encrypted:
+        token = meta.decrypt_token(page.access_token_encrypted)
+    else:
+        # Fallback to connection token if page token not available
+        token = meta.decrypt_token(conn.access_token_encrypted)
 
     try:
         # Use the actual Facebook Page ID from Meta
