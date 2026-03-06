@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import hmac
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -718,7 +717,7 @@ class MetaAPIService:
         Returns:
             Targeting specification dict for Meta API
         """
-        targeting = {
+        targeting: dict = {
             "geo_locations": {"countries": ["MY"]},  # Default to Malaysia
         }
 
@@ -729,16 +728,14 @@ class MetaAPIService:
         elif audience_type == "CUSTOM_AUDIENCE" and custom_audience_id:
             targeting["custom_audiences"] = [{"id": custom_audience_id}]
         elif audience_type == "PAGE_FANS" and page_id:
-            targeting["connections"] = [{"id": page_id, "type": "page"}]
+            # connections spec only needs {"id": page_id} — no "type" field
+            targeting["connections"] = [{"id": page_id}]
         elif audience_type == "PAGE_FANS_SIMILAR" and page_id:
-            targeting["connections"] = [{"id": page_id, "type": "page"}]
-            targeting["flexible_spec"] = [{"interests": [{"id": page_id, "name": "Page fans and similar"}]}]
+            # friends_of_connections targets friends of page fans
+            targeting["friends_of_connections"] = [{"id": page_id}]
         elif audience_type == "LOCAL_AREA":
-            # Add radius targeting (e.g., 25km radius)
-            if "geo_locations" in targeting:
-                targeting["geo_locations"]["location_types"] = ["home", "recent"]
-            targeting["radius"] = "25"
-            targeting["distance_unit"] = "kilometer"
+            # Use location_types for local area targeting
+            targeting["geo_locations"]["location_types"] = ["home", "recent"]
         # For TARGETING, return basic targeting (will be enhanced by AI)
 
         return targeting

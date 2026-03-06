@@ -361,17 +361,41 @@ async def _run_publish(campaign_id: str) -> dict:
                 return {"status": "published", "meta_campaign_id": campaign.meta_campaign_id}
 
             # Standard campaign flow for other objectives
+            # Map old-style objectives to ODAX objectives (Meta v22.0+)
+            ODAX_OBJECTIVE_MAP = {
+                "SALES": "OUTCOME_SALES",
+                "LEADS": "OUTCOME_LEADS",
+                "ENGAGEMENT": "OUTCOME_ENGAGEMENT",
+                "TRAFFIC": "OUTCOME_TRAFFIC",
+                "AWARENESS": "OUTCOME_AWARENESS",
+            }
+            OPTIMIZATION_GOAL_MAP = {
+                "SALES": "OFFSITE_CONVERSIONS",
+                "LEADS": "LEAD_GENERATION",
+                "ENGAGEMENT": "POST_ENGAGEMENT",
+                "TRAFFIC": "LINK_CLICKS",
+                "AWARENESS": "REACH",
+            }
+            odax_objective = ODAX_OBJECTIVE_MAP.get(
+                campaign.objective.upper(), campaign.objective.upper()
+            )
+            optimization_goal = OPTIMIZATION_GOAL_MAP.get(
+                campaign.objective.upper(), "LINK_CLICKS"
+            )
+            is_lifetime = getattr(campaign, "budget_type", "DAILY") == "LIFETIME"
+
             async with httpx.AsyncClient(timeout=30) as client:
                 # 1. Create campaign
+                campaign_payload = {
+                    "name": campaign.name,
+                    "objective": odax_objective,
+                    "status": "PAUSED",
+                    "special_ad_categories": "[]",
+                }
                 resp = await client.post(
                     f"{GRAPH_BASE}/{account.account_id}/campaigns",
                     params=auth,
-                    data={
-                        "name": campaign.name,
-                        "objective": campaign.objective.upper(),
-                        "status": "PAUSED",
-                        "special_ad_categories": "[]",
-                    },
+                    data=campaign_payload,
                 )
                 resp.raise_for_status()
                 meta_campaign_id = resp.json().get("id")
@@ -382,19 +406,25 @@ async def _run_publish(campaign_id: str) -> dict:
                     select(AICampaignAdSet).where(AICampaignAdSet.campaign_id == campaign.id)
                 )
                 for adset in adsets_r.scalars().all():
-                    adset_data = {
+                    adset_data: dict = {
                         "name": adset.name,
                         "campaign_id": meta_campaign_id,
-                        "daily_budget": str(adset.daily_budget),
                         "billing_event": "IMPRESSIONS",
-                        "optimization_goal": {
-                            "SALES": "OFFSITE_CONVERSIONS",
-                            "LEADS": "LEAD_GENERATION",
-                            "ENGAGEMENT": "POST_ENGAGEMENT",
-                        }.get(campaign.objective, "LINK_CLICKS"),
+                        "optimization_goal": optimization_goal,
                         "status": "PAUSED",
                         "targeting": json.dumps(adset.targeting) if adset.targeting else "{}",
                     }
+                    # Budget: daily vs lifetime
+                    if is_lifetime and campaign.lifetime_budget:
+                        adset_data["lifetime_budget"] = str(campaign.lifetime_budget)
+                        # Lifetime budget requires end_time
+                        if campaign.schedule_end_time:
+                            adset_data["end_time"] = campaign.schedule_end_time.isoformat()
+                        if campaign.schedule_start_time:
+                            adset_data["start_time"] = campaign.schedule_start_time.isoformat()
+                    else:
+                        adset_data["daily_budget"] = str(adset.daily_budget)
+
                     resp = await client.post(
                         f"{GRAPH_BASE}/{account.account_id}/adsets",
                         params=auth,
@@ -448,9 +478,18 @@ async def _run_publish(campaign_id: str) -> dict:
             await db.commit()
             return {"status": "published", "meta_campaign_id": meta_campaign_id}
 
-        except Exception:
+        except Exception as e:
+            # Extract Meta API error message if available
+            error_msg = str(e)
+            if hasattr(e, "response"):
+                try:
+                    body = e.response.json()
+                    meta_err = body.get("error", {})
+                    error_msg = meta_err.get("error_user_msg") or meta_err.get("message") or error_msg
+                except Exception:
+                    pass
             campaign.status = "failed"
-            campaign.generation_progress = {"stage": "error", "pct": 0, "error": "Publishing failed — see logs."}
+            campaign.generation_progress = {"stage": "error", "pct": 0, "error": f"Publishing failed: {error_msg}"}
             await db.commit()
             raise
 
