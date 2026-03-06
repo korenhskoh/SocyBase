@@ -554,25 +554,27 @@ class MetaAPIService:
         Returns:
             dict with lookalike audience ID
         """
+        # Try simplest format: origin as plain string ID
         lookalike_spec_data = {
-            "origin": {
-                "id": source_audience_id,
-                "type": "custom_audience"
-            },
+            "origin": source_audience_id,
             "ratio": ratio,
             "country": country,
         }
-        logger.info(f"Creating LLA with spec: {lookalike_spec_data}")
+        logger.warning(f"Creating LLA with spec: {lookalike_spec_data}")
+        logger.warning(f"JSON payload: {json.dumps(lookalike_spec_data)}")
 
         async with httpx.AsyncClient(timeout=30) as client:
+            payload = {
+                "name": name,
+                "subtype": "LOOKALIKE",
+                "lookalike_spec": json.dumps(lookalike_spec_data),
+            }
+            logger.warning(f"Full request payload: {payload}")
+
             resp = await client.post(
                 f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
                 params=self._auth_params(access_token),
-                data={
-                    "name": name,
-                    "subtype": "LOOKALIKE",
-                    "lookalike_spec": json.dumps(lookalike_spec_data),
-                },
+                data=payload,
             )
             try:
                 resp.raise_for_status()
