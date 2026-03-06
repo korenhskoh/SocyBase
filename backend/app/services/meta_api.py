@@ -665,18 +665,25 @@ class MetaAPIService:
             limit: Maximum number of audiences to fetch (default: 100)
 
         Returns:
-            List of audience dicts with id, name, approximate_count, etc.
+            List of audience dicts with id, name, subtype, etc.
         """
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
                 params={
                     **self._auth_params(access_token),
-                    "fields": "id,name,approximate_count,subtype,time_created,time_updated",
+                    "fields": "id,name,subtype,description",
                     "limit": limit,
                 },
             )
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError:
+                logger.warning(
+                    "list_custom_audiences failed: status=%s body=%s",
+                    resp.status_code, resp.text[:500],
+                )
+                return []
             data = resp.json()
             return data.get("data", [])
 
