@@ -556,7 +556,7 @@ class MetaAPIService:
         """
         lookalike_spec_data = {
             "origin": [{"id": source_audience_id}],  # Must be a list of {id} objects
-            "type": "country",  # Required: must be "country" for country-based LLA
+            "type": "similarity",  # "similarity" (top X% match) or "reach" (widest reach)
             "country": country,  # ISO country code (e.g., MY, US)
             "ratio": ratio,  # Percentage of population (e.g., 0.01 for 1%)
         }
