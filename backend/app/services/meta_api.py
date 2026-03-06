@@ -831,7 +831,8 @@ class MetaAPIService:
                 "buying_type": "AUCTION",
                 "is_adset_budget_sharing_enabled": "false",
             }
-            if page_id:
+            # Only OUTCOME_ENGAGEMENT and OUTCOME_LEADS accept promoted_object at campaign level
+            if page_id and campaign_objective in ("OUTCOME_ENGAGEMENT", "OUTCOME_LEADS"):
                 campaign_data["promoted_object"] = json.dumps({"page_id": page_id})
 
             resp = await client.post(
@@ -851,8 +852,8 @@ class MetaAPIService:
                 "status": "PAUSED",
                 "targeting": json.dumps(targeting),
             }
-            # promoted_object at ad set level (required for ENGAGEMENT/LEADS)
-            if page_id:
+            # promoted_object at ad set level (only for ENGAGEMENT/LEADS)
+            if page_id and campaign_objective in ("OUTCOME_ENGAGEMENT", "OUTCOME_LEADS"):
                 adset_data["promoted_object"] = json.dumps({"page_id": page_id})
             if lifetime_budget:
                 adset_data["lifetime_budget"] = str(lifetime_budget)
