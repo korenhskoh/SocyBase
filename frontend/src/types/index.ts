@@ -513,11 +513,18 @@ export interface AICampaignItem {
   name: string;
   objective: string;
   daily_budget: number;
+  lifetime_budget: number | null;
+  budget_type: string;
   landing_page_url: string | null;
   conversion_event: string | null;
   audience_strategy: string;
   creative_strategy: string;
   custom_instructions: string | null;
+  boosted_post_id: string | null;
+  boost_goal: string | null;
+  audience_type: string | null;
+  schedule_start_time: string | null;
+  schedule_end_time: string | null;
   ai_summary: {
     strategy?: string;
     num_adsets?: number;
@@ -528,6 +535,18 @@ export interface AICampaignItem {
     creative_strategy?: string;
     historical_winners_used?: number;
     business_name?: string;
+    boost_config?: {
+      post_id?: string;
+      goal?: string;
+      goal_code?: string;
+      audience?: string;
+      audience_code?: string;
+      budget?: string;
+      budget_type?: string;
+      schedule_start?: string;
+      schedule_end?: string;
+      custom_audience_id?: string;
+    };
   } | null;
   generation_progress: { stage: string; pct: number; error?: string } | null;
   credits_used: number;

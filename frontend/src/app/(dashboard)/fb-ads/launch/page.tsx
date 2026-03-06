@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { fbAdsApi } from "@/lib/api-client";
-import type { AICampaignItem, AICampaignAdSet, AICampaignAd, FBConnectionStatus, FBPageItem, FBPixelItem } from "@/types";
+import type { AICampaignItem, AICampaignAd, FBConnectionStatus, FBPageItem, FBPixelItem } from "@/types";
 
 type View = "config" | "generating" | "review" | "history";
 type ReviewStep = "summary" | "campaign" | "adsets" | "ads" | "publish";
@@ -30,11 +30,55 @@ const STAGE_DESCRIPTIONS: Record<string, string> = {
   complete: "Your campaign is ready for review",
 };
 
-const CTA_OPTIONS = ["LEARN_MORE", "SIGN_UP", "SHOP_NOW", "GET_OFFER", "CONTACT_US"];
+const CTA_BY_OBJECTIVE: Record<string, string[]> = {
+  LEADS: ["LEARN_MORE", "SIGN_UP", "SUBSCRIBE", "CONTACT_US"],
+  SALES: ["SHOP_NOW", "BUY_NOW", "GET_OFFER", "LEARN_MORE"],
+  ENGAGEMENT: ["LEARN_MORE", "SEND_MESSAGE", "CONTACT_US"],
+  POST_ENGAGEMENT: ["LEARN_MORE", "SHOP_NOW", "SEND_MESSAGE"],
+};
+const CTA_OPTIONS = ["LEARN_MORE", "SIGN_UP", "SHOP_NOW", "GET_OFFER", "CONTACT_US", "BUY_NOW", "SUBSCRIBE", "SEND_MESSAGE"];
+
+const BOOST_GOAL_LABELS: Record<string, string> = {
+  GET_MORE_MESSAGES: "Get more messages",
+  GET_MORE_VIDEO_VIEWS: "Get more video views",
+  GET_MORE_ENGAGEMENT: "Get more engagement",
+  GET_MORE_LEADS: "Get more leads",
+  GET_MORE_CALLS: "Get more calls",
+  GET_MORE_LINK_CLICKS: "Get more link clicks",
+  GET_MORE_WEBSITE_VISITORS: "Get more website visitors",
+};
+const AUDIENCE_TYPE_LABELS: Record<string, string> = {
+  ADVANTAGE_PLUS: "Advantage+ (Meta AI optimized)",
+  TARGETING: "Manual targeting",
+  PAGE_FANS: "People who like your Page",
+  PAGE_FANS_SIMILAR: "Similar to Page fans",
+  LOCAL_AREA: "People near your business",
+  CUSTOM_AUDIENCE: "Custom audience",
+};
+
+function formatBudget(campaign: AICampaignItem): string {
+  if (campaign.budget_type === "LIFETIME" && campaign.lifetime_budget) {
+    return `RM ${(campaign.lifetime_budget / 100).toFixed(2)} lifetime`;
+  }
+  return `RM ${((campaign.daily_budget || 0) / 100).toFixed(2)}/day`;
+}
 
 function formatTargeting(targeting: Record<string, unknown>): React.ReactNode {
   if (!targeting || Object.keys(targeting).length === 0) {
     return <span className="text-white/30 italic">No targeting specified</span>;
+  }
+
+  // Boost campaigns store audience_type in targeting
+  if (targeting.audience_type) {
+    return (
+      <div className="flex items-center gap-2">
+        <svg className="h-3.5 w-3.5 text-white/20 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197" />
+        </svg>
+        <span className="text-white/40 w-16 shrink-0 text-xs">Audience</span>
+        <span className="text-white/70 text-sm">{AUDIENCE_TYPE_LABELS[targeting.audience_type as string] || String(targeting.audience_type)}</span>
+      </div>
+    );
   }
   const items: React.ReactNode[] = [];
 
@@ -164,6 +208,7 @@ export default function FBAILaunchPage() {
   // Form state
   const [name, setName] = useState("");
   const [objective, setObjective] = useState("LEADS");
+  const [budgetType, setBudgetType] = useState<"DAILY" | "LIFETIME">("DAILY");
   const [dailyBudget, setDailyBudget] = useState("50"); // Default RM 50/day
   const [pageId, setPageId] = useState("");
   const [pixelId, setPixelId] = useState("");
@@ -260,12 +305,18 @@ export default function FBAILaunchPage() {
       alert("Please select a custom audience for your boost");
       return;
     }
+    if (budgetType === "LIFETIME" && !scheduleEnd) {
+      alert("Lifetime budget requires an end date. Please set a schedule end date.");
+      return;
+    }
     setCreating(true);
+    const budgetCents = Math.round(parseFloat(dailyBudget) * 100);
     try {
       const res = await fbAdsApi.createAICampaign({
         name,
         objective,
-        daily_budget: Math.round(parseFloat(dailyBudget) * 100),
+        daily_budget: budgetType === "DAILY" ? budgetCents : 0,
+        ...(budgetType === "LIFETIME" ? { lifetime_budget: budgetCents, budget_type: "LIFETIME" } : { budget_type: "DAILY" }),
         page_id: pageId || null,
         pixel_id: pixelId || null,
         conversion_event: conversionEvent,
@@ -676,7 +727,7 @@ export default function FBAILaunchPage() {
                   </span>
                   <span className="text-xs text-white/30">{activeCampaign.objective}</span>
                   <span className="text-white/10">&middot;</span>
-                  <span className="text-xs text-white/30">{formatCents(activeCampaign.daily_budget)}/day</span>
+                  <span className="text-xs text-white/30">{formatBudget(activeCampaign)}</span>
                   <span className="text-white/10">&middot;</span>
                   <span className="text-xs text-white/30">{activeCampaign.adsets.length} ad sets, {totalAds} ads</span>
                 </div>
@@ -733,6 +784,7 @@ export default function FBAILaunchPage() {
           {/* Step Content */}
           {reviewStep === "summary" && (
             <div className="space-y-4">
+              {/* AI Strategy */}
               {activeCampaign.ai_summary && (
                 <div className="glass-card p-6 space-y-5">
                   <div className="flex items-start gap-3">
@@ -747,20 +799,6 @@ export default function FBAILaunchPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {[
-                      { label: "Ad Sets", value: String(activeCampaign.ai_summary.num_adsets || activeCampaign.adsets.length), icon: "M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6a1.125 1.125 0 01-1.125-1.125v-3.75z", color: "text-blue-400" },
-                      { label: "Total Ads", value: String(activeCampaign.ai_summary.num_ads || totalAds), icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227", color: "text-purple-400" },
-                      { label: "Daily Budget", value: formatCents(activeCampaign.daily_budget), icon: "M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0", color: "text-emerald-400" },
-                      { label: "Credits Used", value: String(activeCampaign.credits_used), icon: "M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12", color: "text-amber-400" },
-                    ].map(stat => (
-                      <div key={stat.label} className="bg-white/[0.03] rounded-xl p-3.5 border border-white/5">
-                        <p className="text-[10px] text-white/30 uppercase tracking-wider">{stat.label}</p>
-                        <p className={`text-lg font-bold mt-1 ${stat.color}`}>{stat.value}</p>
-                      </div>
-                    ))}
-                  </div>
-
                   {activeCampaign.ai_summary.historical_winners_used != null && activeCampaign.ai_summary.historical_winners_used > 0 && (
                     <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-500/5 border border-amber-500/10">
                       <svg className="h-4 w-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -769,6 +807,140 @@ export default function FBAILaunchPage() {
                       <p className="text-xs text-amber-400/80">Based on {activeCampaign.ai_summary.historical_winners_used} proven winning ads from your account</p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Boost Configuration Card (POST_ENGAGEMENT) */}
+              {activeCampaign.objective === "POST_ENGAGEMENT" && activeCampaign.ai_summary?.boost_config ? (
+                <div className="glass-card p-6 space-y-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-lg bg-purple-500/15 border border-purple-500/20 flex items-center justify-center">
+                      <svg className="h-4 w-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-white font-semibold text-sm">Boost Configuration</h3>
+                  </div>
+
+                  <div className="bg-white/[0.02] rounded-xl p-4 border border-white/5 space-y-3">
+                    {[
+                      { label: "Post ID", value: activeCampaign.ai_summary.boost_config.post_id || activeCampaign.boosted_post_id || "—", icon: "M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" },
+                      { label: "Goal", value: activeCampaign.ai_summary.boost_config.goal || BOOST_GOAL_LABELS[activeCampaign.boost_goal || ""] || "—", icon: "M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" },
+                      { label: "Audience", value: activeCampaign.ai_summary.boost_config.audience || AUDIENCE_TYPE_LABELS[activeCampaign.audience_type || ""] || "—", icon: "M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197" },
+                      { label: "Budget", value: activeCampaign.ai_summary.boost_config.budget || formatBudget(activeCampaign), icon: "M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
+                      { label: "Schedule", value: activeCampaign.ai_summary.boost_config.schedule_start ? `${new Date(activeCampaign.ai_summary.boost_config.schedule_start).toLocaleDateString()} — ${activeCampaign.ai_summary.boost_config.schedule_end ? new Date(activeCampaign.ai_summary.boost_config.schedule_end).toLocaleDateString() : "Ongoing"}` : "Starts immediately", icon: "M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" },
+                    ].map(row => (
+                      <div key={row.label} className="flex items-center gap-3">
+                        <svg className="h-4 w-4 text-white/20 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d={row.icon} />
+                        </svg>
+                        <span className="text-xs text-white/40 w-20 shrink-0">{row.label}</span>
+                        <span className="text-sm text-white/70">{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/5 border border-blue-500/10">
+                    <svg className="h-3.5 w-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                    </svg>
+                    <p className="text-xs text-blue-400/70">{activeCampaign.credits_used} credits used</p>
+                  </div>
+                </div>
+              ) : (
+                /* Campaign Tree View (regular campaigns) */
+                <div className="glass-card p-6 space-y-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-lg bg-blue-500/15 border border-blue-500/20 flex items-center justify-center">
+                      <svg className="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-white font-semibold text-sm">Campaign Structure</h3>
+                  </div>
+
+                  {/* Campaign root */}
+                  <div className="bg-white/[0.02] rounded-xl border border-white/5 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" />
+                        </svg>
+                        <span className="text-sm text-white font-medium">{activeCampaign.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-white/40">
+                        <span>{activeCampaign.objective}</span>
+                        <span className="text-white/10">|</span>
+                        <span>{formatBudget(activeCampaign)}</span>
+                        <span className="text-white/10">|</span>
+                        <span className="text-amber-400">PAUSED</span>
+                      </div>
+                    </div>
+
+                    {/* Ad sets tree */}
+                    <div className="divide-y divide-white/[0.03]">
+                      {activeCampaign.adsets.map((adset, i) => {
+                        const isLast = i === activeCampaign.adsets.length - 1;
+                        const targeting = adset.targeting || {};
+                        const ageMin = targeting.age_min as number | undefined;
+                        const ageMax = targeting.age_max as number | undefined;
+                        const geo = targeting.geo_locations as Record<string, unknown> | undefined;
+                        const countries = geo && Array.isArray(geo.countries) ? (geo.countries as string[]).join(", ") : "";
+                        const flex = targeting.flexible_spec as Record<string, unknown>[] | undefined;
+                        const interests: string[] = [];
+                        if (flex && Array.isArray(flex)) {
+                          for (const spec of flex) {
+                            const ints = spec.interests as { name: string }[] | undefined;
+                            if (ints) interests.push(...ints.map(x => x.name));
+                          }
+                        }
+                        const targetingSummary = [
+                          ageMin ? `Age ${ageMin}-${ageMax || 65}+` : null,
+                          countries || null,
+                          interests.length > 0 ? `Interests: ${interests.slice(0, 3).join(", ")}${interests.length > 3 ? "..." : ""}` : null,
+                        ].filter(Boolean).join(" · ") || "Broad targeting";
+
+                        return (
+                          <div key={adset.id} className="pl-6">
+                            {/* Ad set row */}
+                            <div className="flex items-start gap-2 px-4 py-3 relative">
+                              <div className="absolute left-0 top-0 bottom-0 w-6 flex items-start justify-center pt-4">
+                                <div className={`w-3 border-t border-l border-white/10 h-4 rounded-tl ${isLast ? "" : "border-b-0"}`} style={{ marginTop: "-4px" }} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-blue-400 bg-blue-500/10 rounded px-1.5 py-0.5">{i + 1}</span>
+                                  <span className="text-sm text-white/80 font-medium truncate">{adset.name}</span>
+                                  <span className="text-xs text-white/30 shrink-0">{formatCents(adset.daily_budget)}/day</span>
+                                </div>
+                                <p className="text-xs text-white/30 mt-1 ml-7">{targetingSummary}</p>
+                                {/* Ads under this adset */}
+                                <div className="ml-7 mt-2 space-y-1">
+                                  {adset.ads.map((ad) => (
+                                    <div key={ad.id} className="flex items-center gap-2 text-xs">
+                                      <span className="text-white/15">└</span>
+                                      <svg className="h-3 w-3 text-white/20 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+                                      </svg>
+                                      <span className="text-white/50 truncate">{ad.headline}</span>
+                                      <span className="text-white/20 px-1.5 py-0.5 rounded bg-white/5 text-[10px] shrink-0">{ad.cta_type.replace(/_/g, " ")}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/5 border border-blue-500/10">
+                    <svg className="h-3.5 w-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                    </svg>
+                    <p className="text-xs text-blue-400/70">{activeCampaign.credits_used} credits used · {activeCampaign.adsets.length} ad set{activeCampaign.adsets.length !== 1 ? "s" : ""} · {totalAds} ad{totalAds !== 1 ? "s" : ""}</p>
+                  </div>
                 </div>
               )}
 
@@ -792,7 +964,7 @@ export default function FBAILaunchPage() {
                     {[
                       { label: "Campaign Name", value: activeCampaign.name },
                       { label: "Objective", value: activeCampaign.objective },
-                      { label: "Daily Budget", value: formatCents(activeCampaign.daily_budget) },
+                      { label: "Budget", value: formatBudget(activeCampaign) },
                     ].map(item => (
                       <div key={item.label}>
                         <span className="text-white/30 block text-xs mb-0.5">{item.label}</span>
@@ -879,6 +1051,7 @@ export default function FBAILaunchPage() {
                       saving={saving}
                       canEdit={activeCampaign.status === "ready"}
                       regenerating={regeneratingAdId === ad.id}
+                      ctaOptions={CTA_BY_OBJECTIVE[activeCampaign.objective] || CTA_OPTIONS}
                       onEdit={() => setEditingAdId(editingAdId === ad.id ? null : ad.id)}
                       onSave={handleSaveEdit}
                       onRegenerate={handleRegenerateAd}
@@ -918,7 +1091,7 @@ export default function FBAILaunchPage() {
                   {[
                     { label: "Campaign", value: activeCampaign.name },
                     { label: "Objective", value: activeCampaign.objective },
-                    { label: "Daily Budget", value: formatCents(activeCampaign.daily_budget) },
+                    { label: "Budget", value: formatBudget(activeCampaign) },
                     { label: "Ad Sets", value: String(activeCampaign.adsets.length) },
                     { label: "Total Ads", value: String(totalAds) },
                   ].map(row => (
@@ -1043,7 +1216,7 @@ export default function FBAILaunchPage() {
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-xs text-white/30">{c.objective}</span>
                       <span className="text-white/10">&middot;</span>
-                      <span className="text-xs text-white/30">{formatCents(c.daily_budget)}/day</span>
+                      <span className="text-xs text-white/30">{formatBudget(c)}</span>
                       <span className="text-white/10">&middot;</span>
                       <span className="text-xs text-white/30">{new Date(c.created_at).toLocaleDateString()}</span>
                     </div>
@@ -1126,7 +1299,22 @@ export default function FBAILaunchPage() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-white/40 block mb-1.5">Max Daily Budget (RM)</label>
+                    <label className="text-xs text-white/40 block mb-1.5">Budget</label>
+                    <div className="flex gap-2 mb-2">
+                      {(["DAILY", "LIFETIME"] as const).map(bt => (
+                        <button
+                          key={bt}
+                          onClick={() => setBudgetType(bt)}
+                          className={`text-xs px-3 py-1.5 rounded-lg border transition font-medium ${
+                            budgetType === bt
+                              ? "bg-blue-500/15 border-blue-500/30 text-blue-400"
+                              : "bg-white/[0.02] border-white/[0.06] text-white/40 hover:text-white/60"
+                          }`}
+                        >
+                          {bt === "DAILY" ? "Daily" : "Lifetime"}
+                        </button>
+                      ))}
+                    </div>
                     <input
                       type="number"
                       value={dailyBudget}
@@ -1135,6 +1323,9 @@ export default function FBAILaunchPage() {
                       step="5"
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition"
                     />
+                    <p className="text-[10px] text-white/25 mt-1">
+                      {budgetType === "DAILY" ? "Maximum daily spend across all ad sets" : "Total budget for the campaign duration (requires end date)"}
+                    </p>
                   </div>
                 </div>
 
@@ -1339,6 +1530,43 @@ export default function FBAILaunchPage() {
                         </div>
                       )}
                     </div>
+                  </div>
+                )}
+
+                {/* Schedule for Lifetime Budget (non-boost objectives) */}
+                {budgetType === "LIFETIME" && objective !== "POST_ENGAGEMENT" && (
+                  <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-4 space-y-3">
+                    <p className="text-xs text-blue-400/80 font-medium">Lifetime Budget Schedule</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1.5">Start Date & Time</label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleStart}
+                          onChange={e => setScheduleStart(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition"
+                        />
+                        <p className="text-xs text-white/25 mt-1">{scheduleStart ? "GMT+8 (Malaysia)" : "Leave empty to start immediately"}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1.5">End Date & Time *</label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleEnd}
+                          onChange={e => setScheduleEnd(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 transition"
+                        />
+                        <p className="text-xs text-white/25 mt-1">Required for lifetime budget</p>
+                      </div>
+                    </div>
+                    {scheduleStart && scheduleEnd && (
+                      <p className="text-xs text-blue-400/80 flex items-center gap-1.5">
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Duration: {Math.ceil((new Date(scheduleEnd).getTime() - new Date(scheduleStart).getTime()) / (1000 * 60 * 60 * 24))} days
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -1564,13 +1792,14 @@ export default function FBAILaunchPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
                     { label: "Campaign Name", value: name || "Not set", highlight: !name },
-                    { label: "Daily Budget", value: `RM ${dailyBudget}`, highlight: false },
+                    { label: "Budget", value: budgetType === "LIFETIME" ? `RM ${dailyBudget} lifetime` : `RM ${dailyBudget}/day`, highlight: false },
                     { label: "Objective", value: objective, highlight: false },
                     { label: "Conversion Event", value: conversionEvent, highlight: false },
                     { label: "Audience Strategy", value: audienceStrategy === "conservative" ? "Conservative" : "Experimental", highlight: false },
                     { label: "Creative Strategy", value: creativeStrategy === "proven_winners" ? "Proven Winners" : "All New", highlight: false },
                     { label: "Historical Range", value: `Last ${historicalRange} days`, highlight: false },
                     { label: "Landing Page", value: landingPage || "Not set", highlight: false },
+                    ...(scheduleEnd ? [{ label: "Schedule", value: `${scheduleStart ? new Date(scheduleStart).toLocaleDateString() : "Now"} — ${new Date(scheduleEnd).toLocaleDateString()}`, highlight: false }] : []),
                   ].map(item => (
                     <div key={item.label} className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
                       <span className="text-xs text-white/40">{item.label}</span>
@@ -1604,6 +1833,13 @@ export default function FBAILaunchPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                <svg className="h-4 w-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <p className="text-xs text-amber-400/80">Campaigns are created in <span className="font-semibold">PAUSED</span> state in Meta Ads Manager. You can review and activate them there.</p>
               </div>
 
               <div className="flex items-center justify-between">
@@ -1645,6 +1881,7 @@ function AdCard({
   saving,
   canEdit,
   regenerating,
+  ctaOptions,
   onEdit,
   onSave,
   onRegenerate,
@@ -1654,6 +1891,7 @@ function AdCard({
   saving: boolean;
   canEdit: boolean;
   regenerating: boolean;
+  ctaOptions?: string[];
   onEdit: () => void;
   onSave: (adId: string, changes: Record<string, string>) => void;
   onRegenerate: (adId: string) => void;
@@ -1765,7 +2003,7 @@ function AdCard({
           <div>
             <label className="text-[10px] text-white/30 block mb-0.5">CTA</label>
             <select value={ctaType} onChange={e => setCtaType(e.target.value)} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
-              {CTA_OPTIONS.map(c => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
+              {(ctaOptions || CTA_OPTIONS).map(c => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
             </select>
           </div>
           <div className="flex gap-2 justify-end pt-1">
@@ -1779,28 +2017,60 @@ function AdCard({
         </div>
       ) : (
         <div className="flex flex-col md:flex-row">
-          {/* Ad copy */}
+          {/* Ad copy (raw fields) */}
           <div className="flex-1 px-5 pb-4 space-y-2">
             <p className="text-white font-semibold text-sm">{ad.headline}</p>
             <p className="text-white/50 text-sm leading-relaxed">{ad.primary_text}</p>
             {ad.description && <p className="text-white/30 text-xs">{ad.description}</p>}
           </div>
           {/* Facebook ad preview mockup */}
-          <div className="md:w-56 shrink-0 p-3">
-            <div className="border border-white/5 rounded-xl overflow-hidden bg-white/[0.02]">
-              <div className="h-20 bg-gradient-to-br from-blue-500/10 to-purple-500/10 flex items-center justify-center">
-                <svg className="h-6 w-6 text-white/10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+          <div className="md:w-64 shrink-0 p-3">
+            <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-[#242526]">
+              {/* Page header: Avatar + Name + Sponsored */}
+              <div className="flex items-center gap-2 px-3 pt-3 pb-2">
+                <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500/40 to-blue-600/40 flex items-center justify-center">
+                  <svg className="h-4 w-4 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-[11px] text-white/80 font-semibold leading-tight">Your Page</p>
+                  <p className="text-[9px] text-white/30 leading-tight">Sponsored · <svg className="inline h-2.5 w-2.5 -mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582" /></svg></p>
+                </div>
+              </div>
+              {/* Primary text above image */}
+              <div className="px-3 pb-2">
+                <p className="text-[10px] text-white/60 line-clamp-2 leading-relaxed">{ad.primary_text}</p>
+              </div>
+              {/* Image placeholder */}
+              <div className="h-32 bg-gradient-to-br from-blue-500/8 to-purple-500/8 flex items-center justify-center border-y border-white/[0.04]">
+                <svg className="h-8 w-8 text-white/[0.06]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.41a2.25 2.25 0 013.182 0l2.909 2.91M3.75 21h16.5" />
                 </svg>
               </div>
-              <div className="p-3 space-y-1.5">
-                <p className="text-[10px] text-white/70 font-semibold truncate">{ad.headline}</p>
-                <p className="text-[9px] text-white/40 line-clamp-2 leading-relaxed">{ad.primary_text}</p>
-                <div className="pt-1">
-                  <span className="text-[8px] px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-medium">
-                    {(ad.cta_type || "LEARN_MORE").replace(/_/g, " ")}
+              {/* Headline + Domain + CTA */}
+              <div className="px-3 py-2.5 space-y-1.5 bg-[#303133]">
+                {ad.destination_url && (
+                  <p className="text-[9px] text-white/25 uppercase tracking-wider truncate">
+                    {(() => { try { return new URL(ad.destination_url).hostname.replace("www.", ""); } catch { return ""; } })()}
+                  </p>
+                )}
+                <p className="text-[11px] text-white/80 font-semibold truncate leading-tight">{ad.headline}</p>
+                {ad.description && <p className="text-[9px] text-white/30 truncate">{ad.description}</p>}
+                <button className="w-full mt-1 text-[10px] font-semibold px-3 py-1.5 rounded bg-[#4A90D9]/90 text-white/90 text-center">
+                  {(ad.cta_type || "LEARN_MORE").replace(/_/g, " ")}
+                </button>
+              </div>
+              {/* Like / Comment / Share bar */}
+              <div className="px-3 py-2 flex items-center justify-between border-t border-white/[0.04]">
+                {["Like", "Comment", "Share"].map(action => (
+                  <span key={action} className="text-[9px] text-white/25 flex items-center gap-1">
+                    {action === "Like" && <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6.633 10.5c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75A2.25 2.25 0 0116.5 4.5c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904" /></svg>}
+                    {action === "Comment" && <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 01-.923 1.785A5.969 5.969 0 006 21c1.282 0 2.47-.402 3.445-1.087.81.22 1.668.337 2.555.337z" /></svg>}
+                    {action === "Share" && <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" /></svg>}
+                    {action}
                   </span>
-                </div>
+                ))}
               </div>
             </div>
           </div>

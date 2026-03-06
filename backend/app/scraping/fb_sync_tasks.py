@@ -387,7 +387,11 @@ async def _run_publish(campaign_id: str) -> dict:
                         "campaign_id": meta_campaign_id,
                         "daily_budget": str(adset.daily_budget),
                         "billing_event": "IMPRESSIONS",
-                        "optimization_goal": "OFFSITE_CONVERSIONS" if campaign.objective == "SALES" else "LEAD_GENERATION",
+                        "optimization_goal": {
+                            "SALES": "OFFSITE_CONVERSIONS",
+                            "LEADS": "LEAD_GENERATION",
+                            "ENGAGEMENT": "POST_ENGAGEMENT",
+                        }.get(campaign.objective, "LINK_CLICKS"),
                         "status": "PAUSED",
                         "targeting": json.dumps(adset.targeting) if adset.targeting else "{}",
                     }

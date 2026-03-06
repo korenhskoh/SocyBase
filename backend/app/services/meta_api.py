@@ -24,6 +24,7 @@ REQUIRED_SCOPES = [
     "business_management",
     "pages_read_engagement",
     "pages_show_list",
+    "pages_read_user_content",  # Required to read page posts (user must have page role)
 ]
 
 
@@ -624,6 +625,35 @@ class MetaAPIService:
                 raise Exception(f"Meta API error: {error_detail}") from e
             data = resp.json()
             return data.get("data", [])
+
+    async def search_interests(
+        self, access_token: str, query: str, limit: int = 25
+    ) -> list[dict]:
+        """Search for valid Meta interest targeting options.
+
+        Calls the Meta Marketing API ``targetingsearch`` endpoint to return
+        real interest IDs that can be used in ``flexible_spec``.
+
+        Returns:
+            List of dicts with ``id`` (str) and ``name`` (str).
+        """
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{GRAPH_BASE}/search",
+                params={
+                    **self._auth_params(access_token),
+                    "type": "adinterest",
+                    "q": query,
+                    "limit": limit,
+                },
+            )
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError:
+                logger.warning("Interest search failed for query=%s: %s", query, resp.text)
+                return []
+            data = resp.json().get("data", [])
+            return [{"id": str(item["id"]), "name": item["name"]} for item in data if item.get("id")]
 
     async def list_custom_audiences(
         self, access_token: str, ad_account_id: str, limit: int = 100

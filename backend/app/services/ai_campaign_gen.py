@@ -37,7 +37,7 @@ def _parse_json_response(content: str, fallback):
         return fallback
 
 
-async def generate_campaign(db: AsyncSession, campaign_id: str) -> dict:
+async def generate_campaign(db: AsyncSession, campaign_id: str, *, access_token: str | None = None) -> dict:
     """Multi-stage AI campaign generation pipeline.
 
     Stages:
@@ -96,7 +96,7 @@ async def generate_campaign(db: AsyncSession, campaign_id: str) -> dict:
         campaign.generation_progress = {"stage": "targeting", "pct": 45}
         await db.flush()
 
-        adsets_data = await _generate_targeting(client, campaign, structure, historical, business)
+        adsets_data = await _generate_targeting(client, campaign, structure, historical, business, access_token=access_token)
 
         # Stage 4: Creative
         campaign.generation_progress = {"stage": "creative", "pct": 65}
@@ -287,6 +287,18 @@ Only return valid JSON, no markdown."""},
         "audience_type": campaign.audience_type,
         "boost_goal": campaign.boost_goal,
         "business_name": business.get("business_name", ""),
+        "boost_config": {
+            "post_id": campaign.boosted_post_id,
+            "goal": goal_desc,
+            "goal_code": campaign.boost_goal,
+            "audience": audience_desc,
+            "audience_code": campaign.audience_type,
+            "budget": budget_str,
+            "budget_type": budget_type,
+            "schedule_start": campaign.schedule_start_time.isoformat() if campaign.schedule_start_time else None,
+            "schedule_end": campaign.schedule_end_time.isoformat() if campaign.schedule_end_time else None,
+            "custom_audience_id": campaign.custom_audience_id,
+        },
     }
     campaign.credits_used = 20
     await db.commit()
@@ -436,13 +448,22 @@ Only return valid JSON, no markdown."""},
 
 
 async def _generate_targeting(
-    client: AsyncOpenAI, campaign: AICampaign, structure: dict, historical: dict, business: dict,
+    client: AsyncOpenAI, campaign: AICampaign, structure: dict,
+    historical: dict, business: dict, *, access_token: str | None = None,
 ) -> list[dict]:
-    """Generate targeting for each ad set."""
+    """Generate targeting for each ad set using validated Meta interest IDs.
+
+    Two-step process:
+    1. AI suggests demographics + interest *keywords* (not IDs).
+    2. Each keyword is looked up via Meta's ``targetingsearch`` API to get
+       real IDs.  Only validated interests make it into ``flexible_spec``.
+    """
+    from app.services.meta_api import MetaAPIService
+
     num_adsets = structure.get("num_adsets", 2)
     budget_split = structure.get("budget_split", [50, 50])
     adset_descriptions = structure.get("adset_descriptions", [])
-    total_budget = campaign.daily_budget
+    total_budget = campaign.daily_budget or campaign.lifetime_budget or 0
 
     winner_targeting = [w.get("targeting", {}) for w in historical.get("winning_ads", []) if w.get("targeting")]
 
@@ -451,17 +472,17 @@ async def _generate_targeting(
         desc = adset_descriptions[i] if i < len(adset_descriptions) else f"Ad Set {i+1}"
         adset_context += f"\n- Ad Set {i+1}: {desc}"
 
+    # Step 1: AI generates demographics + interest keywords (NOT IDs)
     response = await client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": (
                 "You are an expert Facebook Ads targeting specialist. "
-                "Generate targeting configurations that are valid for the Facebook Marketing API. "
-                "Use proper Facebook targeting format: geo_locations with countries/cities, "
-                "age_min/age_max (18-65), genders (1=Male, 2=Female, 0=All), "
-                "and flexible_spec for interest targeting with {interests: [{id, name}]}. "
+                "Generate targeting configurations with demographics and interest KEYWORDS. "
+                "Do NOT invent interest IDs — only provide keyword strings. "
+                "We will look up real Meta interest IDs from their API. "
                 "IMPORTANT: If the user provides custom instructions, those are your HIGHEST PRIORITY. "
-                "The targeting MUST reflect what the user asked for. Do NOT default to generic business-based interests."
+                "The targeting MUST reflect what the user asked for."
             )},
             {"role": "user", "content": f"""Generate {num_adsets} ad set targeting configurations.
 
@@ -475,9 +496,15 @@ Winning ad targeting patterns: {json.dumps(winner_targeting[:3]) if winner_targe
 
 Return a JSON array where each element has:
 - "name": descriptive ad set name (e.g., "Women 25-45 - Skincare Interest")
-- "targeting": object with Facebook API fields: age_min, age_max, genders, geo_locations, flexible_spec
+- "targeting": object with ONLY these fields:
+  - "age_min": integer (18-65)
+  - "age_max": integer (18-65)
+  - "genders": array of integers (1=Male, 2=Female, or [0] for All)
+  - "geo_locations": object with "countries" array (e.g., ["MY"])
+- "interest_keywords": array of 3-5 broad interest keyword strings for Meta API lookup
+  (e.g., ["skincare", "beauty products", "fashion accessories"])
 
-Only return valid JSON array, no markdown."""},
+Do NOT include flexible_spec or interest IDs. Only return valid JSON array, no markdown."""},
         ],
         temperature=0.5,
         max_tokens=2000,
@@ -485,19 +512,49 @@ Only return valid JSON array, no markdown."""},
 
     adsets = _parse_json_response(
         response.choices[0].message.content or "[]",
-        [{"name": f"Ad Set {i+1}", "targeting": {}} for i in range(num_adsets)],
+        [{"name": f"Ad Set {i+1}", "targeting": {}, "interest_keywords": []} for i in range(num_adsets)],
     )
 
-    # Ensure it's a list
     if not isinstance(adsets, list):
-        adsets = [{"name": f"Ad Set {i+1}", "targeting": {}} for i in range(num_adsets)]
+        adsets = [{"name": f"Ad Set {i+1}", "targeting": {}, "interest_keywords": []} for i in range(num_adsets)]
+
+    # Step 2: Validate interest keywords against Meta's targeting API
+    meta = MetaAPIService()
+    for adset in adsets:
+        keywords = adset.pop("interest_keywords", [])
+        if not isinstance(keywords, list):
+            keywords = []
+
+        validated_interests: list[dict] = []
+        if access_token and keywords:
+            seen_ids: set[str] = set()
+            for kw in keywords[:5]:  # cap at 5 keywords
+                try:
+                    results = await meta.search_interests(access_token, kw, limit=3)
+                    for r in results:
+                        if r["id"] not in seen_ids:
+                            validated_interests.append(r)
+                            seen_ids.add(r["id"])
+                except Exception:
+                    logger.warning("Interest search failed for keyword: %s", kw)
+
+        # Build targeting with validated interests
+        targeting = adset.get("targeting", {})
+        if not isinstance(targeting, dict):
+            targeting = {}
+        if validated_interests:
+            targeting["flexible_spec"] = [{"interests": validated_interests}]
+
+        # Ensure geo_locations defaults to MY if missing
+        if "geo_locations" not in targeting:
+            targeting["geo_locations"] = {"countries": ["MY"]}
+
+        adset["targeting"] = targeting
 
     # Assign budgets
     for i, adset in enumerate(adsets):
         pct = budget_split[i] if i < len(budget_split) else (100 // max(num_adsets, 1))
         adset["daily_budget"] = int(total_budget * pct / 100)
-        if "targeting" not in adset:
-            adset["targeting"] = {}
 
     return adsets
 

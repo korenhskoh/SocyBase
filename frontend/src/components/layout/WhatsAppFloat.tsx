@@ -1,25 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { creditsApi } from "@/lib/api-client";
+const WHATSAPP_NUMBER = "601123099692";
 
 export function WhatsAppFloat() {
-  const [number, setNumber] = useState<string | null>(null);
-
-  useEffect(() => {
-    creditsApi
-      .getWhatsappContact()
-      .then((r) => {
-        if (r.data.whatsapp_contact_number) {
-          setNumber(r.data.whatsapp_contact_number);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  if (!number) return null;
-
-  const waUrl = `https://wa.me/${number}`;
+  const waUrl = `https://wa.me/${WHATSAPP_NUMBER}`;
 
   return (
     <a

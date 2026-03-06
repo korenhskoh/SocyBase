@@ -261,6 +261,12 @@ class AICampaignResponse(BaseModel):
     published_at: str | None = None
     created_at: str
     adsets: list[AICampaignAdSetResponse] = []
+    # Boost-specific fields
+    boosted_post_id: str | None = None
+    boost_goal: str | None = None
+    audience_type: str | None = None
+    schedule_start_time: str | None = None
+    schedule_end_time: str | None = None
 
 
 class UpdateCampaignRequest(BaseModel):
@@ -1889,6 +1895,11 @@ def _build_campaign_response(campaign: AICampaign, adsets: list | None = None) -
         published_at=campaign.published_at.isoformat() if campaign.published_at else None,
         created_at=campaign.created_at.isoformat(),
         adsets=adsets or [],
+        boosted_post_id=campaign.boosted_post_id,
+        boost_goal=campaign.boost_goal,
+        audience_type=campaign.audience_type,
+        schedule_start_time=campaign.schedule_start_time.isoformat() if campaign.schedule_start_time else None,
+        schedule_end_time=campaign.schedule_end_time.isoformat() if campaign.schedule_end_time else None,
     )
 
 
@@ -2173,12 +2184,19 @@ async def trigger_generation(
     )
     await db.commit()
 
+    # Decrypt connection token for interest search during targeting generation
+    conn, _ = await _get_active_connection(db, user.tenant_id)
+    gen_token = None
+    if conn:
+        meta = MetaAPIService()
+        gen_token = meta.decrypt_token(conn.access_token_encrypted)
+
     # Run AI generation inline (Celery workers are not guaranteed to be running,
     # and .delay() can silently succeed even without workers, causing the campaign
     # to stay stuck in "generating" state forever).
     try:
         from app.services.ai_campaign_gen import generate_campaign
-        await generate_campaign(db, str(campaign.id))
+        await generate_campaign(db, str(campaign.id), access_token=gen_token)
         await db.refresh(campaign)
         adsets = await _load_campaign_adsets(db, campaign.id)
         return {"detail": "Generation complete.", "campaign": _build_campaign_response(campaign, adsets).model_dump()}

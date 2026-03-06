@@ -2,8 +2,6 @@
 
 import { useAuth } from "@/hooks/useAuth";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { WhatsAppFloat } from "@/components/layout/WhatsAppFloat";
-
 export default function DashboardLayout({
   children,
 }: {
@@ -28,7 +26,6 @@ export default function DashboardLayout({
       <main className="md:pl-64">
         <div className="pt-16 px-4 pb-6 md:pt-8 md:px-6 lg:px-8">{children}</div>
       </main>
-      <WhatsAppFloat />
     </div>
   );
 }
