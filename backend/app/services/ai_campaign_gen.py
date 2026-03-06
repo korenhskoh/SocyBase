@@ -80,6 +80,12 @@ async def generate_campaign(db: AsyncSession, campaign_id: str) -> dict:
         )
         business = await _get_business_context(db, campaign.tenant_id)
 
+        # POST_ENGAGEMENT (boost) uses a simplified path — the publish
+        # endpoint calls create_promoted_post() which ignores ad sets /
+        # targeting entirely, so generating complex structures is misleading.
+        if campaign.objective == "POST_ENGAGEMENT" and campaign.boosted_post_id:
+            return await _generate_boost_campaign(db, client, campaign, historical, business)
+
         # Stage 2: Structure
         campaign.generation_progress = {"stage": "structure", "pct": 25}
         await db.flush()
@@ -162,6 +168,130 @@ async def generate_campaign(db: AsyncSession, campaign_id: str) -> dict:
         campaign.generation_progress = {"stage": "error", "pct": 0, "error": str(e)}
         await db.commit()
         raise
+
+
+async def _generate_boost_campaign(
+    db: AsyncSession, client: AsyncOpenAI, campaign: AICampaign,
+    historical: dict, business: dict,
+) -> dict:
+    """Simplified generation for POST_ENGAGEMENT (boost) campaigns.
+
+    Boost campaigns use Meta's promoted-post API which only needs the post ID,
+    budget, audience_type, and boost_goal. Generating complex multi-adset
+    structures with interest targeting is misleading because publish ignores it.
+    Instead, generate a single ad set that accurately reflects the boost setup
+    and provide a useful AI strategy summary.
+    """
+    campaign.generation_progress = {"stage": "creative", "pct": 50}
+    await db.flush()
+
+    # Describe the audience in human terms
+    audience_labels = {
+        "ADVANTAGE_PLUS": "Advantage+ (Meta AI optimized audience)",
+        "PAGE_FANS": "People who like your Page",
+        "LOCAL_AREA": "People near your business",
+        "CUSTOM_AUDIENCE": "Custom audience",
+    }
+    audience_desc = audience_labels.get(campaign.audience_type or "", campaign.audience_type or "Broad")
+
+    budget_type = campaign.budget_type or "DAILY"
+    if budget_type == "LIFETIME":
+        budget_val = (campaign.lifetime_budget or 0) / 100
+        budget_str = f"RM {budget_val:.2f} lifetime"
+    else:
+        budget_val = (campaign.daily_budget or 0) / 100
+        budget_str = f"RM {budget_val:.2f}/day"
+
+    boost_goal_labels = {
+        "GET_MORE_MESSAGES": "Get more messages",
+        "GET_MORE_VIDEO_VIEWS": "Get more video views",
+        "GET_MORE_ENGAGEMENT": "Get more engagement",
+        "GET_MORE_LINK_CLICKS": "Get more link clicks",
+    }
+    goal_desc = boost_goal_labels.get(campaign.boost_goal or "", campaign.boost_goal or "Engagement")
+
+    # Single AI call: get strategy summary based on user's actual settings
+    biz_parts = []
+    if business.get("business_name"):
+        biz_parts.append(f"Business: {business['business_name']}")
+    if business.get("industry"):
+        biz_parts.append(f"Industry: {business['industry']}")
+    biz_context = ", ".join(biz_parts) if biz_parts else "Not specified"
+
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": (
+                "You are an expert Facebook Ads strategist. "
+                "Give a brief, actionable strategy summary for a boosted post campaign. "
+                "Be specific about why the chosen audience and goal make sense."
+            )},
+            {"role": "user", "content": f"""Provide a strategy summary for this boosted post:
+
+Business: {biz_context}
+Post being boosted: {campaign.boosted_post_id}
+Budget: {budget_str}
+Goal: {goal_desc}
+Audience: {audience_desc}
+{f'Custom instructions from user: {campaign.custom_instructions}' if campaign.custom_instructions else ''}
+
+Return a JSON object with:
+- "strategy": 2-3 sentences about why this boost setup is effective and tips to maximize results
+- "ad_name": a descriptive name for this boosted post ad (e.g., "Crystal Livestream Boost - Engagement")
+
+Only return valid JSON, no markdown."""},
+        ],
+        temperature=0.4,
+        max_tokens=300,
+    )
+
+    ai_result = _parse_json_response(
+        response.choices[0].message.content or "{}",
+        {"strategy": f"Boosting post to {audience_desc} with goal: {goal_desc}.", "ad_name": "Boosted Post"},
+    )
+
+    # Stage: Finalize
+    campaign.generation_progress = {"stage": "finalize", "pct": 85}
+    await db.flush()
+
+    # Create a single ad set reflecting the actual boost config
+    adset = AICampaignAdSet(
+        campaign_id=campaign.id,
+        name=f"Boost — {audience_desc}",
+        targeting={"audience_type": campaign.audience_type or "ADVANTAGE_PLUS"},
+        daily_budget=campaign.daily_budget or campaign.lifetime_budget or 0,
+    )
+    db.add(adset)
+    await db.flush()
+
+    # Create a single ad representing the boosted post
+    db.add(AICampaignAd(
+        adset_id=adset.id,
+        name=ai_result.get("ad_name", "Boosted Post"),
+        headline=goal_desc,
+        primary_text=f"Boosting existing post to {audience_desc}",
+        description=budget_str,
+        creative_source="boosted_post",
+        creative_ref_id=campaign.boosted_post_id,
+        cta_type="LEARN_MORE",
+    ))
+
+    campaign.status = "ready"
+    campaign.generation_progress = {"stage": "complete", "pct": 100}
+    campaign.ai_summary = {
+        "num_adsets": 1,
+        "num_ads": 1,
+        "strategy": ai_result.get("strategy", ""),
+        "total_daily_budget": campaign.daily_budget,
+        "objective": campaign.objective,
+        "audience_type": campaign.audience_type,
+        "boost_goal": campaign.boost_goal,
+        "business_name": business.get("business_name", ""),
+    }
+    campaign.credits_used = 20
+    await db.commit()
+
+    return {"status": "ready", "adsets": 1, "ads": 1}
 
 
 async def _get_business_context(db: AsyncSession, tenant_id) -> dict:
@@ -279,7 +409,9 @@ async def _generate_structure(
             {"role": "system", "content": (
                 "You are an expert Facebook Ads campaign strategist. "
                 "You design high-performing campaign structures based on historical data and business context. "
-                "Budget values in context are already in dollars."
+                "Budget values in context are already in dollars. "
+                "IMPORTANT: If the user provides custom_instructions, those are your HIGHEST PRIORITY. "
+                "Follow them exactly and design the campaign structure around what the user asked for."
             )},
             {"role": "user", "content": f"""Design a campaign structure for this advertiser:
 {context}
@@ -327,16 +459,19 @@ async def _generate_targeting(
                 "Generate targeting configurations that are valid for the Facebook Marketing API. "
                 "Use proper Facebook targeting format: geo_locations with countries/cities, "
                 "age_min/age_max (18-65), genders (1=Male, 2=Female, 0=All), "
-                "and flexible_spec for interest targeting with {interests: [{id, name}]}."
+                "and flexible_spec for interest targeting with {interests: [{id, name}]}. "
+                "IMPORTANT: If the user provides custom instructions, those are your HIGHEST PRIORITY. "
+                "The targeting MUST reflect what the user asked for. Do NOT default to generic business-based interests."
             )},
             {"role": "user", "content": f"""Generate {num_adsets} ad set targeting configurations.
+
+{f'*** USER INSTRUCTIONS (HIGHEST PRIORITY — follow these exactly): {campaign.custom_instructions} ***' if campaign.custom_instructions else ''}
 
 Business: {json.dumps({k: v for k, v in business.items() if v}) if business else 'Not specified'}
 Campaign objective: {campaign.objective}
 Audience strategy: {campaign.audience_strategy} ({'Use proven patterns from winning ads' if campaign.audience_strategy == 'conservative' else 'Explore new audience segments'})
 Ad set purposes: {adset_context}
 Winning ad targeting patterns: {json.dumps(winner_targeting[:3]) if winner_targeting else 'No historical data'}
-Custom instructions: {campaign.custom_instructions or 'None'}
 
 Return a JSON array where each element has:
 - "name": descriptive ad set name (e.g., "Women 25-45 - Skincare Interest")
@@ -411,9 +546,13 @@ async def _generate_creative(
                 {"role": "system", "content": (
                     "You are an expert Facebook Ads copywriter who creates high-converting ad copy. "
                     "Write compelling, concise copy that drives action. "
-                    "Match the tone to the audience and objective."
+                    "Match the tone to the audience and objective. "
+                    "IMPORTANT: If the user provides custom instructions, those are your HIGHEST PRIORITY. "
+                    "The ad copy MUST reflect what the user asked for."
                 )},
                 {"role": "user", "content": f"""Generate {ads_per_adset} Facebook ad creatives.
+
+{f'*** USER INSTRUCTIONS (HIGHEST PRIORITY — follow these exactly): {campaign.custom_instructions} ***' if campaign.custom_instructions else ''}
 
 Ad set: {adset['name']}
 Audience: {targeting_summary or 'Broad audience'}
@@ -422,7 +561,6 @@ Creative strategy: {campaign.creative_strategy} ({'Reference proven winners' if 
 Landing page: {campaign.landing_page_url or 'Not specified'}
 {biz_context}
 {f'Reference winning ad copy (these performed well): {json.dumps(winner_creatives[:3])}' if winner_creatives else ''}
-Custom instructions: {campaign.custom_instructions or 'None'}
 
 Return a JSON array where each element has:
 - "name": descriptive ad name (e.g., "Lead Gen - Benefit Focus")
