@@ -570,7 +570,18 @@ class MetaAPIService:
                     }),
                 },
             )
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                # Extract Meta's error details from response
+                error_detail = e.response.text
+                try:
+                    error_json = e.response.json()
+                    if "error" in error_json:
+                        error_detail = error_json["error"].get("message", error_detail)
+                except Exception:
+                    pass
+                raise Exception(f"Meta API error: {error_detail}") from e
             return resp.json()  # {"id": "lookalike_audience_id"}
 
     async def get_page_posts(

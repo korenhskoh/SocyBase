@@ -1823,8 +1823,11 @@ async def create_custom_audience(
             )
             lla_id = lla_resp.get("id")
         except Exception as e:
-            logger.warning(f"Failed to create lookalike audience: {e}")
-            # Don't fail the whole request if LLA creation fails
+            logger.exception("Failed to create lookalike audience")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Custom Audience created successfully, but Lookalike Audience creation failed: {str(e)}"
+            )
 
     result = {
         "audience_id": audience_id,
