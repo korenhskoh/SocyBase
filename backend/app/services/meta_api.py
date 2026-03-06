@@ -555,7 +555,7 @@ class MetaAPIService:
             dict with lookalike audience ID
         """
         lookalike_spec_data = {
-            "origin": source_audience_id,  # The seed custom audience ID
+            "origin": [{"id": source_audience_id}],  # Must be a list of {id} objects
             "type": "country",  # Required: must be "country" for country-based LLA
             "country": country,  # ISO country code (e.g., MY, US)
             "ratio": ratio,  # Percentage of population (e.g., 0.01 for 1%)

@@ -845,9 +845,9 @@ async def list_campaigns(
     date_to: str | None = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(25, ge=5, le=100),
-    sort_by: str = Query("spend", regex="^(spend|clicks|results|roas|ctr|name|created_at)$"),
-    sort_order: str = Query("desc", regex="^(asc|desc)$"),
-    status_filter: str | None = Query(None, regex="^(ACTIVE|PAUSED|ALL)$"),
+    sort_by: str = Query("spend", pattern="^(spend|clicks|results|roas|ctr|name|created_at)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    status_filter: str | None = Query(None, pattern="^(ACTIVE|PAUSED|ALL)$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedCampaigns:
