@@ -561,8 +561,9 @@ class MetaAPIService:
                 data={
                     "name": name,
                     "subtype": "LOOKALIKE",
+                    "origin_audience_id": source_audience_id,
                     "lookalike_spec": json.dumps({
-                        "type": "custom_ratio",
+                        "type": "similarity",
                         "ratio": ratio,
                         "country": country,
                         "origin": [
