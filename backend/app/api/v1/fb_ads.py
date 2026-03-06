@@ -2228,18 +2228,9 @@ async def publish_campaign(
     if campaign.status != "ready":
         raise HTTPException(status_code=400, detail=f"Campaign must be in 'ready' state to publish (current: {campaign.status}).")
 
-    # Try Celery first, fall back to inline publish
-    try:
-        from app.scraping.fb_sync_tasks import publish_ai_campaign
-        task = publish_ai_campaign.delay(str(campaign.id))
-        return {"detail": "Publishing started.", "task_id": task.id}
-    except Exception:
-        logger.info("Celery not available, running publish inline for campaign %s", campaign_id)
-
-    # Inline publish
+    # Run publish inline (same reason as generate: Celery workers may not be running)
     try:
         from app.scraping.fb_sync_tasks import _run_publish
-        import asyncio
         result_data = await _run_publish(str(campaign.id))
         await db.refresh(campaign)
         return {"detail": "Published successfully.", "meta_campaign_id": result_data.get("meta_campaign_id")}
