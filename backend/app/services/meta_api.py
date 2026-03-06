@@ -554,7 +554,30 @@ class MetaAPIService:
         Returns:
             dict with lookalike audience ID
         """
+        # Verify source audience exists before creating lookalike
         async with httpx.AsyncClient(timeout=30) as client:
+            verify_resp = await client.get(
+                f"{GRAPH_BASE}/{source_audience_id}",
+                params={
+                    **self._auth_params(access_token),
+                    "fields": "id,name,approximate_count_lower_bound",
+                },
+            )
+            try:
+                verify_resp.raise_for_status()
+                verify_data = verify_resp.json()
+                if not verify_data.get("id"):
+                    raise Exception(f"Source custom audience {source_audience_id} not found")
+            except httpx.HTTPStatusError as e:
+                error_detail = e.response.text
+                try:
+                    error_json = e.response.json()
+                    if "error" in error_json:
+                        error_detail = error_json["error"].get("message", error_detail)
+                except Exception:
+                    pass
+                raise Exception(f"Failed to verify source audience: {error_detail}") from e
+
             resp = await client.post(
                 f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
                 params=self._auth_params(access_token),
@@ -563,6 +586,7 @@ class MetaAPIService:
                     "subtype": "LOOKALIKE",
                     "origin_audience_id": source_audience_id,
                     "lookalike_spec": json.dumps({
+                        "type": "custom_ratio",
                         "ratio": ratio,
                         "country": country,
                     }),
