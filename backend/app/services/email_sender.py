@@ -132,7 +132,7 @@ async def _resolve_sender() -> tuple[str, str]:
     """Return (from_email, from_name) for the sender."""
     smtp_cfg = await _resolve_smtp_config()
     settings = get_settings()
-    from_email = (smtp_cfg or {}).get("email_from", settings.email_from) or "noreply@socybase.com"
+    from_email = (smtp_cfg or {}).get("email_from", settings.email_from) or "korenhskoh@gmail.com"
     return from_email, "SocyBase"
 
 
