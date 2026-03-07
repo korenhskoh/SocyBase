@@ -537,6 +537,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                         await db.rollback()
                     except Exception:
                         pass
+                dupes_removed = 0
                 if dedup_enabled and job_settings.get("ignore_duplicate_users"):
                     prev_profiles = await db.execute(
                         select(ScrapedProfile.platform_user_id)
