@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef, Suspense } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { jobsApi } from "@/lib/api-client";
+import { jobsApi, creditsApi } from "@/lib/api-client";
 import type { CursorHistoryItem } from "@/types";
 
 // ── Platform & scrape type definitions ────────────────────────────────
@@ -116,7 +117,11 @@ function NewJobPage() {
   // Feature flags
   const [dedupFeatureEnabled, setDedupFeatureEnabled] = useState(true);
 
+  // Credit balance for cost warnings
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+
   useEffect(() => {
+    creditsApi.getBalance().then((r) => setCreditBalance(r.data?.balance ?? null)).catch(() => {});
     jobsApi.list({ page: 1, page_size: 50, status: "running" }).then((r) => {
       const running = Array.isArray(r.data) ? r.data.length : 0;
       jobsApi.list({ page: 1, page_size: 50, status: "queued" }).then((r2) => {
@@ -953,6 +958,45 @@ function NewJobPage() {
                   className="input-glass"
                   required={schedule}
                 />
+              )}
+            </div>
+
+            {/* Cost info & warnings */}
+            <div className="space-y-3">
+              {/* Cost estimate */}
+              <div className="rounded-lg bg-white/[0.03] border border-white/5 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-white/40">Credit cost</span>
+                  <span className="text-sm font-medium text-white/70">
+                    {selectedScrapeType.id === "post_discovery"
+                      ? `~${maxPages} credits (${maxPages} pages)`
+                      : "1 credit per profile enriched"}
+                  </span>
+                </div>
+                {creditBalance !== null && (
+                  <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-white/5">
+                    <span className="text-xs text-white/40">Your balance</span>
+                    <span className={`text-sm font-medium ${creditBalance < 50 ? "text-red-400" : "text-emerald-400"}`}>
+                      {creditBalance.toLocaleString()} credits
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Low balance warning */}
+              {creditBalance !== null && creditBalance < 50 && (
+                <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 flex items-start gap-2.5">
+                  <svg className="h-4 w-4 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                  <div>
+                    <p className="text-sm font-medium text-red-400">Low credit balance</p>
+                    <p className="text-xs text-white/40 mt-0.5">
+                      You have {creditBalance.toLocaleString()} credits remaining. Your job may stop early if credits run out.{" "}
+                      <Link href="/credits" className="text-primary-400 hover:underline">Buy more credits</Link>
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
 

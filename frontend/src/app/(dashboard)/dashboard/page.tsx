@@ -109,6 +109,9 @@ export default function DashboardPage() {
                     {job.status}
                   </span>
                   <span className="text-sm text-white/40">{job.result_row_count} profiles</span>
+                  {job.credits_used > 0 && (
+                    <span className="text-xs text-white/30 tabular-nums">{job.credits_used} cr</span>
+                  )}
                 </div>
               </Link>
             ))
