@@ -101,6 +101,77 @@ async def send_job_completion_notification(
         logger.warning(f"Failed to send Telegram notification to {chat_id}: {e}")
 
 
+async def send_admin_error_alert(
+    job, error_message: str, bot_token: str | None = None
+) -> None:
+    """Send a Telegram alert to all super_admin users when a job fails with a critical error."""
+    token = bot_token or await get_telegram_bot_token()
+    if not token:
+        return
+
+    try:
+        from app.models.user import User
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(User).where(
+                    User.role == "super_admin",
+                    User.telegram_chat_id.isnot(None),
+                )
+            )
+            admins = result.scalars().all()
+            if not admins:
+                return
+
+            # Look up job owner
+            job_owner = None
+            if hasattr(job, "user_id") and job.user_id:
+                owner_result = await db.execute(
+                    select(User).where(User.id == job.user_id)
+                )
+                job_owner = owner_result.scalar_one_or_none()
+
+            short_id = str(job.id)[:8]
+            jtype = "Discovery" if getattr(job, "job_type", None) == "post_discovery" else "Comments"
+            owner_name = (job_owner.full_name or job_owner.email) if job_owner else "Unknown"
+
+            is_401 = "401" in error_message or "Unauthorized" in error_message
+            is_timeout = any(t in error_message for t in ["Timeout", "ReadTimeout", "ConnectTimeout"])
+
+            if is_401:
+                alert_type = "API Key Quota Exhausted"
+                icon = "\U0001F6A8"
+            elif is_timeout:
+                alert_type = "API Timeout"
+                icon = "\u23F0"
+            else:
+                alert_type = "Pipeline Error"
+                icon = "\u26A0\uFE0F"
+
+            text = (
+                f"{icon} <b>Admin Alert: {alert_type}</b>\n\n"
+                f"<b>Job:</b> <code>{short_id}...</code> ({jtype})\n"
+                f"<b>User:</b> {owner_name}\n"
+                f"<b>Input:</b> {getattr(job, 'input_value', 'N/A')}\n"
+                f"<b>Error:</b> {error_message[:300]}\n"
+            )
+
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            async with httpx.AsyncClient(timeout=10) as http:
+                for admin in admins:
+                    try:
+                        await http.post(url, json={
+                            "chat_id": admin.telegram_chat_id,
+                            "text": text,
+                            "parse_mode": "HTML",
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to send admin alert to {admin.email}: {e}")
+
+    except Exception as e:
+        logger.warning(f"Failed to send admin error alert: {e}")
+
+
 async def send_tb_order_notification(
     chat_id: str, order, service_name: str, bot_token: str | None = None
 ) -> None:

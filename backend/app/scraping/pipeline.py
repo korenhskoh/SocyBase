@@ -901,6 +901,13 @@ async def _execute_pipeline(job_id: str, celery_task):
                 except Exception as notify_err:
                     logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
+                # Send admin alert for critical errors
+                try:
+                    from app.services.telegram_notify import send_admin_error_alert
+                    await send_admin_error_alert(job, f"{type(e).__name__}: {e}")
+                except Exception as admin_err:
+                    logger.warning(f"[Job {job_id}] Admin alert failed: {admin_err}")
+
     except Exception as outer_err:
         # Fallback: if the DB session itself is broken (e.g., event loop mismatch),
         # create a fresh session to mark the job as failed
