@@ -1,8 +1,8 @@
 """SocyBase Telegram Bot — remote job management, traffic bot orders, and notifications.
 
 Mirrors the webapp flow:
-  /login  → email → OTP code → account linked
-  /newjob → select platform → select scrape type → send input → job created
+  /login  → email → verify account exists → linked
+  /newjob → select platform → select scrape type → send input → pre-check & confirm → job created
   /jobs   → list recent jobs with action buttons (details, cancel, pause, resume)
   /credits → credit balance
   /tborder  → select category → select service → enter link → enter qty → confirm
@@ -13,8 +13,6 @@ Mirrors the webapp flow:
 
 import logging
 import re
-import secrets
-import time
 
 from telegram import (
     Update,
@@ -32,18 +30,17 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-from sqlalchemy import select, func
+from sqlalchemy import select, func, distinct
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.database import async_session
 from app.models.user import User
-from app.models.job import ScrapingJob
+from app.models.job import ScrapingJob, ScrapedProfile
 from app.models.credit import CreditBalance
 from app.models.platform import Platform
 from app.models.traffic_bot import TrafficBotOrder
 from app.services import traffic_bot_service as tb_svc
-from app.services.email_sender import send_email
 from app.utils.security import decode_token
 
 logger = logging.getLogger(__name__)
@@ -117,65 +114,55 @@ SCRAPE_TYPES = {
 
 TB_SERVICES_PER_PAGE = 8
 
-# ── Login / OTP constants ────────────────────────────────────────────────
-
-MAX_LOGIN_ATTEMPTS = 5
-LOGIN_COOLDOWN_SECONDS = 300  # 5 min
-MAX_OTP_RESENDS = 3
-OTP_EXPIRY_SECONDS = 600  # 10 min
-
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# Facebook URL patterns for pre-check validation
+FB_URL_RE = re.compile(
+    r"(?:https?://)?(?:www\.|m\.|web\.|mbasic\.)?(?:facebook\.com|fb\.com|fb\.watch)/",
+    re.IGNORECASE,
+)
 
-def _generate_otp() -> str:
-    return f"{secrets.randbelow(1000000):06d}"
 
-
-def _otp_email_html(otp: str) -> str:
-    """Return a styled HTML email template for the OTP code."""
-    return (
-        '<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;'
-        'background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb">'
-        '<div style="background:#0f172a;padding:24px 32px;text-align:center">'
-        '<h1 style="color:#ffffff;margin:0;font-size:22px">SocyBase</h1>'
-        '</div>'
-        '<div style="padding:32px">'
-        '<h2 style="color:#1e293b;margin:0 0 8px">Verification Code</h2>'
-        '<p style="color:#64748b;margin:0 0 24px;font-size:14px">'
-        'Use the code below to complete your Telegram login.</p>'
-        f'<div style="background:#f1f5f9;border-radius:8px;padding:20px;text-align:center;'
-        f'margin:0 0 24px">'
-        f'<span style="font-size:32px;font-weight:700;letter-spacing:8px;font-family:monospace;'
-        f'color:#0f172a">{otp}</span></div>'
-        '<p style="color:#64748b;font-size:13px;margin:0 0 8px">'
-        'This code expires in <b>10 minutes</b>.</p>'
-        '<p style="color:#94a3b8;font-size:12px;margin:0">'
-        'If you didn\'t request this code, you can safely ignore this email.</p>'
-        '</div>'
-        '<div style="background:#f8fafc;padding:16px 32px;text-align:center;'
-        'border-top:1px solid #e5e7eb">'
-        '<p style="color:#94a3b8;font-size:11px;margin:0">'
-        'Sent by SocyBase Telegram Bot</p>'
-        '</div></div>'
-    )
+def _validate_fb_input(input_value: str, input_type: str) -> str | None:
+    """Validate Facebook input. Returns error message or None if valid."""
+    if input_type == "post_url":
+        # Accept: URLs, numeric post IDs, pageid_postid format
+        if FB_URL_RE.search(input_value):
+            return None
+        if re.match(r"^\d+$", input_value):
+            return None
+        if re.match(r"^\d+_\d+$", input_value):
+            return None
+        return (
+            "\u26A0\uFE0F That doesn't look like a valid Facebook post URL or ID.\n\n"
+            "<b>Accepted formats:</b>\n"
+            "\u2022 <code>https://facebook.com/page/posts/123</code>\n"
+            "\u2022 <code>https://fb.com/reel/123</code>\n"
+            "\u2022 <code>123456789</code> (post ID)\n"
+            "\u2022 <code>pageid_postid</code>\n\n"
+            "Please try again:"
+        )
+    elif input_type == "page_id":
+        # Accept: URLs, usernames, numeric IDs
+        if FB_URL_RE.search(input_value):
+            return None
+        if re.match(r"^[\w.]+$", input_value):
+            return None
+        return (
+            "\u26A0\uFE0F That doesn't look like a valid page URL or username.\n\n"
+            "<b>Accepted formats:</b>\n"
+            "\u2022 <code>https://facebook.com/pagename</code>\n"
+            "\u2022 <code>pagename</code> (username)\n"
+            "\u2022 <code>123456789</code> (page ID)\n\n"
+            "Please try again:"
+        )
+    return None
 
 
 def _clear_login_flow(context: ContextTypes.DEFAULT_TYPE):
     """Clear all login flow state."""
-    for key in ["login_awaiting_email", "login_awaiting_otp",
-                "login_email", "login_otp", "login_otp_expires",
-                "login_otp_resends"]:
+    for key in ["login_awaiting_email", "login_email"]:
         context.user_data.pop(key, None)
-
-
-def _mask_email(email: str) -> str:
-    """Mask email: j***n@gmail.com"""
-    local, domain = email.split("@", 1)
-    if len(local) <= 2:
-        masked = local[0] + "***"
-    else:
-        masked = local[0] + "***" + local[-1]
-    return f"{masked}@{domain}"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -214,7 +201,8 @@ def _clear_tb_flow(context: ContextTypes.DEFAULT_TYPE):
 
 def _clear_job_flow(context: ContextTypes.DEFAULT_TYPE):
     """Clear all scraping job creation flow state."""
-    for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input"]:
+    for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input",
+                "new_job_input_value", "new_job_ignore_dupes"]:
         context.user_data.pop(key, None)
 
 
@@ -425,7 +413,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/tborders \u2014 View your recent TB orders\n"
         "/tbwallet \u2014 Check TB wallet balance\n\n"
         "<b>Account:</b>\n"
-        "/login \u2014 Log in with email & OTP code\n"
+        "/login \u2014 Log in with your email\n"
         "/unlink \u2014 Disconnect your Telegram\n"
         "/credits \u2014 Check scraping credit balance\n"
         "/cancel \u2014 Cancel current operation\n"
@@ -444,10 +432,10 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel current flow."""
     cleared = False
     for key in ["new_job_platform", "new_job_scrape_type", "new_job_awaiting_input",
+                "new_job_input_value", "new_job_ignore_dupes",
                 "tb_category", "tb_service_id", "tb_service_name",
                 "tb_link", "tb_quantity", "tb_awaiting_link", "tb_awaiting_quantity",
-                "login_awaiting_email", "login_awaiting_otp",
-                "login_email", "login_otp", "login_otp_expires", "login_otp_resends"]:
+                "login_awaiting_email", "login_email"]:
         if context.user_data.pop(key, None) is not None:
             cleared = True
     if cleared:
@@ -460,7 +448,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start the email + OTP login flow."""
+    """Start the email login flow."""
     chat_id = str(update.effective_chat.id)
 
     # Already linked?
@@ -471,15 +459,6 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Use /unlink to disconnect first.",
             parse_mode="HTML",
             reply_markup=MAIN_KEYBOARD,
-        )
-        return
-
-    # Check cooldown
-    cooldown_until = context.user_data.get("login_cooldown_until", 0)
-    if time.time() < cooldown_until:
-        remaining = int(cooldown_until - time.time())
-        await update.message.reply_text(
-            f"\u23F3 Too many failed attempts. Try again in {remaining}s."
         )
         return
 
@@ -690,7 +669,7 @@ async def _send_platform_picker(message, context: ContextTypes.DEFAULT_TYPE):
 
     await message.reply_text(
         "\U0001F680 <b>New Scraping Job</b>\n\n"
-        "<b>Step 1/3:</b> Choose a platform:",
+        "<b>Step 1/4:</b> Choose a platform:",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -806,56 +785,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-
-    # ── Login: resend OTP ─────────────────────────────────────────
-    if data == "login:resend_otp":
-        email = context.user_data.get("login_email")
-        if not email or not context.user_data.get("login_awaiting_otp"):
-            await query.edit_message_text(
-                "Login session expired. Use /login to start again."
-            )
-            return
-
-        resends = context.user_data.get("login_otp_resends", 0)
-        if resends >= MAX_OTP_RESENDS:
-            await query.edit_message_text(
-                "\u26D4 Maximum resends reached. Use /login to start a new session."
-            )
-            _clear_login_flow(context)
-            return
-
-        # Generate new OTP and resend
-        otp = _generate_otp()
-        context.user_data["login_otp"] = otp
-        context.user_data["login_otp_expires"] = time.time() + OTP_EXPIRY_SECONDS
-        context.user_data["login_otp_resends"] = resends + 1
-
-        sent = await send_email(
-            to=email,
-            subject="SocyBase Telegram Login Code",
-            body_text=f"Your verification code is: {otp}\n\nThis code expires in 10 minutes.",
-            body_html=_otp_email_html(otp),
-        )
-
-        masked = _mask_email(email)
-        if sent:
-            remaining_resends = MAX_OTP_RESENDS - resends - 1
-            await query.edit_message_text(
-                f"\U0001F504 New code sent to <b>{masked}</b>.\n\n"
-                f"Enter the 6-digit code below:\n"
-                f"<i>({remaining_resends} resend{'s' if remaining_resends != 1 else ''} remaining)</i>\n\n"
-                "<i>Send /cancel to abort.</i>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("\U0001F504 Resend Code", callback_data="login:resend_otp"),
-                ]]) if remaining_resends > 0 else None,
-            )
-        else:
-            await query.edit_message_text(
-                "\u274C Failed to resend email. Try /login again later."
-            )
-            _clear_login_flow(context)
-        return
 
     # ── Job detail ───────────────────────────────────────────────
     if data.startswith("job:"):
@@ -1056,7 +985,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             "\U0001F680 <b>New Scraping Job</b>\n\n"
-            "<b>Step 1/3:</b> Choose a platform:",
+            "<b>Step 1/4:</b> Choose a platform:",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
@@ -1088,7 +1017,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"\U0001F680 <b>New Scraping Job</b>\n\n"
                 f"<b>Platform:</b> {platform_name.title()}\n"
                 f"<b>Type:</b> {st['short']}\n\n"
-                f"<b>Step 3/3:</b> {st['input_prompt']}\n\n"
+                f"<b>Step 3/4:</b> {st['input_prompt']}\n\n"
                 f"<i>Send /cancel to abort.</i>",
                 parse_mode="HTML",
             )
@@ -1109,7 +1038,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"\U0001F680 <b>New Scraping Job</b>\n\n"
             f"<b>Platform:</b> {platform_name.title()}\n\n"
-            f"<b>Step 2/3:</b> Choose a scrape type:",
+            f"<b>Step 2/4:</b> Choose a scrape type:",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
@@ -1137,10 +1066,179 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"\U0001F680 <b>New Scraping Job</b>\n\n"
             f"<b>Platform:</b> {platform_name.title()}\n"
             f"<b>Type:</b> {st['short']}\n\n"
-            f"<b>Step 3/3:</b> {st['input_prompt']}\n\n"
+            f"<b>Step 3/4:</b> {st['input_prompt']}\n\n"
             f"<i>Send /cancel to abort.</i>",
             parse_mode="HTML",
         )
+
+    # ── New job: toggle dedup ────────────────────────────────────
+    elif data == "newjob:toggle_dedup":
+        ignore_dupes = not context.user_data.get("new_job_ignore_dupes", False)
+        context.user_data["new_job_ignore_dupes"] = ignore_dupes
+
+        platform_name = context.user_data.get("new_job_platform", "?")
+        scrape_type_id = context.user_data.get("new_job_scrape_type", "")
+        input_value = context.user_data.get("new_job_input_value", "")
+
+        scrape_types = SCRAPE_TYPES.get(platform_name, [])
+        st = next((s for s in scrape_types if s["id"] == scrape_type_id), None)
+        short_name = st["short"] if st else scrape_type_id
+
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+
+        # Re-check previous jobs for display
+        prev_info = None
+        async with async_session() as db:
+            prev_result = await db.execute(
+                select(ScrapingJob).where(
+                    ScrapingJob.tenant_id == user.tenant_id,
+                    ScrapingJob.input_value == input_value,
+                    ScrapingJob.status.in_(["completed", "paused", "failed"]),
+                ).order_by(ScrapingJob.created_at.desc())
+            )
+            prev_jobs = prev_result.scalars().all()
+            if prev_jobs:
+                profiles_result = await db.execute(
+                    select(func.count(distinct(ScrapedProfile.platform_user_id))).where(
+                        ScrapedProfile.job_id.in_([j.id for j in prev_jobs]),
+                        ScrapedProfile.scrape_status == "success",
+                    )
+                )
+                total_profiles = profiles_result.scalar() or 0
+                prev_info = {
+                    "total_jobs": len(prev_jobs),
+                    "total_profiles": total_profiles,
+                    "last_date": prev_jobs[0].created_at.strftime("%Y-%m-%d") if prev_jobs[0].created_at else "?",
+                }
+
+            balance_result = await db.execute(
+                select(CreditBalance).where(CreditBalance.tenant_id == user.tenant_id)
+            )
+            balance = balance_result.scalar_one_or_none()
+            credit_bal = balance.balance if balance else 0
+
+        lines = [
+            f"\U0001F680 <b>Confirm New Job</b>\n",
+            f"<b>Platform:</b> {platform_name.title()}",
+            f"<b>Type:</b> {short_name}",
+            f"<b>Input:</b> <code>{input_value[:60]}</code>",
+        ]
+
+        if prev_info:
+            lines.append(
+                f"\n\u26A0\uFE0F <b>Previously scraped:</b> {prev_info['total_jobs']} job(s), "
+                f"{prev_info['total_profiles']:,} profiles "
+                f"(last: {prev_info['last_date']})"
+            )
+
+        dedup_icon = "\u2705" if ignore_dupes else "\u274C"
+        dedup_label = "ON — skip already scraped" if ignore_dupes else "OFF — scrape all"
+        lines.append(f"\n<b>Skip duplicates:</b> {dedup_icon} {dedup_label}")
+        lines.append(f"\U0001F4B3 <b>Credits:</b> {credit_bal:,} available")
+
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    f"{'✅' if ignore_dupes else '☐'} Skip Duplicates",
+                    callback_data="newjob:toggle_dedup",
+                ),
+            ],
+            [
+                InlineKeyboardButton("\u2705 Create Job", callback_data="newjob:confirm"),
+                InlineKeyboardButton("\u274C Cancel", callback_data="newjob:cancel"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+
+    # ── New job: confirm and create ───────────────────────────────
+    elif data == "newjob:confirm":
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            return
+
+        platform_name = context.user_data.get("new_job_platform")
+        scrape_type_id = context.user_data.get("new_job_scrape_type")
+        input_value = context.user_data.get("new_job_input_value")
+        ignore_dupes = context.user_data.get("new_job_ignore_dupes", False)
+
+        if not all([platform_name, scrape_type_id, input_value]):
+            _clear_job_flow(context)
+            await query.edit_message_text("Session expired. Use /newjob to start over.")
+            return
+
+        scrape_types = SCRAPE_TYPES.get(platform_name, [])
+        st = next((s for s in scrape_types if s["id"] == scrape_type_id), None)
+        if not st:
+            _clear_job_flow(context)
+            await query.edit_message_text("Invalid configuration. Use /newjob to start over.")
+            return
+
+        _clear_job_flow(context)
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(Platform).where(Platform.name == platform_name)
+            )
+            plat = result.scalar_one_or_none()
+            if not plat:
+                await query.edit_message_text("Platform not found. Use /newjob to start over.")
+                return
+
+            job = ScrapingJob(
+                tenant_id=user.tenant_id,
+                user_id=user.id,
+                platform_id=plat.id,
+                job_type=st["job_type"],
+                input_type=st["input_type"],
+                input_value=input_value,
+                status="queued",
+                settings={
+                    "include_replies": True,
+                    "profile_retry_count": 2,
+                    "ignore_duplicate_users": ignore_dupes,
+                },
+            )
+            db.add(job)
+            await db.flush()
+
+            # Dispatch Celery task
+            if st["job_type"] == "post_discovery":
+                from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
+                task = run_post_discovery_pipeline.delay(str(job.id))
+            else:
+                from app.scraping.pipeline import run_scraping_pipeline
+                task = run_scraping_pipeline.delay(str(job.id))
+
+            job.celery_task_id = task.id
+            await db.commit()
+
+            short_id = str(job.id)[:8]
+            dedup_line = ""
+            if ignore_dupes:
+                dedup_line = "\U0001F50D Duplicate users will be skipped.\n"
+
+            await query.edit_message_text(
+                f"\u2705 <b>Job Created!</b>\n\n"
+                f"<b>ID:</b> <code>{short_id}...</code>\n"
+                f"<b>Platform:</b> {platform_name.title()}\n"
+                f"<b>Type:</b> {st['short']}\n"
+                f"<b>Input:</b> <code>{input_value[:60]}</code>\n\n"
+                f"{dedup_line}"
+                f"\u23F3 Job is queued and will start shortly.\n"
+                f"You'll receive a notification when it completes.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("\U0001F4CA View Job", callback_data=f"job:{job.id}")],
+                    [InlineKeyboardButton("\U0001F4CB My Jobs", callback_data="back:jobs")],
+                ]),
+            )
 
     # ══════════════════════════════════════════════════════════════
     # ── TRAFFIC BOT CALLBACKS ────────────────────────────────────
@@ -1560,8 +1658,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await db.commit()
 
         _clear_login_flow(context)
-        context.user_data.pop("login_attempts", None)
-        context.user_data.pop("login_cooldown_until", None)
 
         # Try to delete the email message for privacy
         try:
@@ -1576,74 +1672,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
             reply_markup=MAIN_KEYBOARD,
         )
-        return
-
-    # ── Login flow: awaiting OTP code ─────────────────────────────
-    if context.user_data.get("login_awaiting_otp"):
-        # Check expiry
-        if time.time() > context.user_data.get("login_otp_expires", 0):
-            _clear_login_flow(context)
-            await update.message.reply_text(
-                "\u23F3 Code expired. Use /login to try again."
-            )
-            return
-
-        code = text.strip()
-        stored_otp = context.user_data.get("login_otp", "")
-
-        # Try to delete the code message
-        try:
-            await update.message.delete()
-        except Exception:
-            pass
-
-        if secrets.compare_digest(code, stored_otp):
-            # Success — link account
-            email = context.user_data.get("login_email")
-            chat_id = str(update.effective_chat.id)
-
-            async with async_session() as db:
-                result = await db.execute(
-                    select(User).where(func.lower(User.email) == email)
-                )
-                user = result.scalar_one_or_none()
-                if user:
-                    user.telegram_chat_id = chat_id
-                    await db.commit()
-
-            _clear_login_flow(context)
-            # Reset attempt counter on success
-            context.user_data.pop("login_attempts", None)
-            context.user_data.pop("login_cooldown_until", None)
-
-            await update.effective_chat.send_message(
-                f"\u2705 <b>Account linked!</b>\n\n"
-                f"Logged in as <b>{email}</b>.\n"
-                "Use the buttons below to get started.",
-                parse_mode="HTML",
-                reply_markup=MAIN_KEYBOARD,
-            )
-        else:
-            # Wrong code — increment attempts
-            attempts = context.user_data.get("login_attempts", 0) + 1
-            context.user_data["login_attempts"] = attempts
-
-            if attempts >= MAX_LOGIN_ATTEMPTS:
-                _clear_login_flow(context)
-                context.user_data["login_cooldown_until"] = time.time() + LOGIN_COOLDOWN_SECONDS
-                await update.effective_chat.send_message(
-                    f"\u26D4 Too many failed attempts. "
-                    f"Please wait {LOGIN_COOLDOWN_SECONDS // 60} minutes before trying /login again."
-                )
-            else:
-                remaining = MAX_LOGIN_ATTEMPTS - attempts
-                await update.effective_chat.send_message(
-                    f"\u274C Incorrect code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.\n\n"
-                    "Enter the code again or /cancel to abort.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("\U0001F504 Resend Code", callback_data="login:resend_otp"),
-                    ]]),
-                )
         return
 
     # ── Traffic bot: awaiting link input ──────────────────────────
@@ -1779,62 +1807,90 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Please send a valid URL or ID.")
             return
 
-        # Clear flow state
-        _clear_job_flow(context)
+        # URL format validation
+        err = _validate_fb_input(input_value, st["input_type"])
+        if err:
+            await update.message.reply_text(err, parse_mode="HTML")
+            return
 
-        # Create the job
+        # Save input and move to confirmation step
+        context.user_data["new_job_awaiting_input"] = False
+        context.user_data["new_job_input_value"] = input_value
+
+        # Pre-check: look for previous jobs with same input
+        prev_info = None
         async with async_session() as db:
-            result = await db.execute(
-                select(Platform).where(Platform.name == platform_name)
+            prev_result = await db.execute(
+                select(ScrapingJob).where(
+                    ScrapingJob.tenant_id == user.tenant_id,
+                    ScrapingJob.input_value == input_value,
+                    ScrapingJob.status.in_(["completed", "paused", "failed"]),
+                ).order_by(ScrapingJob.created_at.desc())
             )
-            plat = result.scalar_one_or_none()
-            if not plat:
-                await update.message.reply_text("Platform not found. Use /newjob to start over.")
-                return
+            prev_jobs = prev_result.scalars().all()
+            if prev_jobs:
+                profiles_result = await db.execute(
+                    select(func.count(distinct(ScrapedProfile.platform_user_id))).where(
+                        ScrapedProfile.job_id.in_([j.id for j in prev_jobs]),
+                        ScrapedProfile.scrape_status == "success",
+                    )
+                )
+                total_profiles = profiles_result.scalar() or 0
+                prev_info = {
+                    "total_jobs": len(prev_jobs),
+                    "total_profiles": total_profiles,
+                    "last_date": prev_jobs[0].created_at.strftime("%Y-%m-%d") if prev_jobs[0].created_at else "?",
+                }
 
-            job = ScrapingJob(
-                tenant_id=user.tenant_id,
-                user_id=user.id,
-                platform_id=plat.id,
-                job_type=st["job_type"],
-                input_type=st["input_type"],
-                input_value=input_value,
-                status="queued",
-                settings={
-                    "include_replies": True,
-                    "profile_retry_count": 2,
-                },
+            # Check credit balance
+            balance_result = await db.execute(
+                select(CreditBalance).where(CreditBalance.tenant_id == user.tenant_id)
             )
-            db.add(job)
-            await db.flush()
+            balance = balance_result.scalar_one_or_none()
+            credit_bal = balance.balance if balance else 0
 
-            # Dispatch Celery task
-            if st["job_type"] == "post_discovery":
-                from app.scraping.post_discovery_pipeline import run_post_discovery_pipeline
-                task = run_post_discovery_pipeline.delay(str(job.id))
-            else:
-                from app.scraping.pipeline import run_scraping_pipeline
-                task = run_scraping_pipeline.delay(str(job.id))
+        # Default: enable dedup if previously scraped, else off
+        ignore_dupes = bool(prev_info)
+        context.user_data["new_job_ignore_dupes"] = ignore_dupes
 
-            job.celery_task_id = task.id
-            await db.commit()
+        # Build confirmation message
+        lines = [
+            f"\U0001F680 <b>Confirm New Job</b>\n",
+            f"<b>Platform:</b> {platform_name.title()}",
+            f"<b>Type:</b> {st['short']}",
+            f"<b>Input:</b> <code>{input_value[:60]}</code>",
+        ]
 
-            short_id = str(job.id)[:8]
-            await update.message.reply_text(
-                f"\u2705 <b>Job Created!</b>\n\n"
-                f"<b>ID:</b> <code>{short_id}...</code>\n"
-                f"<b>Platform:</b> {platform_name.title()}\n"
-                f"<b>Type:</b> {st['short']}\n"
-                f"<b>Input:</b> <code>{input_value[:60]}</code>\n\n"
-                f"\u23F3 Job is queued and will start shortly.\n"
-                f"You'll receive a notification when it completes.\n\n"
-                f"Use /status {job.id} or tap below to track progress:",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"\U0001F4CA View Job", callback_data=f"job:{job.id}")],
-                    [InlineKeyboardButton("\U0001F4CB My Jobs", callback_data="back:jobs")],
-                ]),
+        if prev_info:
+            lines.append(
+                f"\n\u26A0\uFE0F <b>Previously scraped:</b> {prev_info['total_jobs']} job(s), "
+                f"{prev_info['total_profiles']:,} profiles "
+                f"(last: {prev_info['last_date']})"
             )
+
+        dedup_icon = "\u2705" if ignore_dupes else "\u274C"
+        dedup_label = "ON — skip already scraped" if ignore_dupes else "OFF — scrape all"
+        lines.append(f"\n<b>Skip duplicates:</b> {dedup_icon} {dedup_label}")
+        lines.append(f"\U0001F4B3 <b>Credits:</b> {credit_bal:,} available")
+
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    f"{'✅' if ignore_dupes else '☐'} Skip Duplicates",
+                    callback_data="newjob:toggle_dedup",
+                ),
+            ],
+            [
+                InlineKeyboardButton("\u2705 Create Job", callback_data="newjob:confirm"),
+                InlineKeyboardButton("\u274C Cancel", callback_data="newjob:cancel"),
+            ],
+        ]
+
+        await update.message.reply_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
         return
 
     # ── Default: show help ────────────────────────────────────────
