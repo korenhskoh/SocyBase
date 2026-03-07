@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { jobsApi, exportApi } from "@/lib/api-client";
-import { formatDate, getStatusColor } from "@/lib/utils";
+import { formatDate, getStatusColor, downloadBlob } from "@/lib/utils";
 import type { ScrapingJob } from "@/types";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import JobLogModal from "@/components/ui/JobLogModal";
@@ -232,13 +232,7 @@ export default function JobsPage() {
       const mime = format === "xlsx"
         ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         : "text/csv";
-      const blob = new Blob([res.data], { type: mime });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `socybase_${format === "facebook-ads" ? "fb_ads_" : "export_"}${jobId.slice(0, 8)}.${ext}`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(res.data, mime, `socybase_${format === "facebook-ads" ? "fb_ads_" : "export_"}${jobId.slice(0, 8)}.${ext}`);
     } catch {
       setActionError("Export failed");
     }
@@ -253,13 +247,7 @@ export default function JobsPage() {
     if (completedIds.length === 0) return;
     try {
       const res = await exportApi.batchExport({ job_ids: completedIds, format: "csv" });
-      const blob = new Blob([res.data], { type: "application/zip" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "socybase_batch_export.zip";
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(res.data, "application/zip", "socybase_batch_export.zip");
     } catch {
       setActionError("Batch export failed");
     }

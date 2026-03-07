@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { jobsApi, fanAnalysisApi } from "@/lib/api-client";
-import { formatDate, formatNumber } from "@/lib/utils";
+import { formatDate, formatNumber, downloadBlob } from "@/lib/utils";
 import type { ScrapingJob, FanEngagementMetrics } from "@/types";
 
 export default function FanCatchPage() {
@@ -133,12 +133,7 @@ export default function FanCatchPage() {
   const handleExportFans = async () => {
     try {
       const res = await fanAnalysisApi.exportFans(selectedJobId, "csv");
-      const blob = new Blob([res.data], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `fan_analysis_${selectedJobId}.csv`;
-      a.click();
+      downloadBlob(res.data, "text/csv", `fan_analysis_${selectedJobId}.csv`);
     } catch {
       /* ignore */
     }

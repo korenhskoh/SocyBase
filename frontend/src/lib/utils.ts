@@ -28,6 +28,25 @@ export function formatDate(date: string | Date): string {
   }).format(new Date(date));
 }
 
+/**
+ * Cross-browser blob download that works on Safari/macOS.
+ * Appends anchor to DOM and delays URL revocation so Safari can start the download.
+ */
+export function downloadBlob(data: BlobPart, mime: string, filename: string) {
+  const blob = new Blob([data], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.style.display = "none";
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  }, 200);
+}
+
 export function getStatusColor(status: string): string {
   const colors: Record<string, string> = {
     pending: "text-yellow-400 bg-yellow-400/10",

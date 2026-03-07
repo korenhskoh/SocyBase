@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { jobsApi, exportApi, fanAnalysisApi, fbAdsApi } from "@/lib/api-client";
-import { formatDate, formatNumber, getStatusColor } from "@/lib/utils";
+import { formatDate, formatNumber, getStatusColor, downloadBlob } from "@/lib/utils";
 import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile, FanEngagementMetrics } from "@/types";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -154,12 +154,7 @@ export default function JobDetailPage() {
   const handleExportFans = async () => {
     try {
       const res = await fanAnalysisApi.exportFans(jobId, "csv");
-      const blob = new Blob([res.data], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `fan_analysis_${jobId}.csv`;
-      a.click();
+      downloadBlob(res.data, "text/csv", `fan_analysis_${jobId}.csv`);
     } catch { /* ignore */ }
   };
 
@@ -435,35 +430,17 @@ export default function JobDetailPage() {
 
   const handleExportCsv = async () => {
     const res = await exportApi.downloadCsv(jobId);
-    const blob = new Blob([res.data], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `socybase_export_${jobId}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(res.data, "text/csv", `socybase_export_${jobId}.csv`);
   };
 
   const handleExportFbAds = async () => {
     const res = await exportApi.downloadFbAds(jobId);
-    const blob = new Blob([res.data], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `socybase_fb_ads_${jobId}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(res.data, "text/csv", `socybase_fb_ads_${jobId}.csv`);
   };
 
   const handleExportXlsx = async () => {
     const res = await exportApi.downloadXlsx(jobId);
-    const blob = new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `socybase_export_${jobId}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(res.data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", `socybase_export_${jobId}.xlsx`);
   };
 
   const handleCreateCustomAudience = async () => {
