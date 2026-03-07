@@ -828,6 +828,18 @@ async def _execute_pipeline(job_id: str, celery_task):
                 # Publish completion to SSE subscribers
                 publish_job_progress(str(job.id), _build_progress_event(job, "finalize"))
 
+                # Audit log: job completed
+                try:
+                    from app.services.audit_service import write_audit_bg
+                    await write_audit_bg(
+                        "job.completed", user_id=job.user_id, tenant_id=job.tenant_id,
+                        resource_type="scraping_job", resource_id=job.id,
+                        details={"profiles": job.result_row_count, "credits": credits_used,
+                                 "job_type": job.job_type, "input": job.input_value},
+                    )
+                except Exception:
+                    pass
+
                 logger.info(
                     f"[Job {job_id}] Completed: {job.result_row_count} profiles, "
                     f"{credits_used} credits used"
@@ -907,6 +919,19 @@ async def _execute_pipeline(job_id: str, celery_task):
                     await send_admin_error_alert(job, f"{type(e).__name__}: {e}")
                 except Exception as admin_err:
                     logger.warning(f"[Job {job_id}] Admin alert failed: {admin_err}")
+
+                # Audit log: job failed
+                try:
+                    from app.services.audit_service import write_audit_bg
+                    await write_audit_bg(
+                        "job.failed", user_id=job.user_id, tenant_id=job.tenant_id,
+                        resource_type="scraping_job", resource_id=job.id,
+                        details={"error": f"{type(e).__name__}: {str(e)[:500]}",
+                                 "stage": failed_stage if 'failed_stage' in dir() else "unknown",
+                                 "job_type": job.job_type, "input": job.input_value},
+                    )
+                except Exception:
+                    pass
 
     except Exception as outer_err:
         # Fallback: if the DB session itself is broken (e.g., event loop mismatch),

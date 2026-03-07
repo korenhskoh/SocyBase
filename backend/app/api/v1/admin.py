@@ -109,11 +109,20 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    old_role = user.role
+    old_active = user.is_active
     if data.role is not None:
         user.role = data.role
     if data.is_active is not None:
         user.is_active = data.is_active
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "user.updated", user=admin,
+                      resource_type="user", resource_id=user.id,
+                      details={"target_email": user.email,
+                               "role": f"{old_role} -> {user.role}" if data.role else None,
+                               "is_active": f"{old_active} -> {user.is_active}" if data.is_active is not None else None})
     return user
 
 
@@ -203,6 +212,15 @@ async def approve_payment(
             tenant.settings = settings
 
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "payment.approved", user=admin,
+                      resource_type="payment", resource_id=payment.id,
+                      details={"tenant_id": str(payment.tenant_id),
+                               "amount_cents": payment.amount_cents,
+                               "credits_added": credits_to_add,
+                               "method": payment.method})
+
     await notify_payment_approved(
         str(payment.id), payment.amount_cents, payment.currency,
         credits_to_add, payment.method, db,
@@ -278,6 +296,15 @@ async def refund_payment(
             db.add(transaction)
 
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "payment.refunded", user=admin,
+                      resource_type="payment", resource_id=payment.id,
+                      details={"tenant_id": str(payment.tenant_id),
+                               "amount_cents": payment.amount_cents,
+                               "credits_deducted": credits_to_deduct,
+                               "method": payment.method})
+
     await notify_refund_processed(
         str(payment.id), payment.amount_cents, payment.currency,
         credits_to_deduct, payment.method, db,
@@ -303,6 +330,12 @@ async def reject_payment(
     if data.admin_notes:
         payment.admin_notes = data.admin_notes
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "payment.rejected", user=admin,
+                      resource_type="payment", resource_id=payment.id,
+                      details={"tenant_id": str(payment.tenant_id),
+                               "amount_cents": payment.amount_cents})
     return payment
 
 
@@ -334,6 +367,14 @@ async def grant_credits(
     )
     db.add(transaction)
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "credits.granted", user=admin,
+                      resource_type="credit_balance", resource_id=None,
+                      details={"tenant_id": str(data.tenant_id),
+                               "amount": data.amount,
+                               "new_balance": balance.balance,
+                               "description": data.description})
 
     return {"message": f"Granted {data.amount} credits", "new_balance": balance.balance}
 
@@ -496,6 +537,11 @@ async def set_tenant_concurrency(
     settings["max_concurrent_jobs"] = data.max_concurrent_jobs
     tenant.settings = settings
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "tenant.concurrency_updated", user=admin,
+                      resource_type="tenant", resource_id=tenant_id,
+                      details={"max_concurrent_jobs": data.max_concurrent_jobs})
     return {"max_concurrent_jobs": data.max_concurrent_jobs}
 
 
@@ -522,6 +568,12 @@ async def update_tenant_status(
         )
 
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "tenant.status_updated", user=admin,
+                      resource_type="tenant", resource_id=tenant_id,
+                      details={"is_active": tenant.is_active, "tenant_name": tenant.name})
+
     return {"tenant_id": str(tenant_id), "is_active": tenant.is_active}
 
 
@@ -617,6 +669,12 @@ async def update_tenant_settings(
         settings[field] = value
     tenant.settings = settings
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "tenant.settings_updated", user=admin,
+                      resource_type="tenant", resource_id=tenant_id,
+                      details=data.model_dump(exclude_unset=True))
+
     return {"settings": settings}
 
 
@@ -706,6 +764,11 @@ async def admin_cancel_job(
     job.status = "cancelled"
     _revoke_celery_task(job.celery_task_id)
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "job.admin_cancelled", user=admin,
+                      resource_type="scraping_job", resource_id=job.id,
+                      details={"tenant_id": str(job.tenant_id), "job_type": job.job_type})
     return {"detail": "Job cancelled", "job_id": str(job.id)}
 
 
@@ -728,6 +791,11 @@ async def admin_pause_job(
     job.status = "paused"
     _revoke_celery_task(job.celery_task_id)
     await db.flush()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "job.admin_paused", user=admin,
+                      resource_type="scraping_job", resource_id=job.id,
+                      details={"tenant_id": str(job.tenant_id), "job_type": job.job_type})
     return {"detail": "Job paused", "job_id": str(job.id)}
 
 
@@ -896,6 +964,12 @@ async def update_feature_flag(
         db.add(setting)
 
     await db.commit()
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "feature_flag.updated", user=admin,
+                      resource_type="system_setting",
+                      details={"flag": data.key, "enabled": data.enabled})
+
     return {"key": data.key, **value}
 
 
@@ -985,6 +1059,11 @@ async def update_payment_settings(
         resp["stripe_secret_key"] = PAYMENT_MASKED
     if resp.get("stripe_webhook_secret"):
         resp["stripe_webhook_secret"] = PAYMENT_MASKED
+
+    from app.services.audit_service import write_audit
+    await write_audit(db, "payment_settings.updated", user=admin,
+                      resource_type="system_setting",
+                      details={"keys_updated": list(data.model_dump(exclude_unset=True).keys())})
     return resp
 
 

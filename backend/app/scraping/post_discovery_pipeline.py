@@ -679,6 +679,18 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                 _publish_progress(job, "finalize")
 
+                # Audit log: job completed
+                try:
+                    from app.services.audit_service import write_audit_bg
+                    await write_audit_bg(
+                        "job.completed", user_id=job.user_id, tenant_id=job.tenant_id,
+                        resource_type="scraping_job", resource_id=job.id,
+                        details={"posts": total_posts_fetched, "credits": credits_used,
+                                 "job_type": "post_discovery", "input": job.input_value},
+                    )
+                except Exception:
+                    pass
+
                 logger.info(
                     f"[Job {job_id}] Completed: {total_posts_fetched} posts, "
                     f"{credits_used} credits used"
@@ -768,6 +780,19 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     await send_admin_error_alert(job, f"{type(e).__name__}: {e}")
                 except Exception as admin_err:
                     logger.warning(f"[Job {job_id}] Admin alert failed: {admin_err}")
+
+                # Audit log: job failed
+                try:
+                    from app.services.audit_service import write_audit_bg
+                    await write_audit_bg(
+                        "job.failed", user_id=job.user_id, tenant_id=job.tenant_id,
+                        resource_type="scraping_job", resource_id=job.id,
+                        details={"error": f"{type(e).__name__}: {str(e)[:500]}",
+                                 "stage": failed_stage if 'failed_stage' in dir() else "unknown",
+                                 "job_type": "post_discovery", "input": job.input_value},
+                    )
+                except Exception:
+                    pass
 
     except Exception as outer_err:
         # Fallback: if the DB session itself is broken, create a fresh session to mark job as failed

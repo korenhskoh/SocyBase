@@ -172,6 +172,13 @@ async def create_job(
         job.celery_task_id = task.id
         await db.flush()
 
+    # Audit log
+    from app.services.audit_service import write_audit
+    await write_audit(db, "job.created", user=user,
+                      resource_type="scraping_job", resource_id=job.id,
+                      details={"job_type": data.job_type, "input": data.input_value,
+                               "scheduled": bool(data.scheduled_at)})
+
     return job
 
 
@@ -409,6 +416,13 @@ async def resume_job(
     new_job.celery_task_id = task.id
     await db.flush()
 
+    # Audit log
+    from app.services.audit_service import write_audit
+    await write_audit(db, "job.resumed", user=user,
+                      resource_type="scraping_job", resource_id=new_job.id,
+                      details={"original_job_id": str(original_job.id),
+                               "job_type": original_job.job_type})
+
     return new_job
 
 
@@ -509,6 +523,14 @@ async def batch_action(
             new_job.celery_task_id = task.id
             await db.flush()
             success.append(str(new_job.id))
+
+    # Audit log for batch actions
+    if success:
+        from app.services.audit_service import write_audit
+        await write_audit(db, f"job.batch_{data.action}", user=user,
+                          resource_type="scraping_job",
+                          details={"action": data.action, "job_ids": success,
+                                   "failed_count": len(failed)})
 
     await db.flush()
     return {"success": success, "failed": failed}
@@ -713,6 +735,14 @@ async def create_jobs_from_posts(
         await db.flush()
 
         created_jobs.append({"id": str(job.id), "post_id": post_id, "status": "queued"})
+
+    # Audit log
+    if created_jobs:
+        from app.services.audit_service import write_audit
+        await write_audit(db, "job.batch_created", user=user,
+                          resource_type="scraping_job",
+                          details={"count": len(created_jobs),
+                                   "post_ids": data.post_ids[:10]})
 
     return {"created": created_jobs, "count": len(created_jobs)}
 
