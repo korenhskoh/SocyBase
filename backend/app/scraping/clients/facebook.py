@@ -134,13 +134,14 @@ class FacebookGraphClient(AbstractSocialClient):
         is_group: bool = False,
         after: str | None = None,
         limit: int = 25,
-        token_type: str | None = None,
     ) -> dict:
         """
         Fetch comments for a post with pagination.
 
         Groups use the direct /comments endpoint.
         Pages/profiles use nested field expansion on the post object.
+
+        Note: token_type is NOT supported by this endpoint (only by feed).
         """
         comment_fields = "message,created_time,from,like_count,can_remove,message_tags"
         reply_fields = "comments.limit(25)"
@@ -162,9 +163,6 @@ class FacebookGraphClient(AbstractSocialClient):
             }
             if after:
                 params["fields"] = f"comments.limit({limit}).after({after}){{{comment_fields},{reply_fields}}}"
-
-        if token_type:
-            params["token_type"] = token_type
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()

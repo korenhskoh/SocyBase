@@ -309,12 +309,6 @@ async def _execute_pipeline(job_id: str, celery_task):
                 total_top_level = 0
                 total_replies = 0
 
-                # Token fallback order: None = no token_type param (original behavior),
-                # then try named token types.  The /graph/{post_id} comments endpoint
-                # often rejects requests when token_type is explicitly set.
-                _TOKEN_FALLBACKS = [None, "EAAAAU", "EAAGNO", "EAAD6V"]
-                token_type = None  # start with no token_type (proven to work)
-
                 # If resuming, load comments from original job
                 if resume_from_job_id and original_job:
                     existing_result = await db.execute(
@@ -375,41 +369,21 @@ async def _execute_pipeline(job_id: str, celery_task):
                         ):
                             logger.warning(f"[Job {job_id}] Rate limiter timeout, proceeding anyway")
 
-                        # Retry with token cycling (401) and backoff (timeout)
+                        # Retry on timeout / 401 with backoff (no token_type — not
+                        # supported by the /graph/{post_id} comments endpoint).
                         response = None
                         last_err = None
                         for _attempt in range(3):
-                            # On each attempt, try all token types for 401 errors
-                            tried_types = [token_type] + [t for t in _TOKEN_FALLBACKS if t != token_type]
-                            for try_token in tried_types:
-                                try:
-                                    response = await client.get_post_comments(
-                                        post_id,
-                                        is_group=is_group,
-                                        after=next_cursor,
-                                        limit=25,
-                                        token_type=try_token,
-                                    )
-                                    if try_token != token_type:
-                                        logger.info(f"[Job {job_id}] Switched token from {token_type or 'default'} to {try_token or 'default'}")
-                                        await _append_log(db, job, "info", "fetch_comments",
-                                            f"Switched token type to {try_token or 'default'}")
-                                        token_type = try_token
-                                    last_err = None
-                                    break
-                                except httpx.HTTPStatusError as e:
-                                    if e.response.status_code == 401:
-                                        last_err = e
-                                        logger.warning(f"[Job {job_id}] 401 with token_type={try_token or 'default'}, trying next...")
-                                        continue
-                                    raise  # Non-401 errors propagate immediately
-                                except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
-                                    last_err = e
-                                    break  # Break token loop, retry with backoff
-                            if response is not None:
+                            try:
+                                response = await client.get_post_comments(
+                                    post_id,
+                                    is_group=is_group,
+                                    after=next_cursor,
+                                    limit=25,
+                                )
                                 break
-                            # Backoff before next attempt
-                            if isinstance(last_err, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout)):
+                            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
+                                last_err = e
                                 wait = 5 * (_attempt + 1)
                                 logger.warning(
                                     f"[Job {job_id}] Timeout on page {page_count + 1} "
@@ -418,16 +392,19 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 await _append_log(db, job, "warn", "fetch_comments",
                                     f"Timeout on page {page_count + 1}, retrying ({_attempt + 1}/3)")
                                 await asyncio.sleep(wait)
-                            elif isinstance(last_err, httpx.HTTPStatusError) and last_err.response.status_code == 401:
-                                # All token types returned 401 — back off and retry
-                                wait = 5 * (_attempt + 1)
-                                logger.warning(
-                                    f"[Job {job_id}] All tokens returned 401 on page {page_count + 1} "
-                                    f"(attempt {_attempt + 1}/3), retrying in {wait}s..."
-                                )
-                                await _append_log(db, job, "warn", "fetch_comments",
-                                    f"401 on page {page_count + 1}, retrying ({_attempt + 1}/3)")
-                                await asyncio.sleep(wait)
+                            except httpx.HTTPStatusError as e:
+                                if e.response.status_code == 401:
+                                    last_err = e
+                                    wait = 5 * (_attempt + 1)
+                                    logger.warning(
+                                        f"[Job {job_id}] 401 on page {page_count + 1} "
+                                        f"(attempt {_attempt + 1}/3), retrying in {wait}s..."
+                                    )
+                                    await _append_log(db, job, "warn", "fetch_comments",
+                                        f"401 on page {page_count + 1}, retrying ({_attempt + 1}/3)")
+                                    await asyncio.sleep(wait)
+                                else:
+                                    raise
 
                         if response is None:
                             # All retries exhausted — continue with what we have or fail
