@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { jobsApi } from "@/lib/api-client";
 import type { CursorHistoryItem } from "@/types";
@@ -163,6 +163,16 @@ function NewJobPage() {
   // ── Comment Scraper state ───────────────────────────────────────
   const [inputValue, setInputValue] = useState("");
   const [ignoreDuplicates, setIgnoreDuplicates] = useState(false);
+  const [preCheck, setPreCheck] = useState<{
+    previously_scraped: boolean;
+    total_jobs?: number;
+    total_profiles_scraped?: number;
+    total_comments_extracted?: number;
+    last_job_date?: string;
+    last_job_status?: string;
+  } | null>(null);
+  const [preCheckLoading, setPreCheckLoading] = useState(false);
+  const [preCheckAcknowledged, setPreCheckAcknowledged] = useState(false);
   const [useCustomCursor, setUseCustomCursor] = useState(false);
   const [selectedCursor, setSelectedCursor] = useState("");
   const [cursorHistory, setCursorHistory] = useState<CursorHistoryItem[]>([]);
@@ -235,6 +245,33 @@ function NewJobPage() {
     if (hours < 24) return `${hours}h ago`;
     return `${Math.floor(hours / 24)}d ago`;
   };
+
+  // Pre-check: warn user if post was previously scraped (debounced)
+  const preCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (preCheckTimer.current) clearTimeout(preCheckTimer.current);
+    setPreCheck(null);
+    setPreCheckAcknowledged(false);
+
+    const val = inputValue.trim();
+    if (!val || val.length < 5) return;
+
+    preCheckTimer.current = setTimeout(async () => {
+      setPreCheckLoading(true);
+      try {
+        const res = await jobsApi.preCheck(val);
+        setPreCheck(res.data);
+      } catch {
+        setPreCheck(null);
+      } finally {
+        setPreCheckLoading(false);
+      }
+    }, 800);
+
+    return () => {
+      if (preCheckTimer.current) clearTimeout(preCheckTimer.current);
+    };
+  }, [inputValue]);
 
   const selectPlatform = (p: PlatformDef) => {
     if (!p.enabled) return;
@@ -559,12 +596,105 @@ function NewJobPage() {
                   </div>
                 </div>
 
+                {/* Pre-scrape warning */}
+                {preCheckLoading && inputValue.trim().length >= 5 && (
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-white/[0.03] border border-white/5">
+                    <div className="h-4 w-4 border-2 border-white/20 border-t-primary-400 rounded-full animate-spin shrink-0" />
+                    <span className="text-xs text-white/40">Checking previous scrape history...</span>
+                  </div>
+                )}
+                {preCheck?.previously_scraped && (
+                  <div className={`rounded-xl border p-5 space-y-3 ${
+                    preCheckAcknowledged
+                      ? "border-emerald-500/20 bg-emerald-500/[0.05]"
+                      : "border-amber-500/20 bg-amber-500/[0.05]"
+                  }`}>
+                    <div className="flex items-start gap-3">
+                      {preCheckAcknowledged ? (
+                        <svg className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      ) : (
+                        <svg className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                        </svg>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-semibold ${preCheckAcknowledged ? "text-emerald-400" : "text-amber-400"}`}>
+                          {preCheckAcknowledged ? "Proceeding with scrape" : "This post has been scraped before"}
+                        </p>
+                        <p className="text-xs text-white/50 mt-1">
+                          {preCheck.total_jobs} previous job{preCheck.total_jobs !== 1 ? "s" : ""} found
+                          {preCheck.last_job_date && ` — last scraped ${formatTimeAgo(preCheck.last_job_date)}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-lg bg-white/[0.04] p-3 text-center">
+                        <p className="text-xs text-white/30">Profiles Scraped</p>
+                        <p className="text-base font-semibold text-white/70">{(preCheck.total_profiles_scraped || 0).toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-lg bg-white/[0.04] p-3 text-center">
+                        <p className="text-xs text-white/30">Comments Extracted</p>
+                        <p className="text-base font-semibold text-white/70">{(preCheck.total_comments_extracted || 0).toLocaleString()}</p>
+                      </div>
+                    </div>
+                    {dedupFeatureEnabled && (
+                      <div className="rounded-lg bg-amber-500/10 border border-amber-500/15 px-3 py-2">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={ignoreDuplicates}
+                            onChange={(e) => setIgnoreDuplicates(e.target.checked)}
+                            className="h-4 w-4 mt-0.5 rounded border-amber-500/30 bg-amber-500/10 text-amber-500 focus:ring-amber-500 shrink-0"
+                          />
+                          <div>
+                            <span className="text-sm font-medium text-amber-400">Skip duplicate users (save credits)</span>
+                            <p className="text-xs text-white/40 mt-0.5">
+                              {ignoreDuplicates
+                                ? `${(preCheck.total_profiles_scraped || 0).toLocaleString()} already-scraped users will be skipped. Only new commenters will be enriched.`
+                                : "All commenters will be scraped again, including those from previous jobs."}
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+                    )}
+                    {/* Action buttons */}
+                    {!preCheckAcknowledged ? (
+                      <div className="flex items-center gap-3 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setPreCheckAcknowledged(true)}
+                          className="flex-1 text-sm font-medium px-4 py-2.5 rounded-lg bg-amber-500/15 border border-amber-500/25 text-amber-400 hover:bg-amber-500/25 transition"
+                        >
+                          Scrape Anyway
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setInputValue(""); setPreCheck(null); }}
+                          className="flex-1 text-sm font-medium px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-white/50 hover:bg-white/10 hover:text-white/70 transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setPreCheckAcknowledged(false)}
+                        className="text-xs text-white/30 hover:text-white/50 transition underline"
+                      >
+                        Undo — go back to warning
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {/* Advanced Options */}
                 <div className="glass-card p-6 space-y-5">
                   <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">Advanced Options</h3>
 
-                  {/* Ignore duplicate users — only show when feature flag is enabled */}
-                  {dedupFeatureEnabled && (
+                  {/* Ignore duplicate users — only show when feature flag is enabled AND pre-check warning isn't already showing the toggle */}
+                  {dedupFeatureEnabled && !preCheck?.previously_scraped && (
                   <div className="space-y-1">
                     <div className="flex items-center gap-3">
                       <input
@@ -827,7 +957,7 @@ function NewJobPage() {
             {/* Submit */}
             <button
               type="submit"
-              disabled={loading || (selectedScrapeType.id === "comment_scraper" ? !inputValue.trim() : !pageInput.trim())}
+              disabled={loading || (selectedScrapeType.id === "comment_scraper" ? (!inputValue.trim() || (preCheck?.previously_scraped && !preCheckAcknowledged)) : !pageInput.trim())}
               className="btn-glow w-full text-lg py-4 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading

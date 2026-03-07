@@ -58,6 +58,8 @@ export default function JobDetailPage() {
   const lastPostsFetchRef = useRef<number>(0);
   const fetchPostsRef = useRef<() => void>(() => {});
   const fetchProfilesRef = useRef<() => void>(() => {});
+  const fetchJobRef = useRef<(opts?: { loadResults?: boolean }) => void>(() => {});
+  const sseRetryCount = useRef(0);
 
   // Fan analysis state
   const [fans, setFans] = useState<FanEngagementMetrics[]>([]);
@@ -201,24 +203,14 @@ export default function JobDetailPage() {
     }
   }, [jobId, fetchPosts, fetchProfiles]);
 
+  // Keep fetchJob ref current so SSE handler always uses latest version
+  fetchJobRef.current = fetchJob;
+
   // SSE connection for real-time progress
   const sseInitialized = useRef(false);
+  const sseRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (!job) return;
-
-    const isActive = job.status === "running" || job.status === "queued";
-
-    if (!isActive) {
-      // Close any existing SSE connection for terminal states
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-        sseInitialized.current = false;
-      }
-      return;
-    }
-
+  const connectSSE = useCallback(() => {
     // Don't create duplicate connections
     if (eventSourceRef.current || sseInitialized.current) return;
 
@@ -234,6 +226,7 @@ export default function JobDetailPage() {
       try {
         const data: ProgressEvent = JSON.parse(e.data);
         setLiveProgress(data);
+        sseRetryCount.current = 0; // Reset retry count on successful message
 
         // Update key fields on the job object for consistency
         setJob((prev) => prev ? {
@@ -273,23 +266,65 @@ export default function JobDetailPage() {
       es.close();
       eventSourceRef.current = null;
       sseInitialized.current = false;
-      // Re-fetch full job data (includes results, profiles, etc.)
-      fetchJob({ loadResults: true });
+      sseRetryCount.current = 0;
+      // Re-fetch full job data with a small delay for backend to commit
+      setTimeout(() => fetchJobRef.current({ loadResults: true }), 500);
+      // Retry again after 3s in case profiles weren't ready
+      setTimeout(() => fetchJobRef.current({ loadResults: true }), 3500);
     });
 
     es.onerror = () => {
-      // SSE failed — fall back to polling
+      // SSE failed — close and retry with backoff
       es.close();
       eventSourceRef.current = null;
       sseInitialized.current = false;
+
+      if (sseRetryCount.current < 5) {
+        const delay = Math.min(2000 * Math.pow(1.5, sseRetryCount.current), 10000);
+        sseRetryCount.current += 1;
+        sseRetryTimer.current = setTimeout(() => {
+          connectSSE();
+        }, delay);
+      }
+      // After 5 retries, fall back to polling only
     };
+  }, [jobId]);
+
+  useEffect(() => {
+    if (!job) return;
+
+    const isActive = job.status === "running" || job.status === "queued";
+
+    if (!isActive) {
+      // Close any existing SSE connection for terminal states
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+        sseInitialized.current = false;
+      }
+      if (sseRetryTimer.current) {
+        clearTimeout(sseRetryTimer.current);
+        sseRetryTimer.current = null;
+      }
+      sseRetryCount.current = 0;
+      return;
+    }
+
+    connectSSE();
 
     return () => {
-      es.close();
-      eventSourceRef.current = null;
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
       sseInitialized.current = false;
+      sseRetryCount.current = 0;
+      if (sseRetryTimer.current) {
+        clearTimeout(sseRetryTimer.current);
+        sseRetryTimer.current = null;
+      }
     };
-  }, [job?.status, jobId, fetchJob]);
+  }, [job?.status, jobId, connectSSE]);
 
   // Initial fetch + fallback poll (only if SSE is not connected)
   useEffect(() => {
@@ -336,6 +371,18 @@ export default function JobDetailPage() {
     if (!job || job.job_type === "post_discovery") return;
     fetchProfiles();
   }, [profilesPage, profilesPageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Retry loading profiles if job completed but profiles not loaded yet
+  useEffect(() => {
+    if (!job || job.job_type === "post_discovery") return;
+    if (!["completed", "paused", "failed"].includes(job.status)) return;
+    if (profiles.length > 0 || profilesTotal > 0) return;
+    if (job.result_row_count === 0) return;
+
+    // Profiles should exist but haven't loaded — retry after a delay
+    const timer = setTimeout(() => fetchProfilesRef.current(), 2000);
+    return () => clearTimeout(timer);
+  }, [job?.status, job?.result_row_count, profiles.length, profilesTotal, job?.job_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch fans when job is a completed comment scraper
   useEffect(() => {
@@ -1429,14 +1476,67 @@ export default function JobDetailPage() {
         );
       })()}
 
-      {/* Empty state for cancelled/paused/failed comment scrape jobs */}
-      {!isPostDiscovery && profiles.length === 0 && profilesTotal === 0 && ["cancelled", "paused", "failed"].includes(job.status) && job.result_row_count === 0 && (
-        <div className="glass-card p-8 text-center">
-          <p className="text-sm text-white/40">
-            {job.status === "cancelled" && "Job was stopped before any profiles were scraped."}
-            {job.status === "paused" && "Job was paused. You can resume it to continue scraping."}
-            {job.status === "failed" && "Job failed before completing profile scraping."}
-          </p>
+      {/* Empty state for terminal comment scrape jobs with no profiles */}
+      {!isPostDiscovery && profiles.length === 0 && profilesTotal === 0 && ["completed", "cancelled", "paused", "failed"].includes(job.status) && job.result_row_count === 0 && (() => {
+        const ps = pipelineState as Record<string, unknown> | undefined;
+        const dupesRemoved = (ps?.duplicates_removed as number) || 0;
+        const totalCommenters = (ps?.total_unique_commenters as number) || 0;
+        const allDeduped = job.status === "completed" && dupesRemoved > 0 && totalCommenters > 0;
+
+        return (
+          <div className="glass-card p-6 space-y-3">
+            {allDeduped ? (
+              <>
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                    <svg className="h-5 w-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-white">All commenters already scraped</p>
+                    <p className="text-sm text-white/50 mt-1">
+                      Found {formatNumber(totalCommenters)} unique commenters, but all {formatNumber(dupesRemoved)} were already scraped in previous jobs for this post. No new profiles to enrich.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="bg-white/[0.03] rounded-lg p-3">
+                    <p className="text-xs text-white/30">Total Comments</p>
+                    <p className="text-base font-semibold text-white/70">{formatNumber((ps?.total_comments_fetched as number) || 0)}</p>
+                  </div>
+                  <div className="bg-white/[0.03] rounded-lg p-3">
+                    <p className="text-xs text-white/30">Unique Commenters</p>
+                    <p className="text-base font-semibold text-white/70">{formatNumber(totalCommenters)}</p>
+                  </div>
+                  <div className="bg-amber-500/10 rounded-lg p-3">
+                    <p className="text-xs text-amber-400/60">Already Scraped</p>
+                    <p className="text-base font-semibold text-amber-400">{formatNumber(dupesRemoved)}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-white/25">
+                  Tip: To scrape these users again, disable &quot;Skip duplicate users&quot; in job settings before creating the job.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-white/40 text-center py-2">
+                {job.status === "completed" && "Job completed but no profiles were found."}
+                {job.status === "cancelled" && "Job was stopped before any profiles were scraped."}
+                {job.status === "paused" && "Job was paused. You can resume it to continue scraping."}
+                {job.status === "failed" && "Job failed before completing profile scraping."}
+              </p>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Loading state for completed/paused/failed jobs that have profiles but haven't loaded yet */}
+      {!isPostDiscovery && profiles.length === 0 && profilesTotal === 0 && ["completed", "paused", "failed"].includes(job.status) && job.result_row_count > 0 && (
+        <div className="glass-card p-8">
+          <div className="flex flex-col items-center justify-center gap-3">
+            <div className="h-6 w-6 border-2 border-primary-500/30 border-t-primary-400 rounded-full animate-spin" />
+            <p className="text-sm text-white/40">Loading {formatNumber(job.result_row_count)} scraped profiles...</p>
+          </div>
         </div>
       )}
 

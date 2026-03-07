@@ -107,9 +107,18 @@ export default function SettingsPage() {
   const handleLinkTelegram = async () => {
     try {
       const res = await telegramApi.getLinkToken();
+      if (res.data.error) {
+        alert(res.data.error);
+        return;
+      }
       const link = res.data.link;
+      if (!link) {
+        alert("Failed to generate link. Is the Telegram bot configured?");
+        return;
+      }
       setTelegramLink(link);
-      window.open(link, "_blank");
+      // Use location.href for reliable navigation (window.open gets blocked by popup blockers after async)
+      window.location.href = link;
     } catch {
       alert("Failed to generate link. Is the Telegram bot configured?");
     }

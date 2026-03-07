@@ -557,19 +557,27 @@ async def _execute_pipeline(job_id: str, celery_task):
                         logger.info(f"[Job {job_id}] Skipped {dupes_removed} duplicate users from previous jobs")
 
                 user_ids = list(unique_users.keys())
+                total_unique_before_dedup = len(user_ids) + (dupes_removed if dedup_enabled else 0)
                 job.total_items = len(user_ids)
                 job.progress_pct = _calc_stage_progress("deduplicate")
                 await _save_pipeline_state(
                     db, job, "deduplicate",
                     unique_user_ids_found=len(user_ids),
+                    duplicates_removed=dupes_removed if dedup_enabled else 0,
+                    total_unique_commenters=total_unique_before_dedup,
                 )
                 publish_job_progress(str(job.id), _build_progress_event(
                     job, "deduplicate",
-                    {"unique_users": len(user_ids), "total_comments": len(all_comments)},
+                    {"unique_users": len(user_ids), "total_comments": len(all_comments),
+                     "duplicates_removed": dupes_removed if dedup_enabled else 0},
                 ))
 
                 logger.info(f"[Job {job_id}] Found {len(user_ids)} unique users from {len(all_comments)} comments")
-                await _append_log(db, job, "info", "deduplicate", f"Found {len(user_ids)} unique users from {len(all_comments)} comments")
+                if dedup_enabled and dupes_removed:
+                    await _append_log(db, job, "info", "deduplicate",
+                        f"Found {total_unique_before_dedup} unique commenters, skipped {dupes_removed} already scraped → {len(user_ids)} new users")
+                else:
+                    await _append_log(db, job, "info", "deduplicate", f"Found {len(user_ids)} unique users from {len(all_comments)} comments")
 
                 # Check credit balance
                 logger.info(f"[Job {job_id}] Step: checking credit balance for tenant {job.tenant_id}")

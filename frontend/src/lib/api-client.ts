@@ -114,6 +114,8 @@ export const jobsApi = {
   getPostDiscoveryCursors: (inputValue: string) =>
     api.get("/jobs/post-discovery-cursors", { params: { input_value: inputValue } }),
   getFeatureFlags: () => api.get("/jobs/feature-flags"),
+  preCheck: (inputValue: string) =>
+    api.get("/jobs/pre-check", { params: { input_value: inputValue } }),
 };
 
 // Credits API

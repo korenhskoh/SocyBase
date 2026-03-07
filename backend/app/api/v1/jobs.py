@@ -51,6 +51,58 @@ async def get_public_feature_flags(
     return {"flags": flags}
 
 
+@router.get("/pre-check")
+async def pre_scrape_check(
+    input_value: str = Query(..., description="Post URL or page ID to check"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check if a post/page has been scraped before by this tenant.
+
+    Returns previous job stats so the user can decide whether to proceed
+    or enable/disable deduplication.
+    """
+    # Find completed jobs for this input from the same tenant
+    jobs_result = await db.execute(
+        select(ScrapingJob).where(
+            ScrapingJob.tenant_id == user.tenant_id,
+            ScrapingJob.input_value == input_value,
+            ScrapingJob.status.in_(["completed", "paused", "failed"]),
+        ).order_by(ScrapingJob.created_at.desc())
+    )
+    prev_jobs = jobs_result.scalars().all()
+
+    if not prev_jobs:
+        return {"previously_scraped": False}
+
+    # Count total unique profiles already scraped for this input
+    profiles_result = await db.execute(
+        select(func.count(distinct(ScrapedProfile.platform_user_id))).where(
+            ScrapedProfile.job_id.in_([j.id for j in prev_jobs]),
+            ScrapedProfile.scrape_status == "success",
+        )
+    )
+    total_profiles = profiles_result.scalar() or 0
+
+    # Count total comments extracted
+    comments_result = await db.execute(
+        select(func.count(ExtractedComment.id)).where(
+            ExtractedComment.job_id.in_([j.id for j in prev_jobs]),
+        )
+    )
+    total_comments = comments_result.scalar() or 0
+
+    last_job = prev_jobs[0]
+    return {
+        "previously_scraped": True,
+        "total_jobs": len(prev_jobs),
+        "total_profiles_scraped": total_profiles,
+        "total_comments_extracted": total_comments,
+        "last_job_date": last_job.created_at.isoformat() if last_job.created_at else None,
+        "last_job_status": last_job.status,
+    }
+
+
 # ── Helpers ──────────────────────────────────────────────────────────
 
 

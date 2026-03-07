@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
+from app.services.telegram_notify import get_telegram_bot_token
 
 router = APIRouter()
 
@@ -20,7 +21,8 @@ async def generate_telegram_link_token(
 ):
     """Generate a short-lived token for linking Telegram account."""
     settings = get_settings()
-    if not settings.telegram_bot_token:
+    bot_token = await get_telegram_bot_token()
+    if not bot_token:
         return {"error": "Telegram bot is not configured"}
 
     expire = datetime.now(timezone.utc) + timedelta(minutes=10)
