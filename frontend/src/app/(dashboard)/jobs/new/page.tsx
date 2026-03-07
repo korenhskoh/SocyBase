@@ -640,20 +640,22 @@ function NewJobPage() {
                       </div>
                     </div>
                     {dedupFeatureEnabled && (
-                      <div className="rounded-lg bg-amber-500/10 border border-amber-500/15 px-3 py-2">
-                        <label className="flex items-start gap-2 cursor-pointer">
+                      <div className={`rounded-lg border px-3 py-2.5 ${ignoreDuplicates ? "bg-emerald-500/10 border-emerald-500/20" : "bg-amber-500/10 border-amber-500/15"}`}>
+                        <label className="flex items-start gap-2.5 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={ignoreDuplicates}
                             onChange={(e) => setIgnoreDuplicates(e.target.checked)}
-                            className="h-4 w-4 mt-0.5 rounded border-amber-500/30 bg-amber-500/10 text-amber-500 focus:ring-amber-500 shrink-0"
+                            className={`h-4 w-4 mt-0.5 rounded shrink-0 ${ignoreDuplicates ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500 focus:ring-emerald-500" : "border-amber-500/30 bg-amber-500/10 text-amber-500 focus:ring-amber-500"}`}
                           />
                           <div>
-                            <span className="text-sm font-medium text-amber-400">Skip duplicate users (save credits)</span>
-                            <p className="text-xs text-white/40 mt-0.5">
+                            <span className={`text-sm font-medium ${ignoreDuplicates ? "text-emerald-400" : "text-amber-400"}`}>
+                              {ignoreDuplicates ? "Dedup enabled — saving credits" : "Skip already-scraped profiles?"}
+                            </span>
+                            <p className="text-xs text-white/40 mt-1">
                               {ignoreDuplicates
-                                ? `${(preCheck.total_profiles_scraped || 0).toLocaleString()} already-scraped users will be skipped. Only new commenters will be enriched.`
-                                : "All commenters will be scraped again, including those from previous jobs."}
+                                ? `${(preCheck.total_profiles_scraped || 0).toLocaleString()} profiles from previous jobs will be skipped. You'll only be charged for new profiles found.`
+                                : `All ${(preCheck.total_profiles_scraped || 0).toLocaleString()} previously scraped profiles will be re-enriched and charged again (1 credit per profile).`}
                             </p>
                           </div>
                         </label>
@@ -695,7 +697,7 @@ function NewJobPage() {
 
                   {/* Ignore duplicate users — only show when feature flag is enabled AND pre-check warning isn't already showing the toggle */}
                   {dedupFeatureEnabled && !preCheck?.previously_scraped && (
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <div className="flex items-center gap-3">
                       <input
                         type="checkbox"
@@ -705,11 +707,11 @@ function NewJobPage() {
                         className="h-4 w-4 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500"
                       />
                       <label htmlFor="ignoreDuplicates" className="text-sm font-medium text-white/80">
-                        Ignore duplicate comment users
+                        Skip duplicate profiles (save credits)
                       </label>
                     </div>
                     <p className="text-xs text-white/30 ml-7">
-                      Skip users already scraped in previous jobs for the same post. Saves credits.
+                      If this post was scraped before, profiles already collected won&apos;t be enriched again — you&apos;ll only be charged for new profiles (1 credit per profile).
                     </p>
                   </div>
                   )}
