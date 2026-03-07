@@ -309,11 +309,11 @@ async def _execute_pipeline(job_id: str, celery_task):
                 total_top_level = 0
                 total_replies = 0
 
-                # Token types to try on 401 (same fallback order as post_discovery)
-                _TOKEN_FALLBACKS = ["EAAAAU", "EAAGNO", "EAAD6V"]
-                token_type = job_settings.get("token_type", "EAAAAU")
-                if is_group:
-                    token_type = "EAAGNO"
+                # Token fallback order: None = no token_type param (original behavior),
+                # then try named token types.  The /graph/{post_id} comments endpoint
+                # often rejects requests when token_type is explicitly set.
+                _TOKEN_FALLBACKS = [None, "EAAAAU", "EAAGNO", "EAAD6V"]
+                token_type = None  # start with no token_type (proven to work)
 
                 # If resuming, load comments from original job
                 if resume_from_job_id and original_job:
@@ -391,16 +391,16 @@ async def _execute_pipeline(job_id: str, celery_task):
                                         token_type=try_token,
                                     )
                                     if try_token != token_type:
-                                        logger.info(f"[Job {job_id}] Switched token from {token_type} to {try_token}")
+                                        logger.info(f"[Job {job_id}] Switched token from {token_type or 'default'} to {try_token or 'default'}")
                                         await _append_log(db, job, "info", "fetch_comments",
-                                            f"Switched token type to {try_token}")
+                                            f"Switched token type to {try_token or 'default'}")
                                         token_type = try_token
                                     last_err = None
                                     break
                                 except httpx.HTTPStatusError as e:
                                     if e.response.status_code == 401:
                                         last_err = e
-                                        logger.warning(f"[Job {job_id}] 401 with token_type={try_token}, trying next...")
+                                        logger.warning(f"[Job {job_id}] 401 with token_type={try_token or 'default'}, trying next...")
                                         continue
                                     raise  # Non-401 errors propagate immediately
                                 except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
