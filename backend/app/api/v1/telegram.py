@@ -30,7 +30,7 @@ async def generate_telegram_link_token(
         algorithm=settings.jwt_algorithm,
     )
     # Deep link that opens the bot with the token as start param
-    deep_link = f"https://t.me/SocyBaseBot?start={token}"
+    deep_link = f"https://t.me/Socybase_bot?start={token}"
     return {"link": deep_link, "expires_in": 600}
 
 

@@ -370,41 +370,80 @@ export default function SettingsPage() {
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-emerald-400" />
-              <span className="text-sm text-emerald-400 font-medium">Connected</span>
+              <span className="text-sm text-emerald-400 font-medium">Telegram Connected</span>
             </div>
-            <p className="text-xs text-white/30">
-              You can use /jobs, /newjob, /credits, and /status commands in the SocyBase Telegram bot.
-              Job completion notifications are sent automatically.
+            <p className="text-sm text-white/40">
+              Your Telegram account is linked. You&apos;ll receive job completion notifications automatically and can manage jobs via the bot.
             </p>
-            <button
-              onClick={handleUnlinkTelegram}
-              className="text-xs px-3 py-1.5 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition"
-            >
-              Unlink Telegram
-            </button>
+            <div className="flex items-center gap-3">
+              <a
+                href="https://t.me/Socybase_bot"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm px-4 py-2 rounded-lg font-medium text-white bg-[#00AAFF]/15 border border-[#00AAFF]/25 hover:bg-[#00AAFF]/25 transition flex items-center gap-2"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
+                </svg>
+                Open @Socybase_bot
+              </a>
+              <button
+                onClick={handleUnlinkTelegram}
+                className="text-xs px-3 py-1.5 rounded-lg font-medium text-red-400 bg-red-400/10 border border-red-400/20 hover:bg-red-400/20 transition"
+              >
+                Unlink
+              </button>
+            </div>
           </div>
         ) : (
-          <div className="space-y-3">
-            <p className="text-sm text-white/40">
-              Link your Telegram account to manage scraping jobs remotely and receive
-              notifications when jobs complete.
+          <div className="space-y-4">
+            {/* How to connect - step by step */}
+            <div className="rounded-lg bg-white/[0.03] border border-white/5 p-4 space-y-3">
+              <p className="text-sm font-medium text-white/70">How to connect:</p>
+              <ol className="space-y-2 text-sm text-white/50">
+                <li className="flex items-start gap-2">
+                  <span className="text-[#00AAFF] font-bold shrink-0">1.</span>
+                  Click the <strong className="text-white/70">Link Telegram</strong> button below to open <span className="text-[#00AAFF]">@Socybase_bot</span> in Telegram
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-[#00AAFF] font-bold shrink-0">2.</span>
+                  Press <strong className="text-white/70">Start</strong> in the Telegram chat — your account will be linked automatically
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-[#00AAFF] font-bold shrink-0">3.</span>
+                  Use <span className="font-mono text-[#00AAFF] text-xs">/login</span> to verify with your email, then you&apos;re all set!
+                </li>
+              </ol>
+            </div>
+
+            <p className="text-xs text-white/30">
+              Once connected, you can create and monitor scraping jobs, check credits, place traffic bot orders, and receive real-time notifications — all from Telegram.
             </p>
+
             <div className="space-y-2">
               <button
                 onClick={handleLinkTelegram}
-                className="text-sm px-4 py-2 rounded-lg font-medium text-white bg-[#00AAFF]/15 border border-[#00AAFF]/25 hover:bg-[#00AAFF]/25 transition flex items-center gap-2"
+                className="text-sm px-4 py-2.5 rounded-lg font-medium text-white bg-[#00AAFF]/15 border border-[#00AAFF]/25 hover:bg-[#00AAFF]/25 transition flex items-center gap-2"
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
                 </svg>
                 Link Telegram
               </button>
-              {telegramLink && (
+              {telegramLink ? (
                 <p className="text-xs text-white/30">
                   A new tab should open. If it didn&apos;t,{" "}
                   <a href={telegramLink} target="_blank" rel="noopener noreferrer" className="text-[#00AAFF] hover:underline">
-                    click here
+                    click here to open @Socybase_bot
                   </a>.
+                </p>
+              ) : (
+                <p className="text-xs text-white/30">
+                  Or open Telegram and search for{" "}
+                  <a href="https://t.me/Socybase_bot" target="_blank" rel="noopener noreferrer" className="text-[#00AAFF] hover:underline font-medium">
+                    @Socybase_bot
+                  </a>{" "}
+                  directly.
                 </p>
               )}
             </div>
@@ -507,7 +546,7 @@ export default function SettingsPage() {
               { cmd: "/help", desc: "Show all available commands" },
             ].map((item) => (
               <div key={item.cmd} className="flex items-center gap-2 px-2 py-1.5 rounded bg-white/[0.02]">
-                <span className="text-xs font-mono text-[#00AAFF] font-medium w-16 shrink-0">{item.cmd}</span>
+                <span className="text-xs font-mono text-[#00AAFF] font-medium w-20 shrink-0">{item.cmd}</span>
                 <span className="text-xs text-white/40">{item.desc}</span>
               </div>
             ))}
