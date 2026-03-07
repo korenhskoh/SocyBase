@@ -1548,21 +1548,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Generate and send OTP
-        otp = _generate_otp()
-        context.user_data["login_awaiting_email"] = False
-        context.user_data["login_email"] = email
-        context.user_data["login_otp"] = otp
-        context.user_data["login_otp_expires"] = time.time() + OTP_EXPIRY_SECONDS
-        context.user_data["login_awaiting_otp"] = True
-        context.user_data["login_otp_resends"] = 0
+        # Link account directly (no OTP — email existence is verification)
+        chat_id = str(update.effective_chat.id)
+        async with async_session() as db:
+            result = await db.execute(
+                select(User).where(func.lower(User.email) == email)
+            )
+            u = result.scalar_one_or_none()
+            if u:
+                u.telegram_chat_id = chat_id
+                await db.commit()
 
-        sent = await send_email(
-            to=email,
-            subject="SocyBase Telegram Login Code",
-            body_text=f"Your verification code is: {otp}\n\nThis code expires in 10 minutes.",
-            body_html=_otp_email_html(otp),
-        )
+        _clear_login_flow(context)
+        context.user_data.pop("login_attempts", None)
+        context.user_data.pop("login_cooldown_until", None)
 
         # Try to delete the email message for privacy
         try:
@@ -1570,23 +1569,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        if sent:
-            masked = _mask_email(email)
-            await update.effective_chat.send_message(
-                f"\U0001F4E7 A 6-digit code has been sent to <b>{masked}</b>.\n\n"
-                "Enter the code below:\n\n"
-                "<i>Send /cancel to abort.</i>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("\U0001F504 Resend Code", callback_data="login:resend_otp"),
-                ]]),
-            )
-        else:
-            _clear_login_flow(context)
-            await update.effective_chat.send_message(
-                "\u274C Failed to send verification email.\n"
-                "Please check that SMTP is configured, or try /login again later."
-            )
+        await update.effective_chat.send_message(
+            f"\u2705 <b>Account linked!</b>\n\n"
+            f"Logged in as <b>{email}</b>.\n"
+            "Use the buttons below to get started.",
+            parse_mode="HTML",
+            reply_markup=MAIN_KEYBOARD,
+        )
         return
 
     # ── Login flow: awaiting OTP code ─────────────────────────────
