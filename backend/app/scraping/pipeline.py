@@ -601,13 +601,9 @@ async def _execute_pipeline(job_id: str, celery_task):
                     orig_profiles = orig_profiles_result.scalars().all()
                     skip_user_ids = {op.platform_user_id for op in orig_profiles if op.platform_user_id in unique_users}
 
-                # Only charge for new pages (fetched in this run) + new profiles to enrich
-                if resume_from_job_id:
-                    new_pages = max(0, page_count - (orig_state.get("comment_pages_fetched", 0)))
-                else:
-                    new_pages = page_count
-                estimated_cost = (len(user_ids) - len(skip_user_ids)) + new_pages
-                logger.info(f"[Job {job_id}] Step: estimated_cost={estimated_cost} (users={len(user_ids)}, pages={new_pages})")
+                # Only charge for profiles enriched (comment page fetching is free)
+                estimated_cost = len(user_ids) - len(skip_user_ids)
+                logger.info(f"[Job {job_id}] Step: estimated_cost={estimated_cost} (profiles to enrich={len(user_ids)}, skipped={len(skip_user_ids)})")
 
                 job.credits_estimated = estimated_cost
 
@@ -678,7 +674,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                 logger.info(f"[Job {job_id}] Stage 4: Starting profile enrichment for {len(user_ids_to_enrich)} users ({len(skip_user_ids)} skipped)")
                 await _append_log(db, job, "info", "enrich_profiles", f"Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
                 already_done = len(skip_user_ids)
-                credits_used = new_pages if resume_from_job_id else page_count
+                credits_used = 0  # Only charge per profile enriched (comment pages are free)
                 job.progress_pct = _calc_stage_progress("enrich_profiles", done=already_done, total=len(user_ids))
                 publish_job_progress(str(job.id), _build_progress_event(
                     job, "enrich_profiles",
