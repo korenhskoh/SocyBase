@@ -309,6 +309,12 @@ async def _execute_pipeline(job_id: str, celery_task):
                 total_top_level = 0
                 total_replies = 0
 
+                # Token types to try on 401 (same fallback order as post_discovery)
+                _TOKEN_FALLBACKS = ["EAAAAU", "EAAGNO", "EAAD6V"]
+                token_type = job_settings.get("token_type", "EAAAAU")
+                if is_group:
+                    token_type = "EAAGNO"
+
                 # If resuming, load comments from original job
                 if resume_from_job_id and original_job:
                     existing_result = await db.execute(
@@ -369,42 +375,75 @@ async def _execute_pipeline(job_id: str, celery_task):
                         ):
                             logger.warning(f"[Job {job_id}] Rate limiter timeout, proceeding anyway")
 
-                        # Retry timeout errors up to 3 times per page, then
-                        # gracefully break if we already have comments
+                        # Retry with token cycling (401) and backoff (timeout)
                         response = None
+                        last_err = None
                         for _attempt in range(3):
-                            try:
-                                response = await client.get_post_comments(
-                                    post_id,
-                                    is_group=is_group,
-                                    after=next_cursor,
-                                    limit=25,
-                                )
+                            # On each attempt, try all token types for 401 errors
+                            tried_types = [token_type] + [t for t in _TOKEN_FALLBACKS if t != token_type]
+                            for try_token in tried_types:
+                                try:
+                                    response = await client.get_post_comments(
+                                        post_id,
+                                        is_group=is_group,
+                                        after=next_cursor,
+                                        limit=25,
+                                        token_type=try_token,
+                                    )
+                                    if try_token != token_type:
+                                        logger.info(f"[Job {job_id}] Switched token from {token_type} to {try_token}")
+                                        await _append_log(db, job, "info", "fetch_comments",
+                                            f"Switched token type to {try_token}")
+                                        token_type = try_token
+                                    last_err = None
+                                    break
+                                except httpx.HTTPStatusError as e:
+                                    if e.response.status_code == 401:
+                                        last_err = e
+                                        logger.warning(f"[Job {job_id}] 401 with token_type={try_token}, trying next...")
+                                        continue
+                                    raise  # Non-401 errors propagate immediately
+                                except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
+                                    last_err = e
+                                    break  # Break token loop, retry with backoff
+                            if response is not None:
                                 break
-                            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as timeout_err:
+                            # Backoff before next attempt
+                            if isinstance(last_err, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout)):
                                 wait = 5 * (_attempt + 1)
                                 logger.warning(
-                                    f"[Job {job_id}] Timeout fetching page {page_count + 1} "
-                                    f"(attempt {_attempt + 1}/3): {timeout_err}, retrying in {wait}s..."
+                                    f"[Job {job_id}] Timeout on page {page_count + 1} "
+                                    f"(attempt {_attempt + 1}/3), retrying in {wait}s..."
                                 )
                                 await _append_log(db, job, "warn", "fetch_comments",
                                     f"Timeout on page {page_count + 1}, retrying ({_attempt + 1}/3)")
                                 await asyncio.sleep(wait)
+                            elif isinstance(last_err, httpx.HTTPStatusError) and last_err.response.status_code == 401:
+                                # All token types returned 401 — back off and retry
+                                wait = 5 * (_attempt + 1)
+                                logger.warning(
+                                    f"[Job {job_id}] All tokens returned 401 on page {page_count + 1} "
+                                    f"(attempt {_attempt + 1}/3), retrying in {wait}s..."
+                                )
+                                await _append_log(db, job, "warn", "fetch_comments",
+                                    f"401 on page {page_count + 1}, retrying ({_attempt + 1}/3)")
+                                await asyncio.sleep(wait)
 
                         if response is None:
-                            # All 3 retries failed for this page
+                            # All retries exhausted — continue with what we have or fail
                             if all_comments:
+                                err_type = type(last_err).__name__ if last_err else "Unknown"
                                 logger.warning(
-                                    f"[Job {job_id}] Timeout after 3 retries on page {page_count + 1}. "
+                                    f"[Job {job_id}] {err_type} after retries on page {page_count + 1}. "
                                     f"Continuing with {len(all_comments)} comments already fetched."
                                 )
                                 await _append_log(db, job, "warn", "fetch_comments",
-                                    f"Timeout after retries — continuing with {len(all_comments)} comments collected so far")
+                                    f"{err_type} after retries — continuing with {len(all_comments)} comments collected so far")
                                 break
+                            elif last_err is not None:
+                                raise last_err
                             else:
-                                raise httpx.ReadTimeout(
-                                    f"Timeout fetching comments page {page_count + 1} with no data collected"
-                                )
+                                raise RuntimeError(f"Failed to fetch comments page {page_count + 1}")
 
                         logger.info(
                             "[Job %s] Raw comments response keys: %s, first 500 chars: %s",

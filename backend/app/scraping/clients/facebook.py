@@ -134,6 +134,7 @@ class FacebookGraphClient(AbstractSocialClient):
         is_group: bool = False,
         after: str | None = None,
         limit: int = 25,
+        token_type: str | None = None,
     ) -> dict:
         """
         Fetch comments for a post with pagination.
@@ -161,6 +162,9 @@ class FacebookGraphClient(AbstractSocialClient):
             }
             if after:
                 params["fields"] = f"comments.limit({limit}).after({after}){{{comment_fields},{reply_fields}}}"
+
+        if token_type:
+            params["token_type"] = token_type
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()
