@@ -142,12 +142,26 @@ async def _append_log(db: AsyncSession, job: ScrapingJob, level: str, stage: str
 
 
 async def _retry_profile_fetch(client, rate_limiter, uid: str, max_retries: int = 2) -> dict:
-    """Fetch a user profile with retries and linear backoff."""
+    """Fetch a user profile with retries and backoff.
+
+    Uses longer backoff (5s/10s/15s) for timeout and 401 errors,
+    shorter backoff (1s/2s/3s) for other transient errors.
+    """
     last_exc = None
     for attempt in range(1 + max_retries):
         try:
             await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
             return await client.get_user_profile(uid)
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
+            last_exc = e
+            if attempt < max_retries:
+                await asyncio.sleep(5.0 * (attempt + 1))
+        except httpx.HTTPStatusError as e:
+            last_exc = e
+            if e.response.status_code == 401 and attempt < max_retries:
+                await asyncio.sleep(5.0 * (attempt + 1))
+            elif e.response.status_code != 401:
+                raise  # Non-retryable HTTP error
         except Exception as e:
             last_exc = e
             if attempt < max_retries:

@@ -448,7 +448,15 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                     raw_response = None
                                     await asyncio.sleep(wait)
                                     continue
-                                raise  # Non-transient or last attempt
+                                # Non-transient or last attempt — graceful fallback
+                                if total_posts_fetched > 0:
+                                    logger.warning(
+                                        f"[Job {job_id}] Unwrap error after {total_posts_fetched} posts collected, continuing with partial data: {unwrap_err}"
+                                    )
+                                    await _append_log(db, job, "warn", "fetch_posts",
+                                        f"API error after {total_posts_fetched} posts, continuing with collected data")
+                                    break
+                                raise  # No data collected, propagate error
 
                         if isinstance(last_err, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout)):
                             if attempt < max_retries - 1:
@@ -461,10 +469,30 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                 await asyncio.sleep(wait)
                                 continue
                             else:
-                                raise last_err  # All retries exhausted
+                                # All retries exhausted — graceful fallback
+                                if total_posts_fetched > 0:
+                                    logger.warning(
+                                        f"[Job {job_id}] Timeout retries exhausted after {total_posts_fetched} posts, continuing with partial data"
+                                    )
+                                    await _append_log(db, job, "warn", "fetch_posts",
+                                        f"Timeout retries exhausted after {total_posts_fetched} posts, continuing with collected data")
+                                    break
+                                raise last_err  # No data collected
 
                         if last_err is not None:
-                            raise last_err  # All token types failed with 401
+                            # All token types failed with 401 — graceful fallback
+                            if total_posts_fetched > 0:
+                                logger.warning(
+                                    f"[Job {job_id}] 401 retries exhausted after {total_posts_fetched} posts, continuing with partial data"
+                                )
+                                await _append_log(db, job, "warn", "fetch_posts",
+                                    f"Auth error retries exhausted after {total_posts_fetched} posts, continuing with collected data")
+                                break
+                            raise last_err  # No data collected
+
+                    # Graceful fallback broke out of retry loop — break pagination too
+                    if posts_data is None:
+                        break
 
                     logger.info(
                         "[Job %s] Page %d – pagination_params=%s",
