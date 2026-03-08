@@ -95,7 +95,7 @@ class MetaAPIService:
 
     async def exchange_code(self, code: str) -> dict:
         """Exchange authorization code for a short-lived access token."""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 f"{GRAPH_BASE}/oauth/access_token",
                 params={
@@ -110,7 +110,7 @@ class MetaAPIService:
 
     async def get_long_lived_token(self, short_token: str) -> dict:
         """Exchange a short-lived token for a long-lived one (~60 days)."""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 f"{GRAPH_BASE}/oauth/access_token",
                 params={
@@ -131,7 +131,7 @@ class MetaAPIService:
 
     async def get_user_info(self, access_token: str) -> dict:
         """Fetch basic info about the authenticated Facebook user."""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 f"{GRAPH_BASE}/me",
                 params={**self._auth_params(access_token), "fields": "id,name"},
@@ -150,7 +150,7 @@ class MetaAPIService:
             "fields": "id,name,account_id,currency,timezone_name,account_status",
             "limit": 100,
         }
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             while url:
                 resp = await self._get_with_retry(client, url, params)
                 data = resp.json()
@@ -182,7 +182,7 @@ class MetaAPIService:
             "fields": "id,name,category,picture{url},access_token",
             "limit": 100,
         }
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             while url:
                 resp = await self._get_with_retry(client, url, params)
                 data = resp.json()
@@ -515,13 +515,13 @@ class MetaAPIService:
 
         # Meta accepts up to 10,000 per request; chunk if needed
         results = []
-        for i in range(0, len(data_rows), 10000):
-            chunk = data_rows[i : i + 10000]
-            payload = json.dumps({
-                "schema": schema,
-                "data": chunk,
-            })
-            async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
+            for i in range(0, len(data_rows), 10000):
+                chunk = data_rows[i : i + 10000]
+                payload = json.dumps({
+                    "schema": schema,
+                    "data": chunk,
+                })
                 resp = await client.post(
                     f"{GRAPH_BASE}/{audience_id}/users",
                     params=self._auth_params(access_token),
@@ -554,8 +554,7 @@ class MetaAPIService:
         Returns:
             dict with lookalike audience ID
         """
-        # Try passing origin_audience_id directly as form parameter (not in JSON spec)
-        logger.warning(f"Attempting LLA creation with origin_audience_id={source_audience_id}, country={country}, ratio={ratio}")
+        logger.debug("Creating LLA: origin_audience_id=%s, country=%s, ratio=%s", source_audience_id, country, ratio)
 
         async with httpx.AsyncClient(timeout=30) as client:
             payload = {
@@ -567,8 +566,6 @@ class MetaAPIService:
                     "ratio": ratio,
                 }),
             }
-            logger.warning(f"Payload (origin as separate param): {payload}")
-
             resp = await client.post(
                 f"{GRAPH_BASE}/{ad_account_id}/customaudiences",
                 params=self._auth_params(access_token),

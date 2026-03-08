@@ -257,7 +257,7 @@ class FacebookGraphClient(AbstractSocialClient):
                         result["page_id"] = id_match.group(1)
                         return result
                 else:
-                    result["page_id"] = captured
+                    result["page_id"] = _resolve_page_id(captured, value)
                     return result
 
         # Plain username

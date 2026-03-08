@@ -349,9 +349,8 @@ async def oauth_callback(
             token_expires_at=expires_at,
             fb_user_id=fb_user["id"],
             fb_user_name=fb_user.get("name", ""),
-            scopes=meta.get_oauth_url.__func__  # placeholder
+            scopes=["ads_management", "ads_read", "business_management", "pages_read_engagement", "pages_show_list", "pages_read_user_content"],
         )
-        conn.scopes = ["ads_management", "ads_read", "business_management", "pages_read_engagement", "pages_show_list"]
         db.add(conn)
 
     await db.flush()
@@ -833,6 +832,20 @@ async def select_pixel(
 # Phase 2: Performance Dashboard
 # ---------------------------------------------------------------------------
 
+def _calc_insight_metrics(spend: int, impressions: int, clicks: int, results: int, purchase_value: int) -> dict:
+    """Calculate derived insight metrics from raw totals."""
+    return {
+        "spend": spend,
+        "impressions": impressions,
+        "clicks": clicks,
+        "ctr": round((clicks / impressions * 100) if impressions > 0 else 0, 2),
+        "results": results,
+        "cost_per_result": (spend // results) if results > 0 else 0,
+        "purchase_value": purchase_value,
+        "roas": round(purchase_value / spend, 2) if spend > 0 else 0,
+    }
+
+
 def _default_date_range(date_from: str | None, date_to: str | None) -> tuple[date, date]:
     """Return (date_from, date_to) as date objects, defaulting to last 28 days."""
     dt = date.fromisoformat(date_to) if date_to else date.today()
@@ -907,21 +920,10 @@ async def list_campaigns(
             ).group_by(FBInsight.object_id)
         )
         for row in insight_r.all():
-            spend = row.spend or 0
-            clicks = row.clicks or 0
-            impressions = row.impressions or 0
-            results = row.results or 0
-            pv = row.purchase_value or 0
-            insights_map[row.object_id] = {
-                "spend": spend,
-                "impressions": impressions,
-                "clicks": clicks,
-                "ctr": round((clicks / impressions * 100) if impressions > 0 else 0, 2),
-                "results": results,
-                "cost_per_result": (spend // results) if results > 0 else 0,
-                "purchase_value": pv,
-                "roas": round(pv / spend, 2) if spend > 0 else 0,
-            }
+            insights_map[row.object_id] = _calc_insight_metrics(
+                row.spend or 0, row.impressions or 0, row.clicks or 0,
+                row.results or 0, row.purchase_value or 0,
+            )
 
     # Build response items with insights merged
     items = [
@@ -1003,19 +1005,10 @@ async def list_campaign_adsets(
     )
     insights_map: dict[str, dict] = {}
     for row in insight_r.all():
-        spend = row.spend or 0
-        clicks = row.clicks or 0
-        impressions = row.impressions or 0
-        results = row.results or 0
-        pv = row.purchase_value or 0
-        insights_map[row.object_id] = {
-            "spend": spend, "impressions": impressions, "clicks": clicks,
-            "ctr": round((clicks / impressions * 100) if impressions > 0 else 0, 2),
-            "results": results,
-            "cost_per_result": (spend // results) if results > 0 else 0,
-            "purchase_value": pv,
-            "roas": round(pv / spend, 2) if spend > 0 else 0,
-        }
+        insights_map[row.object_id] = _calc_insight_metrics(
+            row.spend or 0, row.impressions or 0, row.clicks or 0,
+            row.results or 0, row.purchase_value or 0,
+        )
 
     # Fallback: if no adset-level insights, aggregate from ad-level insights
     if not insights_map:
@@ -1066,11 +1059,12 @@ async def list_campaign_adsets(
                 m["purchase_value"] += row.purchase_value or 0
 
             # Calculate derived metrics
-            for m in insights_map.values():
-                imp = m["impressions"]
-                m["ctr"] = round((m["clicks"] / imp * 100) if imp > 0 else 0, 2)
-                m["cost_per_result"] = (m["spend"] // m["results"]) if m["results"] > 0 else 0
-                m["roas"] = round(m["purchase_value"] / m["spend"], 2) if m["spend"] > 0 else 0
+            for key in list(insights_map.keys()):
+                m = insights_map[key]
+                insights_map[key] = _calc_insight_metrics(
+                    m["spend"], m["impressions"], m["clicks"],
+                    m["results"], m["purchase_value"],
+                )
 
     return [
         AdSetResponse(
@@ -1128,19 +1122,10 @@ async def list_adset_ads(
     )
     insights_map: dict[str, dict] = {}
     for row in insight_r.all():
-        spend = row.spend or 0
-        clicks = row.clicks or 0
-        impressions = row.impressions or 0
-        results = row.results or 0
-        pv = row.purchase_value or 0
-        insights_map[row.object_id] = {
-            "spend": spend, "impressions": impressions, "clicks": clicks,
-            "ctr": round((clicks / impressions * 100) if impressions > 0 else 0, 2),
-            "results": results,
-            "cost_per_result": (spend // results) if results > 0 else 0,
-            "purchase_value": pv,
-            "roas": round(pv / spend, 2) if spend > 0 else 0,
-        }
+        insights_map[row.object_id] = _calc_insight_metrics(
+            row.spend or 0, row.impressions or 0, row.clicks or 0,
+            row.results or 0, row.purchase_value or 0,
+        )
 
     # Fallback: if no ad-level insights, try adset-level insights as parent totals
     if not insights_map and ads:
@@ -1174,14 +1159,9 @@ async def list_adset_ads(
                 results = (parent.results or 0) // n
                 pv = (parent.purchase_value or 0) // n
                 for a in ads:
-                    insights_map[a.ad_id] = {
-                        "spend": spend, "impressions": impressions, "clicks": clicks,
-                        "ctr": round((clicks / impressions * 100) if impressions > 0 else 0, 2),
-                        "results": results,
-                        "cost_per_result": (spend // results) if results > 0 else 0,
-                        "purchase_value": pv,
-                        "roas": round(pv / spend, 2) if spend > 0 else 0,
-                    }
+                    insights_map[a.ad_id] = _calc_insight_metrics(
+                        spend, impressions, clicks, results, pv,
+                    )
 
     return [
         AdResponse(
@@ -1245,15 +1225,16 @@ async def get_insights_summary(
     results = row.results or 0
     pv = row.purchase_value or 0
 
+    m = _calc_insight_metrics(spend, impressions, clicks, results, pv)
     return InsightSummary(
-        total_spend=spend,
-        total_impressions=impressions,
-        total_clicks=clicks,
-        avg_ctr=round((clicks / impressions * 100) if impressions > 0 else 0, 2),
-        total_results=results,
-        avg_cost_per_result=(spend // results) if results > 0 else 0,
-        total_purchase_value=pv,
-        avg_roas=round(pv / spend, 2) if spend > 0 else 0,
+        total_spend=m["spend"],
+        total_impressions=m["impressions"],
+        total_clicks=m["clicks"],
+        avg_ctr=m["ctr"],
+        total_results=m["results"],
+        avg_cost_per_result=m["cost_per_result"],
+        total_purchase_value=m["purchase_value"],
+        avg_roas=m["roas"],
     )
 
 
@@ -1288,7 +1269,10 @@ async def trigger_sync(
         campaign_map: dict[str, FBCampaign] = {}  # campaign_id → DB obj
         for c in campaigns:
             existing = await db.execute(
-                select(FBCampaign).where(FBCampaign.campaign_id == c["campaign_id"])
+                select(FBCampaign).where(
+                    FBCampaign.tenant_id == user.tenant_id,
+                    FBCampaign.campaign_id == c["campaign_id"],
+                )
             )
             camp = existing.scalar_one_or_none()
             if camp:
@@ -1332,7 +1316,10 @@ async def trigger_sync(
                 adsets = await meta.list_adsets(token, c["campaign_id"])
                 for a in adsets:
                     existing = await db.execute(
-                        select(FBAdSet).where(FBAdSet.adset_id == a["adset_id"])
+                        select(FBAdSet).where(
+                            FBAdSet.tenant_id == user.tenant_id,
+                            FBAdSet.adset_id == a["adset_id"],
+                        )
                     )
                     adset = existing.scalar_one_or_none()
                     if adset:
@@ -1366,7 +1353,10 @@ async def trigger_sync(
                     ads = await meta.list_ads(token, a["adset_id"])
                     for ad_data in ads:
                         existing = await db.execute(
-                            select(FBAd).where(FBAd.ad_id == ad_data["ad_id"])
+                            select(FBAd).where(
+                                FBAd.tenant_id == user.tenant_id,
+                                FBAd.ad_id == ad_data["ad_id"],
+                            )
                         )
                         ad = existing.scalar_one_or_none()
                         if ad:
@@ -1410,6 +1400,7 @@ async def trigger_sync(
                         row_date = date.fromisoformat(row["date"]) if isinstance(row["date"], str) else row["date"]
                         existing = await db.execute(
                             select(FBInsight).where(
+                                FBInsight.tenant_id == user.tenant_id,
                                 FBInsight.object_type == row["object_type"],
                                 FBInsight.object_id == row["object_id"],
                                 FBInsight.date == row_date,
