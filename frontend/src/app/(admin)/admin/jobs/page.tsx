@@ -103,7 +103,7 @@ export default function AdminJobsPage() {
           <h1 className="text-2xl font-bold text-white">Job Management</h1>
         </div>
         <p className="text-white/50 text-sm ml-7">
-          View, cancel, and pause scraping jobs across all tenants
+          View, cancel, and pause <strong>AI-Scraping</strong> jobs across all tenants
         </p>
       </div>
 

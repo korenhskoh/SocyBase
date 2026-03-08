@@ -176,7 +176,7 @@ export default function AdminTenantDetailPage() {
             <span className="text-sm text-white/30 font-mono">({tenant.slug})</span>
           )}
         </div>
-        <p className="text-white/50 text-sm ml-7">Manage scraping limits, credits, and jobs</p>
+        <p className="text-white/50 text-sm ml-7">Manage <strong>AI-Scraping</strong> limits, credits, and jobs</p>
       </div>
 
       {loading ? (
@@ -204,7 +204,7 @@ export default function AdminTenantDetailPage() {
             ))}
           </div>
 
-          {/* Scraping Settings */}
+          {/* AI-Scraping Settings */}
           <div className="glass-card p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-blue-500/10 border border-blue-500/20">
@@ -213,7 +213,7 @@ export default function AdminTenantDetailPage() {
                 </svg>
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-white">Scraping Limits</h2>
+                <h2 className="text-lg font-semibold text-white">AI-Scraping Limits</h2>
                 <p className="text-sm text-white/40">Control job creation and credit usage</p>
               </div>
             </div>

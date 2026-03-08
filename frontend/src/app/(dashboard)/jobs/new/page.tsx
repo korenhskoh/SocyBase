@@ -412,11 +412,11 @@ function NewJobPage() {
     <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl md:text-3xl font-bold text-white">New Scraping Job</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-white">New AI-Scraping Job</h1>
         <p className="text-white/50 mt-1">
           {step === 1 && "Select a social media platform to scrape"}
           {step === 2 && `Choose a scrape type for ${selectedPlatform?.name}`}
-          {step === 3 && "Configure your job and start scraping"}
+          {step === 3 && "Configure your job and start AI-Scraping"}
         </p>
       </div>
 
@@ -1010,7 +1010,7 @@ function NewJobPage() {
                 ? "Creating Job..."
                 : schedule
                   ? selectedScrapeType.id === "post_discovery" ? "Schedule Discovery" : "Schedule Job"
-                  : selectedScrapeType.id === "post_discovery" ? "Discover Posts" : "Start Scraping"
+                  : selectedScrapeType.id === "post_discovery" ? "Discover Posts" : "Start AI-Scraping"
               }
             </button>
           </form>

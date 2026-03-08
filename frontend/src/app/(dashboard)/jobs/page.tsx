@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { jobsApi, exportApi } from "@/lib/api-client";
+import { jobsApi, exportApi, fbAdsApi } from "@/lib/api-client";
 import { formatDate, getStatusColor, downloadBlob } from "@/lib/utils";
 import type { ScrapingJob } from "@/types";
 import ConfirmModal from "@/components/ui/ConfirmModal";
@@ -94,6 +94,28 @@ export default function JobsPage() {
   // Export dropdown
   const [exportDropdownId, setExportDropdownId] = useState<string | null>(null);
 
+  // Custom Audience modal
+  const [audienceModalOpen, setAudienceModalOpen] = useState(false);
+  const [audiencePreview, setAudiencePreview] = useState<{
+    total_profiles_raw: number;
+    unique_profiles: number;
+    duplicates_removed: number;
+    meets_minimum: boolean;
+    jobs: { job_id: string; input_value: string; total_profiles: number }[];
+  } | null>(null);
+  const [audienceLoading, setAudienceLoading] = useState(false);
+  const [audienceCreating, setAudienceCreating] = useState(false);
+  const [audienceName, setAudienceName] = useState("");
+  const [createLookalike, setCreateLookalike] = useState(false);
+  const [audienceResult, setAudienceResult] = useState<{
+    audience_id: string;
+    audience_name: string;
+    profiles_uploaded: number;
+    duplicates_removed: number;
+    lookalike_audience_id?: string;
+    lookalike_audience_name?: string;
+  } | null>(null);
+
   // Action feedback
   const [actionError, setActionError] = useState("");
 
@@ -157,14 +179,14 @@ export default function JobsPage() {
       case "pause":
         return {
           title: "Pause Job" + (count > 1 ? "s" : ""),
-          message: `Are you sure you want to pause ${plural}? The scraping pipeline will save its current progress and can be resumed later.`,
+          message: `Are you sure you want to pause ${plural}? The AI-Scraping pipeline will save its current progress and can be resumed later.`,
           label: "Pause",
           color: "yellow" as const,
         };
       case "stop":
         return {
           title: "Stop Job" + (count > 1 ? "s" : ""),
-          message: `Are you sure you want to stop ${plural}? This will cancel the scraping process. You can still resume from the last checkpoint.`,
+          message: `Are you sure you want to stop ${plural}? This will cancel the AI-Scraping process. You can still resume from the last checkpoint.`,
           label: "Stop",
           color: "red" as const,
         };
@@ -288,6 +310,45 @@ export default function JobsPage() {
     const j = jobs.find((job) => job.id === id);
     return j && j.status === "completed" && j.result_row_count > 0;
   });
+  const canBatchAudience = canBatchExport;
+  const audienceEligibleIds = selectedArr.filter((id) => {
+    const j = jobs.find((job) => job.id === id);
+    return j && j.status === "completed" && (j.result_row_count || 0) > 0;
+  });
+
+  const openAudienceModal = async () => {
+    setAudienceModalOpen(true);
+    setAudiencePreview(null);
+    setAudienceResult(null);
+    setAudienceName("");
+    setCreateLookalike(false);
+    setAudienceLoading(true);
+    try {
+      const r = await fbAdsApi.previewMultiJobAudience(audienceEligibleIds);
+      setAudiencePreview(r.data);
+    } catch (e: any) {
+      setActionError(e?.response?.data?.detail || "Failed to load audience preview.");
+      setAudienceModalOpen(false);
+    } finally {
+      setAudienceLoading(false);
+    }
+  };
+
+  const handleCreateAudience = async () => {
+    setAudienceCreating(true);
+    try {
+      const r = await fbAdsApi.createMultiJobAudience(
+        audienceEligibleIds,
+        audienceName || undefined,
+        createLookalike,
+      );
+      setAudienceResult(r.data);
+    } catch (e: any) {
+      setActionError(e?.response?.data?.detail || "Failed to create Custom Audience.");
+    } finally {
+      setAudienceCreating(false);
+    }
+  };
 
   const confirmConfig = getConfirmConfig();
 
@@ -297,7 +358,7 @@ export default function JobsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-white">My Jobs</h1>
-          <p className="text-white/50 mt-1">All your scraping jobs</p>
+          <p className="text-white/50 mt-1">All your <strong>AI-Scraping</strong> jobs</p>
         </div>
         <Link href="/jobs/new" className="btn-glow shrink-0 text-center">
           + New Job
@@ -444,6 +505,18 @@ export default function JobsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
               </svg>
               Export ZIP
+            </button>
+          )}
+
+          {canBatchAudience && (
+            <button
+              onClick={openAudienceModal}
+              className="flex items-center gap-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+              </svg>
+              Custom Audience
             </button>
           )}
 
@@ -718,6 +791,143 @@ export default function JobsPage() {
         onClose={() => setLogJobId(null)}
         jobId={logJobId || ""}
       />
+
+      {/* Custom Audience Modal */}
+      {audienceModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setAudienceModalOpen(false); setAudienceResult(null); }} />
+          <div className="relative w-full max-w-lg rounded-2xl border border-white/10 bg-[#12121f] p-6 shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">
+                {audienceResult ? "Audience Created" : "Create Custom Audience"}
+              </h3>
+              <button
+                onClick={() => { setAudienceModalOpen(false); setAudienceResult(null); if (audienceResult) { setSelectedJobs(new Set()); } }}
+                className="text-white/40 hover:text-white/70 transition"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Loading state */}
+            {audienceLoading && (
+              <div className="py-12 text-center">
+                <div className="h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-sm text-white/50">Loading profile preview...</p>
+              </div>
+            )}
+
+            {/* Success state */}
+            {audienceResult && (
+              <div className="space-y-4">
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="font-medium text-emerald-400">Custom Audience created successfully!</span>
+                  </div>
+                  <div className="space-y-1 text-sm text-white/70">
+                    <p><span className="text-white/40">Name:</span> {audienceResult.audience_name}</p>
+                    <p><span className="text-white/40">Profiles:</span> {audienceResult.profiles_uploaded.toLocaleString()}</p>
+                    <p><span className="text-white/40">Duplicates removed:</span> {audienceResult.duplicates_removed.toLocaleString()}</p>
+                    {audienceResult.lookalike_audience_name && (
+                      <p><span className="text-white/40">Lookalike:</span> {audienceResult.lookalike_audience_name}</p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setAudienceModalOpen(false); setAudienceResult(null); setSelectedJobs(new Set()); }}
+                  className="w-full rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600 transition"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+
+            {/* Preview state */}
+            {audiencePreview && !audienceResult && (
+              <div className="space-y-4">
+                <p className="text-sm text-white/60">
+                  Combining profiles from {audiencePreview.jobs.length} job{audiencePreview.jobs.length > 1 ? "s" : ""}:
+                </p>
+
+                {/* Per-job breakdown */}
+                <div className="rounded-xl bg-white/5 border border-white/10 divide-y divide-white/5">
+                  {audiencePreview.jobs.map((j) => (
+                    <div key={j.job_id} className="flex items-center justify-between px-4 py-2.5">
+                      <span className="text-sm text-white/80 truncate max-w-[260px]">{j.input_value}</span>
+                      <span className="text-sm font-medium text-white/60 tabular-nums">{j.total_profiles.toLocaleString()} profiles</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Totals */}
+                <div className="flex items-center justify-center gap-4 text-sm">
+                  <span className="text-white/50">Total: <span className="font-medium text-white">{audiencePreview.total_profiles_raw.toLocaleString()}</span></span>
+                  <span className="text-white/20">|</span>
+                  <span className="text-white/50">Unique: <span className="font-medium text-emerald-400">{audiencePreview.unique_profiles.toLocaleString()}</span></span>
+                  <span className="text-white/20">|</span>
+                  <span className="text-white/50">Dupes: <span className="font-medium text-yellow-400">{audiencePreview.duplicates_removed.toLocaleString()}</span></span>
+                </div>
+
+                {/* Minimum warning */}
+                {!audiencePreview.meets_minimum && (
+                  <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
+                    Need at least 100 unique profiles to create a Custom Audience (currently {audiencePreview.unique_profiles}).
+                  </div>
+                )}
+
+                {/* Name input */}
+                <div>
+                  <label className="block text-xs text-white/40 mb-1.5">Audience name (optional)</label>
+                  <input
+                    type="text"
+                    value={audienceName}
+                    onChange={(e) => setAudienceName(e.target.value)}
+                    placeholder={`${audiencePreview.unique_profiles} profiles - ${audiencePreview.jobs.length} jobs`}
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-white/30 focus:border-blue-500/50 focus:outline-none transition"
+                  />
+                </div>
+
+                {/* Lookalike checkbox */}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={createLookalike}
+                    onChange={(e) => setCreateLookalike(e.target.checked)}
+                    className="h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30"
+                  />
+                  <span className="text-sm text-white/70">Also create 1% Lookalike Audience (Malaysia)</span>
+                </label>
+
+                {/* Actions */}
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    onClick={() => setAudienceModalOpen(false)}
+                    className="rounded-xl border border-white/10 px-4 py-2 text-sm text-white/60 hover:text-white/80 hover:border-white/20 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCreateAudience}
+                    disabled={!audiencePreview.meets_minimum || audienceCreating}
+                    className="rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600 transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {audienceCreating && (
+                      <div className="h-3.5 w-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    )}
+                    {audienceCreating ? "Creating..." : "Create Audience"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

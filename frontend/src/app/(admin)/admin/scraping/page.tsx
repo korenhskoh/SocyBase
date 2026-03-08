@@ -115,9 +115,9 @@ export default function AdminScrapingPage() {
           <Link href="/admin" className="text-white/40 hover:text-white transition">
             &larr;
           </Link>
-          <h1 className="text-2xl md:text-3xl font-bold text-white">Scraping Overview</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-white">AI-Scraping Overview</h1>
         </div>
-        <p className="text-white/50 mt-1 ml-7">All scraping activity across every user</p>
+        <p className="text-white/50 mt-1 ml-7">All <strong>AI-Scraping</strong> activity across every user</p>
       </div>
 
       {/* Feature Flags */}

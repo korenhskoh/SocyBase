@@ -244,9 +244,9 @@ export default function AdminPackagesPage() {
               />
             </div>
           </div>
-          {/* Scraping Limits */}
+          {/* AI-Scraping Limits */}
           <div>
-            <h4 className="text-xs font-medium text-white/40 uppercase tracking-wider mb-2">Scraping Limits</h4>
+            <h4 className="text-xs font-medium text-white/40 uppercase tracking-wider mb-2">AI-Scraping Limits</h4>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs text-white/40 mb-1">Max Concurrent Jobs</label>

@@ -112,7 +112,7 @@ export default function AdminPlatformsPage() {
             <h1 className="text-2xl md:text-3xl font-bold text-white">Platforms</h1>
           </div>
           <p className="text-white/50 mt-1 ml-7">
-            Manage scraping platforms, enable/disable and set credit costs
+            Manage <strong>AI-Scraping</strong> platforms, enable/disable and set credit costs
           </p>
         </div>
         <button

@@ -69,7 +69,7 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="text-sm text-white/50">Quick Start</p>
-              <p className="text-lg font-semibold text-white">New Scraping Job</p>
+              <p className="text-lg font-semibold text-white">New AI-Scraping Job</p>
             </div>
           </div>
         </Link>
@@ -86,7 +86,7 @@ export default function DashboardPage() {
         <div className="divide-y divide-white/5">
           {recentJobs.length === 0 ? (
             <div className="p-12 text-center">
-              <p className="text-white/30">No jobs yet. Create your first scraping job!</p>
+              <p className="text-white/30">No jobs yet. Create your first <strong>AI-Scraping</strong> job!</p>
             </div>
           ) : (
             recentJobs.map((job) => (

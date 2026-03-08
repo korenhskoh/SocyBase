@@ -441,6 +441,14 @@ export const fbAdsApi = {
       audience_name: audienceName,
       create_lookalike: createLookalike || false,
     }),
+  previewMultiJobAudience: (jobIds: string[]) =>
+    api.post("/fb-ads/custom-audience/multi/preview", { job_ids: jobIds }),
+  createMultiJobAudience: (jobIds: string[], audienceName?: string, createLookalike?: boolean) =>
+    api.post("/fb-ads/custom-audience/multi", {
+      job_ids: jobIds,
+      audience_name: audienceName,
+      create_lookalike: createLookalike || false,
+    }),
   listCustomAudiences: (limit?: number) =>
     api.get("/fb-ads/custom-audiences", { params: { limit: limit || 100 } }),
   // AI Launch (Phase 5)

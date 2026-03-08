@@ -12,12 +12,12 @@ export const metadata: Metadata = {
     template: "%s | SocyBase",
   },
   description:
-    "Extract and enrich social media profile data at scale. Automated scraping, comment extraction, and profile enrichment for Facebook and more.",
+    "Extract and enrich social media profile data at scale. Automated AI-Scraping, comment extraction, and profile enrichment for Facebook and more.",
   keywords: [
-    "social media scraping",
+    "social media AI-Scraping",
     "data extraction",
     "profile enrichment",
-    "Facebook scraping",
+    "Facebook AI-Scraping",
     "lead generation",
     "SocyBase",
   ],
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     siteName: "SocyBase",
     title: "SocyBase - Social Media Data Extraction",
     description:
-      "Extract and enrich social media profile data at scale. Automated scraping, comment extraction, and profile enrichment.",
+      "Extract and enrich social media profile data at scale. Automated AI-Scraping, comment extraction, and profile enrichment.",
   },
   twitter: {
     card: "summary_large_image",

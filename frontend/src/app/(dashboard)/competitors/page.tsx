@@ -191,7 +191,7 @@ export default function CompetitorsPage() {
   const handleScrape = async (comp: CompetitorPage) => {
     try {
       const res = await competitorsApi.scrape(comp.id);
-      alert(`Scraping job created! Job ID: ${res.data.job_id}`);
+      alert(`AI-Scraping job created! Job ID: ${res.data.job_id}`);
       loadCompetitors();
     } catch {
       alert("Failed to start scrape");

@@ -1004,7 +1004,7 @@ export default function JobDetailPage() {
                 disabled={resuming}
                 className="relative overflow-hidden rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 text-center"
               >
-                {resuming ? "Resuming..." : "Resume Scraping"}
+                {resuming ? "Resuming..." : "Resume AI-Scraping"}
               </button>
               <p className="text-xs text-white/30">
                 Creates a new job that continues from the last checkpoint
@@ -1023,7 +1023,7 @@ export default function JobDetailPage() {
               disabled={resuming}
               className="relative overflow-hidden rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-3 text-white font-medium transition-all duration-300 hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 text-center"
             >
-              {resuming ? "Resuming..." : "Resume Scraping"}
+              {resuming ? "Resuming..." : "Resume AI-Scraping"}
             </button>
             <p className="text-xs text-white/30">
               Creates a new job that continues from the last checkpoint
@@ -1398,7 +1398,7 @@ export default function JobDetailPage() {
           title = "Enriching profiles...";
           const processed = liveProgress?.processed_items ?? 0;
           const total = liveProgress?.total_items ?? 0;
-          subtitle = total > 0 ? `Scraping profile ${formatNumber(processed)} of ${formatNumber(total)}` : "Starting profile enrichment...";
+          subtitle = total > 0 ? `AI-Scraping profile ${formatNumber(processed)} of ${formatNumber(total)}` : "Starting profile enrichment...";
         } else if (stage === "parse_input" || stage === "fetch_author") {
           icon = "M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z";
           title = "Initializing...";
@@ -1499,8 +1499,8 @@ export default function JobDetailPage() {
               <p className="text-sm text-white/40 text-center py-2">
                 {job.status === "completed" && "Job completed but no profiles were found."}
                 {job.status === "cancelled" && "Job was stopped before any profiles were scraped."}
-                {job.status === "paused" && "Job was paused. You can resume it to continue scraping."}
-                {job.status === "failed" && "Job failed before completing profile scraping."}
+                {job.status === "paused" && "Job was paused. You can resume it to continue AI-Scraping."}
+                {job.status === "failed" && "Job failed before completing profile AI-Scraping."}
               </p>
             )}
           </div>

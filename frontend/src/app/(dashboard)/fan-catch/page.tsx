@@ -153,7 +153,7 @@ export default function FanCatchPage() {
       <div>
         <h1 className="text-2xl md:text-3xl font-bold text-white">Fan Catch</h1>
         <p className="text-white/50 mt-1">
-          AI-powered fan engagement analysis across your scraping jobs
+          AI-powered fan engagement analysis across your <strong>AI-Scraping</strong> jobs
         </p>
       </div>
 
@@ -168,7 +168,7 @@ export default function FanCatchPage() {
             </div>
           ) : jobs.length === 0 ? (
             <p className="text-sm text-white/40">
-              No completed comment scraper jobs found. Run a scraping job first to see fan data.
+              No completed comment scraper jobs found. Run an <strong>AI-Scraping</strong> job first to see fan data.
             </p>
           ) : (
             <select

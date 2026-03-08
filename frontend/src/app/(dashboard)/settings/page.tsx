@@ -426,7 +426,7 @@ export default function SettingsPage() {
             </div>
 
             <p className="text-xs text-white/30">
-              Once connected, you can create and monitor scraping jobs, check credits, place traffic bot orders, and receive real-time notifications — all from Telegram.
+              Once connected, you can create and monitor AI-Scraping jobs, check credits, place traffic bot orders, and receive real-time notifications — all from Telegram.
             </p>
 
             <div className="space-y-2">
@@ -546,8 +546,8 @@ export default function SettingsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {[
               { cmd: "/login", desc: "Log in with email & OTP" },
-              { cmd: "/jobs", desc: "List your recent scraping jobs" },
-              { cmd: "/newjob", desc: "Start a new scraping job" },
+              { cmd: "/jobs", desc: "List your recent AI-Scraping jobs" },
+              { cmd: "/newjob", desc: "Start a new AI-Scraping job" },
               { cmd: "/tborder", desc: "Place a traffic bot order" },
               { cmd: "/tborders", desc: "View your TB orders" },
               { cmd: "/tbwallet", desc: "Check TB wallet balance" },
@@ -563,7 +563,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Scraping Defaults */}
+      {/* AI-Scraping Defaults */}
       <div className="glass-card p-6 space-y-4">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-amber-500/10 border border-amber-500/20">
@@ -572,8 +572,8 @@ export default function SettingsPage() {
             </svg>
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-white">Scraping Defaults</h2>
-            <p className="text-sm text-white/40">Configure default settings for new scraping jobs</p>
+            <h2 className="text-lg font-semibold text-white">AI-Scraping Defaults</h2>
+            <p className="text-sm text-white/40">Configure default settings for new AI-Scraping jobs</p>
           </div>
         </div>
 

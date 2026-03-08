@@ -60,7 +60,7 @@ export default function AdminDashboardPage() {
             { name: "Payments", href: "/admin/payments" },
             { name: "Packages", href: "/admin/packages" },
             { name: "Platforms", href: "/admin/platforms" },
-            { name: "Scraping Overview", href: "/admin/scraping" },
+            { name: "AI-Scraping Overview", href: "/admin/scraping" },
             { name: "Job Management", href: "/admin/jobs" },
             { name: "Payment Settings", href: "/admin/settings" },
             { name: "Audit Logs", href: "/admin/audit-logs" },

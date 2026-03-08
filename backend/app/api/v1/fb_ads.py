@@ -196,6 +196,16 @@ class CreateCustomAudienceRequest(BaseModel):
     create_lookalike: bool = False  # create 1% Malaysia LLA
 
 
+class MultiJobAudiencePreviewRequest(BaseModel):
+    job_ids: list[str]
+
+
+class CreateMultiJobAudienceRequest(BaseModel):
+    job_ids: list[str]
+    audience_name: str | None = None
+    create_lookalike: bool = False
+
+
 # Phase 5 schemas
 
 class CreateCampaignRequest(BaseModel):
@@ -1848,6 +1858,222 @@ async def create_custom_audience(
         "audience_name": f"[High Value] {audience_name}",  # Include prefix in response
         "profiles_uploaded": len(profiles),
         "num_received": upload_resp.get("num_received", len(profiles)),
+    }
+
+    if lla_id:
+        result["lookalike_audience_id"] = lla_id
+        result["lookalike_audience_name"] = lla_name
+
+    return result
+
+
+@router.post("/custom-audience/multi/preview")
+async def preview_multi_job_audience(
+    body: MultiJobAudiencePreviewRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview profile counts across multiple jobs before creating a Custom Audience."""
+    if not body.job_ids:
+        raise HTTPException(status_code=400, detail="No job IDs provided.")
+
+    # Load all requested jobs, verify ownership + status
+    job_uuids = [uuid.UUID(jid) for jid in body.job_ids]
+    jobs_r = await db.execute(
+        select(ScrapingJob).where(
+            ScrapingJob.id.in_(job_uuids),
+            ScrapingJob.tenant_id == user.tenant_id,
+        )
+    )
+    jobs = {str(j.id): j for j in jobs_r.scalars().all()}
+
+    if len(jobs) != len(body.job_ids):
+        raise HTTPException(status_code=404, detail="One or more jobs not found.")
+
+    for jid, j in jobs.items():
+        if j.status != "completed":
+            raise HTTPException(status_code=400, detail=f"Job {jid[:8]} is not completed.")
+
+    # Load profiles from all jobs
+    profiles_r = await db.execute(
+        select(ScrapedProfile).where(
+            ScrapedProfile.job_id.in_(job_uuids),
+            ScrapedProfile.scrape_status == "success",
+        )
+    )
+    all_profiles = profiles_r.scalars().all()
+
+    # Group by job for per-job stats
+    per_job: dict[str, int] = {}
+    for p in all_profiles:
+        jkey = str(p.job_id)
+        per_job[jkey] = per_job.get(jkey, 0) + 1
+
+    # Deduplicate by platform_user_id
+    seen: set[str] = set()
+    unique_count = 0
+    for p in all_profiles:
+        uid = p.platform_user_id or str(p.id)
+        if uid not in seen:
+            seen.add(uid)
+            unique_count += 1
+
+    total_raw = len(all_profiles)
+    duplicates = total_raw - unique_count
+
+    return {
+        "total_profiles_raw": total_raw,
+        "unique_profiles": unique_count,
+        "duplicates_removed": duplicates,
+        "meets_minimum": unique_count >= 100,
+        "jobs": [
+            {
+                "job_id": jid,
+                "input_value": jobs[jid].input_value or str(jobs[jid].id)[:8],
+                "total_profiles": per_job.get(jid, 0),
+            }
+            for jid in body.job_ids
+        ],
+    }
+
+
+@router.post("/custom-audience/multi")
+async def create_multi_job_audience(
+    body: CreateMultiJobAudienceRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a Meta Custom Audience from multiple scraping jobs (deduplicated)."""
+    if not body.job_ids:
+        raise HTTPException(status_code=400, detail="No job IDs provided.")
+
+    conn, account = await _get_active_connection(db, user.tenant_id)
+    if not conn:
+        raise HTTPException(status_code=400, detail="No active Facebook connection.")
+    if not account:
+        raise HTTPException(status_code=400, detail="No ad account selected.")
+
+    # Verify all jobs
+    job_uuids = [uuid.UUID(jid) for jid in body.job_ids]
+    jobs_r = await db.execute(
+        select(ScrapingJob).where(
+            ScrapingJob.id.in_(job_uuids),
+            ScrapingJob.tenant_id == user.tenant_id,
+        )
+    )
+    jobs = {str(j.id): j for j in jobs_r.scalars().all()}
+
+    if len(jobs) != len(body.job_ids):
+        raise HTTPException(status_code=404, detail="One or more jobs not found.")
+
+    for jid, j in jobs.items():
+        if j.status != "completed":
+            raise HTTPException(status_code=400, detail=f"Job {jid[:8]} is not completed.")
+
+    # Load and deduplicate profiles
+    profiles_r = await db.execute(
+        select(ScrapedProfile).where(
+            ScrapedProfile.job_id.in_(job_uuids),
+            ScrapedProfile.scrape_status == "success",
+        )
+    )
+    all_profiles = profiles_r.scalars().all()
+
+    seen: set[str] = set()
+    unique_profiles: list[ScrapedProfile] = []
+    for p in all_profiles:
+        uid = p.platform_user_id or str(p.id)
+        if uid not in seen:
+            seen.add(uid)
+            unique_profiles.append(p)
+
+    duplicates_removed = len(all_profiles) - len(unique_profiles)
+
+    if len(unique_profiles) < 100:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Need at least 100 unique profiles to create a Custom Audience (found {len(unique_profiles)} across {len(body.job_ids)} jobs).",
+        )
+
+    meta = MetaAPIService()
+    token = meta.decrypt_token(conn.access_token_encrypted)
+
+    # Build audience name
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    if body.audience_name:
+        audience_name = body.audience_name[:37]
+    else:
+        audience_name = f"{len(unique_profiles)} profiles - {len(body.job_ids)} jobs - {today}"[:37]
+
+    # 1. Create Custom Audience
+    try:
+        ca_resp = await meta.create_custom_audience(
+            token,
+            account.account_id,
+            name=audience_name,
+            description=f"Created from SocyBase - {len(body.job_ids)} jobs combined ({len(unique_profiles)} unique profiles)",
+        )
+        audience_id = ca_resp.get("id")
+        if not audience_id:
+            raise HTTPException(status_code=502, detail="Failed to create Custom Audience on Meta.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to create multi-job custom audience")
+        raise HTTPException(status_code=502, detail=f"Failed to create Custom Audience: {str(e)}")
+
+    # 2. Build user records
+    users = []
+    for p in unique_profiles:
+        users.append({
+            "fn": p.first_name or "",
+            "ln": p.last_name or "",
+            "gen": _norm_gender_for_meta(p.gender),
+            "dob": _format_dob_for_meta(p.birthday),
+            "ct": p.hometown or "",
+            "country": p.location or "",
+        })
+
+    # 3. Upload users
+    try:
+        upload_resp = await meta.add_users_to_audience(token, audience_id, users)
+    except Exception as e:
+        logger.exception("Failed to upload users to multi-job custom audience")
+        raise HTTPException(status_code=502, detail=f"Failed to upload users to audience: {str(e)}")
+
+    # 4. Optional Lookalike
+    lla_id = None
+    lla_name = None
+    if body.create_lookalike:
+        import asyncio
+        await asyncio.sleep(3)
+
+        lla_name = f"LLA 1% MY - {audience_name}"[:50]
+        try:
+            lla_resp = await meta.create_lookalike_audience(
+                token,
+                account.account_id,
+                audience_id,
+                name=lla_name,
+                country="MY",
+                ratio=0.01,
+            )
+            lla_id = lla_resp.get("id")
+        except Exception as e:
+            logger.exception("Failed to create lookalike audience for multi-job")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Custom Audience created successfully, but Lookalike creation failed: {str(e)}",
+            )
+
+    result = {
+        "audience_id": audience_id,
+        "audience_name": f"[High Value] {audience_name}",
+        "profiles_uploaded": len(unique_profiles),
+        "duplicates_removed": duplicates_removed,
+        "jobs_combined": len(body.job_ids),
+        "num_received": upload_resp.get("num_received", len(unique_profiles)),
     }
 
     if lla_id:

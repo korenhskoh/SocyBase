@@ -171,7 +171,7 @@ export default function CreditsPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl md:text-3xl font-bold text-white">Credits</h1>
-        <p className="text-white/50 mt-1">Purchase credits to run scraping jobs</p>
+        <p className="text-white/50 mt-1">Purchase credits to run <strong>AI-Scraping</strong> jobs</p>
       </div>
 
       {/* Current Balance */}

@@ -101,7 +101,7 @@ export default function FacebookAdsGuidePage() {
               <tr><td className="py-2">Gender</td><td>gender</td><td>m or f</td></tr>
               <tr><td className="py-2">Birthday</td><td>dob</td><td>MMDDYYYY format</td></tr>
               <tr><td className="py-2">Location</td><td>ct (city)</td><td>Lowercase</td></tr>
-              <tr><td className="py-2">Email</td><td>email</td><td>Not available from FB scraping</td></tr>
+              <tr><td className="py-2">Email</td><td>email</td><td>Not available from FB AI-Scraping</td></tr>
             </tbody>
           </table>
         </div>
