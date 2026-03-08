@@ -467,6 +467,91 @@ async def _execute_pipeline(job_id: str, celery_task):
                             job_id, list(response.keys()), str(response)[:500],
                         )
 
+                        # ── Detect wrapped AKNG errors (HTTP 200 but error in body) ──
+                        _inner = response
+                        if "success" in response and isinstance(response.get("data"), dict):
+                            _inner = response["data"]
+                        if "error" in _inner and isinstance(_inner.get("error"), dict):
+                            err_code = _inner["error"].get("code", "")
+                            err_msg = _inner["error"].get("message", "")
+                            logger.warning(f"[Job {job_id}] Wrapped API error (code {err_code}): {err_msg}")
+                            await _append_log(db, job, "warn", "fetch_comments",
+                                f"API error code {err_code} for post {post_id}")
+
+                            if page_count == 0:
+                                # First page failed — try alternative post IDs / endpoints
+                                fallback_response = None
+
+                                # Fallback 1: short post ID (strip page prefix from compound ID)
+                                if "_" in post_id:
+                                    short_id = post_id.split("_", 1)[1]
+                                    logger.info(f"[Job {job_id}] Trying short post ID: {short_id}")
+                                    try:
+                                        await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+                                        fallback_response = await client.get_post_comments(
+                                            short_id, is_group=is_group, limit=25,
+                                        )
+                                        fb_inner = fallback_response
+                                        if "success" in fallback_response and isinstance(fallback_response.get("data"), dict):
+                                            fb_inner = fallback_response["data"]
+                                        if "error" in fb_inner and isinstance(fb_inner.get("error"), dict):
+                                            logger.warning(f"[Job {job_id}] Short ID also failed")
+                                            fallback_response = None
+                                        else:
+                                            post_id = short_id
+                                            logger.info(f"[Job {job_id}] Short post ID worked, using {short_id}")
+                                            await _append_log(db, job, "info", "fetch_comments",
+                                                f"Switched to short post ID: {short_id}")
+                                    except Exception as fb_err:
+                                        logger.warning(f"[Job {job_id}] Short ID fallback failed: {fb_err}")
+                                        fallback_response = None
+
+                                # Fallback 2: /comments edge (group-style) on original ID
+                                if fallback_response is None and not is_group:
+                                    try_ids = [post_id]
+                                    if "_" in post_id:
+                                        try_ids.append(post_id.split("_", 1)[1])
+                                    for try_id in try_ids:
+                                        logger.info(f"[Job {job_id}] Trying /comments edge on {try_id}")
+                                        try:
+                                            await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+                                            fallback_response = await client.get_post_comments(
+                                                try_id, is_group=True, limit=25,
+                                            )
+                                            fb_inner = fallback_response
+                                            if "success" in fallback_response and isinstance(fallback_response.get("data"), dict):
+                                                fb_inner = fallback_response["data"]
+                                            if "error" in fb_inner and isinstance(fb_inner.get("error"), dict):
+                                                logger.warning(f"[Job {job_id}] /comments edge on {try_id} also failed")
+                                                fallback_response = None
+                                            else:
+                                                post_id = try_id
+                                                is_group = True  # Use group-style for remaining pages
+                                                logger.info(f"[Job {job_id}] /comments edge worked for {try_id}")
+                                                await _append_log(db, job, "info", "fetch_comments",
+                                                    f"Switched to /comments edge for {try_id}")
+                                                break
+                                        except Exception:
+                                            fallback_response = None
+
+                                if fallback_response is not None:
+                                    response = fallback_response
+                                else:
+                                    # All fallbacks exhausted — stop with 0 comments
+                                    logger.error(f"[Job {job_id}] All comment fetch approaches failed for post {post_id}")
+                                    await _append_log(db, job, "error", "fetch_comments",
+                                        f"Cannot access comments for this post (API error {err_code})")
+                                    break
+                            else:
+                                # Error on non-first page — keep what we have
+                                logger.warning(
+                                    f"[Job {job_id}] API error on page {page_count + 1}, "
+                                    f"continuing with {len(all_comments)} comments collected"
+                                )
+                                await _append_log(db, job, "warn", "fetch_comments",
+                                    f"API error on page {page_count + 1}, keeping {len(all_comments)} comments")
+                                break
+
                         extracted = mapper.extract_comments_data(response, is_group=is_group)
                         all_comments.extend(extracted["comments"])
                         total_top_level += extracted.get("top_level_count", 0)
