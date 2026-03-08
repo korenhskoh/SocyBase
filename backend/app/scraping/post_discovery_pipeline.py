@@ -452,6 +452,19 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                     order="reverse_chronological",
                                     pagination_params=page_params,
                                 )
+                                # Check for wrapped permission errors (HTTP 200 but error in body)
+                                # AKNG returns code 100 when token lacks access to the object
+                                inner = raw_response
+                                if "success" in raw_response and isinstance(raw_response.get("data"), dict):
+                                    inner = raw_response["data"]
+                                if "error" in inner and isinstance(inner["error"], dict):
+                                    err_code = inner["error"].get("code")
+                                    if err_code in (100, 190, 10):
+                                        logger.warning(f"[Job {job_id}] AKNG error code {err_code} with token_type={try_token}, trying next...")
+                                        raw_response = None
+                                        last_err = RuntimeError(f"AKNG error code {err_code}: {inner['error'].get('message', '')}")
+                                        continue  # Try next token type
+
                                 if try_token != token_type:
                                     logger.info(f"[Job {job_id}] Token type {token_type} failed, switched to {try_token}")
                                     await _append_log(db, job, "info", "fetch_posts",
