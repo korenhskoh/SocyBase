@@ -781,6 +781,16 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 try:
                     current_state = (job.error_details or {}).get("pipeline_state", {})
                     failed_stage = current_state.get("current_stage", "unknown")
+
+                    # Add user-friendly hint for permission errors
+                    err_str = str(e)
+                    if "code 100" in err_str or "does not exist" in err_str or "missing permissions" in err_str:
+                        job.error_message = (
+                            "This page cannot be scraped due to permission restrictions. "
+                            "Not all Facebook pages allow post access. "
+                            "You can retry a few times, but if it keeps failing, "
+                            "please try a different page."
+                        )
                     await _save_error_details(db, job, failed_stage, e)
                     # Charge credits for pages already fetched before failure
                     try:

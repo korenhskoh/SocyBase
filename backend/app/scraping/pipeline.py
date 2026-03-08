@@ -541,6 +541,13 @@ async def _execute_pipeline(job_id: str, celery_task):
                                     logger.error(f"[Job {job_id}] All comment fetch approaches failed for post {post_id}")
                                     await _append_log(db, job, "error", "fetch_comments",
                                         f"Cannot access comments for this post (API error {err_code})")
+                                    job.error_message = (
+                                        "This page/post cannot be scraped due to permission restrictions. "
+                                        "Not all Facebook pages allow comment access. "
+                                        "You can retry a few times, but if it keeps failing, "
+                                        "please try a different post or page."
+                                    )
+                                    await db.commit()
                                     break
                             else:
                                 # Error on non-first page — keep what we have
