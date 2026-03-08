@@ -98,6 +98,39 @@ def _extract_post_fields(item: dict) -> dict:
     else:
         post_url = f"https://www.facebook.com/{post_id}"
 
+    # Livestream / video detection
+    is_livestream = False
+    video_views = None
+    live_views = None
+    video_length = None
+
+    att_type_lower = (attachment_type or "").lower()
+    if "live" in att_type_lower:
+        is_livestream = True
+    if item.get("is_live"):
+        is_livestream = True
+    live_status = item.get("live_status", "")
+    if live_status in ("LIVE", "VOD", "live", "vod"):
+        is_livestream = True
+
+    # Video views from various API shapes
+    video_views = item.get("views") or item.get("video_views")
+    if not video_views and first_attachment:
+        media = first_attachment.get("media") or {}
+        video_views = media.get("view_count")
+    if video_views:
+        video_views = int(video_views)
+
+    live_views = item.get("live_views")
+    if live_views:
+        live_views = int(live_views)
+
+    if first_attachment:
+        media = first_attachment.get("media") or {}
+        dur = media.get("duration")
+        if dur is not None:
+            video_length = float(dur)
+
     return {
         "post_id": post_id,
         "message": item.get("message"),
@@ -111,6 +144,10 @@ def _extract_post_fields(item: dict) -> dict:
         "attachment_type": attachment_type,
         "attachment_url": attachment_url,
         "post_url": post_url,
+        "is_livestream": is_livestream,
+        "video_views": video_views,
+        "live_views": live_views,
+        "video_length": video_length,
         "raw_data": item,
     }
 
@@ -540,6 +577,10 @@ async def _execute_post_discovery(job_id: str, celery_task):
                             attachment_type=fields["attachment_type"],
                             attachment_url=fields["attachment_url"],
                             post_url=fields["post_url"],
+                            is_livestream=fields.get("is_livestream", False),
+                            video_views=fields.get("video_views"),
+                            live_views=fields.get("live_views"),
+                            video_length=fields.get("video_length"),
                             raw_data=fields["raw_data"],
                         )
                         db.add(scraped_post)

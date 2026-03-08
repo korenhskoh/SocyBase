@@ -728,9 +728,9 @@ class MetaAPIService:
         }
 
         if audience_type == "ADVANTAGE_PLUS":
-            # Advantage+ uses flexible targeting
-            targeting["advantage_audience"] = 1
-            targeting["targeting_optimization"] = "expansion_all"
+            # Advantage+ uses broad targeting — keep targeting minimal
+            # targeting_optimization is set at adset level, not inside targeting spec
+            pass
         elif audience_type == "CUSTOM_AUDIENCE" and custom_audience_id:
             targeting["custom_audiences"] = [{"id": custom_audience_id}]
         elif audience_type == "PAGE_FANS" and page_id:
@@ -849,6 +849,9 @@ class MetaAPIService:
                 "status": "PAUSED",
                 "targeting": json.dumps(targeting),
             }
+            # Advantage+ audience: set targeting_optimization at adset level
+            if audience_type == "ADVANTAGE_PLUS":
+                adset_data["targeting_optimization"] = "expansion_all"
             # promoted_object at ad set level — required for page-based campaigns
             if page_id:
                 adset_data["promoted_object"] = json.dumps({"page_id": page_id})

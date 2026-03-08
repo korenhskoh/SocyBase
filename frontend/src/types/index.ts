@@ -355,6 +355,54 @@ export interface SourcePage {
   total_posts: number;
 }
 
+// Competitor Intelligence types
+export interface CompetitorPage {
+  id: string;
+  page_id: string;
+  name: string | null;
+  category: string | null;
+  about: string | null;
+  location: string | null;
+  picture_url: string | null;
+  page_url: string | null;
+  verification_status: string | null;
+  source: string;
+  last_scanned_at: string | null;
+  total_posts_scanned: number;
+  avg_engagement: number;
+  created_at: string | null;
+}
+
+export interface PageSearchResult {
+  id: string;
+  name: string | null;
+  link: string | null;
+  location: string | Record<string, unknown> | null;
+  category: string | null;
+  verification_status: string | null;
+  likes: number | null;
+  is_eligible_for_branded_content: boolean | null;
+}
+
+export interface CompetitorPost {
+  post_id: string;
+  message: string | null;
+  created_time: string | null;
+  from_name: string | null;
+  comment_count: number;
+  reaction_count: number;
+  share_count: number;
+  attachment_type: string | null;
+  attachment_url: string | null;
+  post_url: string | null;
+  is_livestream: boolean;
+  video_views: number | null;
+  live_views: number | null;
+  virality_score: number;
+  engagement_total: number;
+  source_page?: string;
+}
+
 // Facebook Ads types
 export interface FBConnectionStatus {
   connected: boolean;

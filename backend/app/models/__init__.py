@@ -13,6 +13,7 @@ from app.models.fb_ads import (
     FBInsightScore, FBWinningAd,
     AICampaign, AICampaignAdSet, AICampaignAd,
 )
+from app.models.competitor import CompetitorPage
 from app.models.traffic_bot import (
     TrafficBotWallet, TrafficBotTransaction,
     TrafficBotService, TrafficBotOrder,
@@ -47,6 +48,8 @@ __all__ = [
     "AICampaign",
     "AICampaignAdSet",
     "AICampaignAd",
+    # Competitors
+    "CompetitorPage",
     # Traffic Bot
     "TrafficBotWallet",
     "TrafficBotTransaction",

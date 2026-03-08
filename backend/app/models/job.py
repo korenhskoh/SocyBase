@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Text, Numeric
+from sqlalchemy import String, Integer, Boolean, DateTime, Float, ForeignKey, Text, Numeric
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
@@ -179,6 +179,12 @@ class ScrapedPost(Base):
 
     # Computed
     post_url: Mapped[str | None] = mapped_column(Text)
+
+    # Livestream / video fields
+    is_livestream: Mapped[bool] = mapped_column(Boolean, default=False)
+    video_views: Mapped[int | None] = mapped_column(Integer)
+    live_views: Mapped[int | None] = mapped_column(Integer)
+    video_length: Mapped[float | None] = mapped_column(Float)
 
     # Raw API response
     raw_data: Mapped[dict | None] = mapped_column(JSONB)

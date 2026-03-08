@@ -456,6 +456,28 @@ export const fbAdsApi = {
   duplicateAICampaign: (id: string) => api.post(`/fb-ads/launch/${id}/duplicate`),
 };
 
+// Competitors API
+export const competitorsApi = {
+  list: () => api.get("/competitors"),
+  add: (data: { input_value: string; source?: string; name?: string; category?: string; picture_url?: string; page_url?: string }) =>
+    api.post("/competitors", data),
+  remove: (id: string) => api.delete(`/competitors/${id}`),
+  search: (q: string, limit?: number) =>
+    api.get("/competitors/search", { params: { q, limit: limit || 10 } }),
+  searchByLocation: (q: string, location: string, limit?: number) =>
+    api.get("/competitors/search-location", { params: { q, location, limit: limit || 20 } }),
+  quickScan: (id: string) => api.get(`/competitors/${id}/quick-scan`),
+  feed: (params?: {
+    livestream_only?: boolean;
+    content_type?: string;
+    sort_by?: string;
+    days?: number;
+    page?: number;
+    page_size?: number;
+  }) => api.get("/competitors/feed", { params }),
+  scrape: (id: string) => api.post(`/competitors/${id}/scrape`),
+};
+
 // Traffic Bot API
 export const trafficBotApi = {
   // Services

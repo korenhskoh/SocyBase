@@ -410,14 +410,24 @@ async def _run_publish(campaign_id: str) -> dict:
                     select(AICampaignAdSet).where(AICampaignAdSet.campaign_id == campaign.id)
                 )
                 for adset in adsets_r.scalars().all():
+                    # Clean targeting: remove non-spec keys that Meta rejects
+                    clean_targeting = dict(adset.targeting) if adset.targeting else {}
+                    adset_level_targeting_opt = None
+                    if "advantage_audience" in clean_targeting:
+                        del clean_targeting["advantage_audience"]
+                    if "targeting_optimization" in clean_targeting:
+                        adset_level_targeting_opt = clean_targeting.pop("targeting_optimization")
+
                     adset_data: dict = {
                         "name": adset.name,
                         "campaign_id": meta_campaign_id,
                         "billing_event": "IMPRESSIONS",
                         "optimization_goal": optimization_goal,
                         "status": "PAUSED",
-                        "targeting": json.dumps(adset.targeting) if adset.targeting else "{}",
+                        "targeting": json.dumps(clean_targeting),
                     }
+                    if adset_level_targeting_opt:
+                        adset_data["targeting_optimization"] = adset_level_targeting_opt
                     # promoted_object at ad set level — required for page-based campaigns
                     if page:
                         adset_data["promoted_object"] = json.dumps({"page_id": page.page_id})
