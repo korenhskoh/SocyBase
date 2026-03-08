@@ -77,13 +77,22 @@ class FacebookGraphClient(AbstractSocialClient):
             return result
 
         # Video post - /{page}/videos/{id}
+        # Comments live on the parent POST object ({page_id}_{video_id}), not the video itself.
         video_match = re.search(r"/videos/(\d+)", url)
         if video_match:
-            result["post_id"] = video_match.group(1)
-            # Extract page name from URL: facebook.com/{page}/videos/...
+            video_id = video_match.group(1)
             page_match = re.search(r"facebook\.com/([^/]+)/videos/", url)
             if page_match:
-                result["page_id"] = _resolve_page_id(page_match.group(1), url)
+                page_id = _resolve_page_id(page_match.group(1), url)
+                result["page_id"] = page_id
+                if page_id.isdigit():
+                    result["post_id"] = f"{page_id}_{video_id}"
+                else:
+                    result["post_id"] = video_id
+                    result["needs_post_id_resolve"] = True
+            else:
+                result["post_id"] = video_id
+                result["needs_post_id_resolve"] = True
             return result
 
         # Reel post - /reel/{id} or /reels/{id}
@@ -114,10 +123,11 @@ class FacebookGraphClient(AbstractSocialClient):
             result["post_id"] = photo_match.group(1)
             return result
 
-        # watch/?v=...
+        # watch/?v=... — video ID, comments may live on parent post
         watch_match = re.search(r"[?&]v=(\d+)", url)
         if watch_match:
             result["post_id"] = watch_match.group(1)
+            result["needs_post_id_resolve"] = True
             return result
 
         # reel/{id}
