@@ -426,7 +426,11 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                     last_err = e
                                     logger.warning(f"[Job {job_id}] 401 with token_type={try_token}, trying next...")
                                     continue
-                                raise  # Non-401 errors should propagate immediately
+                                if e.response.status_code >= 500:
+                                    last_err = e
+                                    logger.warning(f"[Job {job_id}] Server error {e.response.status_code} on page {pages_fetched + 1}, will retry...")
+                                    break  # Break token loop, retry with backoff
+                                raise  # Non-retryable errors should propagate immediately
                             except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
                                 last_err = e
                                 break  # Break token loop, retry with same token
@@ -449,14 +453,15 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                     continue
                                 raise  # Non-transient or last attempt
 
-                        if isinstance(last_err, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout)):
+                        if isinstance(last_err, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.HTTPStatusError)):
                             if attempt < max_retries - 1:
                                 wait = 5 * (attempt + 1)
+                                err_label = f"{last_err.response.status_code}" if isinstance(last_err, httpx.HTTPStatusError) else "Timeout"
                                 logger.warning(
-                                    f"[Job {job_id}] Timeout on page {pages_fetched + 1} (attempt {attempt + 1}/{max_retries}), retrying in {wait}s..."
+                                    f"[Job {job_id}] {err_label} on page {pages_fetched + 1} (attempt {attempt + 1}/{max_retries}), retrying in {wait}s..."
                                 )
                                 await _append_log(db, job, "warn", "fetch_posts",
-                                    f"Timeout on page {pages_fetched + 1}, retrying ({attempt + 1}/{max_retries})")
+                                    f"{err_label} on page {pages_fetched + 1}, retrying ({attempt + 1}/{max_retries})")
                                 await asyncio.sleep(wait)
                                 continue
                             else:
