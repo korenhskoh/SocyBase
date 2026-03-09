@@ -582,8 +582,15 @@ async def _execute_pipeline(job_id: str, celery_task):
                                     response = fallback_response
                                 else:
                                     # Try Playwright browser-based fallback
+                                    # Build a proper post URL from the post ID (not job.input_value which may be a page URL)
+                                    _pw_post_url = job.input_value
+                                    if "_" in post_id:
+                                        _page_id, _post_id = post_id.split("_", 1)
+                                        _pw_post_url = f"https://www.facebook.com/permalink.php?story_fbid={_post_id}&id={_page_id}"
+                                    elif post_id and not post_id.startswith("http"):
+                                        _pw_post_url = f"https://www.facebook.com/{post_id}"
                                     pw_response = await _try_playwright_comment_fallback(
-                                        db, job, job.input_value
+                                        db, job, _pw_post_url
                                     )
                                     if pw_response is not None:
                                         response = pw_response
