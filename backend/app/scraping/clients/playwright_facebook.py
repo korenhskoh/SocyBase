@@ -84,12 +84,19 @@ def _extract_user_id_from_href(href: str) -> str:
 
 
 def _convert_post_url_to_mbasic(url: str) -> str:
-    """Convert any facebook.com URL to mbasic.facebook.com."""
-    return re.sub(
-        r"https?://(www\.|m\.|web\.)?facebook\.com",
+    """Convert any facebook.com URL to mbasic.facebook.com.
+
+    Also converts permalink.php → story.php because mbasic
+    redirects permalink.php to m.facebook.com (mobile touch site).
+    """
+    result = re.sub(
+        r"https?://(www\.|m\.|web\.|mbasic\.)?facebook\.com",
         MBASIC_BASE,
         url,
     )
+    # permalink.php causes mbasic redirect → use story.php instead
+    result = result.replace("/permalink.php?", "/story.php?")
+    return result
 
 
 class PlaywrightFacebookClient:
@@ -161,13 +168,15 @@ class PlaywrightFacebookClient:
                 logger.warning("Playwright: cookies expired — redirected to login")
                 return None
 
-            # Debug: log page title and a snippet of the HTML to diagnose selector issues
+            # Debug: log page info and body text to diagnose selector issues
             title = await page.title()
+            logger.info("Playwright: page title = %s, URL = %s", title, page.url)
+            # Log body text content (readable, not raw HTML) for debugging
+            body_text = await page.inner_text("body")
+            logger.info("Playwright: body text (first 3000 chars): %s", body_text[:3000])
+            # Also log a snippet of the raw HTML around comments area
             html_content = await page.content()
-            logger.info("Playwright: page title = %s, URL = %s, HTML length = %d",
-                        title, page.url, len(html_content))
-            # Log first 2000 chars of body for debugging selectors
-            logger.info("Playwright: HTML snippet: %s", html_content[:2000])
+            logger.info("Playwright: HTML length = %d", len(html_content))
 
             # Extract comments from current page + follow "See more" links
             pages_loaded = 0
