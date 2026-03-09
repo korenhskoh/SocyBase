@@ -161,6 +161,14 @@ class PlaywrightFacebookClient:
                 logger.warning("Playwright: cookies expired — redirected to login")
                 return None
 
+            # Debug: log page title and a snippet of the HTML to diagnose selector issues
+            title = await page.title()
+            html_content = await page.content()
+            logger.info("Playwright: page title = %s, URL = %s, HTML length = %d",
+                        title, page.url, len(html_content))
+            # Log first 2000 chars of body for debugging selectors
+            logger.info("Playwright: HTML snippet: %s", html_content[:2000])
+
             # Extract comments from current page + follow "See more" links
             pages_loaded = 0
             max_pages = max(limit // 10, 3)
@@ -223,15 +231,16 @@ class PlaywrightFacebookClient:
         # Strategy: find all <a> tags that link to profiles inside comment sections
         # mbasic uses <div id="ufi_X"> for comment sections
         comment_divs = await page.query_selector_all('[id^="ufi"] > div > div')
+        logger.info("Playwright: selector '[id^=ufi] > div > div' matched %d elements", len(comment_divs))
         if not comment_divs:
-            # Fallback: try broader selector for comment-like structures
             comment_divs = await page.query_selector_all('div[data-sigil="comment"]')
+            logger.info("Playwright: selector 'div[data-sigil=comment]' matched %d elements", len(comment_divs))
         if not comment_divs:
-            # Another fallback: find divs containing profile links near text
             comment_divs = await page.query_selector_all('div.dw > div')
+            logger.info("Playwright: selector 'div.dw > div' matched %d elements", len(comment_divs))
         if not comment_divs:
-            # Last resort: grab any div that has both a profile link and text
             comment_divs = await page.query_selector_all('#root div > div > div')
+            logger.info("Playwright: selector '#root div > div > div' matched %d elements", len(comment_divs))
 
         for div in comment_divs:
             try:
