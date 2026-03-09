@@ -62,6 +62,44 @@ async function apiPost(path, body) {
   return res.json();
 }
 
+// ── Facebook fetch with cookies ─────────────────────────────────────
+
+async function fetchFacebookPage(url) {
+  // Service worker fetch() doesn't send browser cookies automatically.
+  // Read them via chrome.cookies API and attach manually.
+  const cookies = await chrome.cookies.getAll({ domain: ".facebook.com" });
+  const cookieString = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+
+  if (!cookieString || cookies.length < 3) {
+    throw new Error("No Facebook cookies found — please log into Facebook in this browser");
+  }
+
+  const response = await fetch(url, {
+    credentials: "omit",
+    headers: {
+      Cookie: cookieString,
+      "User-Agent":
+        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Facebook returned ${response.status}`);
+  }
+
+  const html = await response.text();
+
+  // Check for login redirect — look for the actual login form, not just any /login link
+  if (
+    (html.includes('<form id="login_form"') || html.includes('action="/login/')) &&
+    !html.includes('id="root"')
+  ) {
+    throw new Error("Facebook session expired — redirected to login page");
+  }
+
+  return html;
+}
+
 // ── Facebook HTML parsing ───────────────────────────────────────────
 
 function extractUserIdFromHref(href) {
@@ -313,18 +351,7 @@ async function processTask(task) {
 
     while (pagesLoaded < maxPages && allItems.length < limit) {
       console.log(`[SocyBase] Fetching page ${pagesLoaded + 1}: ${currentUrl}`);
-      const response = await fetch(currentUrl, { credentials: "include" });
-
-      if (!response.ok) {
-        throw new Error(`Facebook returned ${response.status}`);
-      }
-
-      const html = await response.text();
-
-      // Check for login redirect
-      if (html.includes("/login") && html.includes("checkpoint")) {
-        throw new Error("Facebook cookies expired — redirected to login page");
-      }
+      const html = await fetchFacebookPage(currentUrl);
 
       // Parse based on task type
       if (task.task_type === "scrape_comments") {
