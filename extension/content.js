@@ -5,12 +5,23 @@
  * and announces extension presence to the page.
  */
 
-// Announce extension is installed
-window.postMessage({ type: "SOCYBASE_EXTENSION_INSTALLED", version: "1.0.0" }, "*");
+// Announce extension is installed — repeat to handle React hydration race
+function announce() {
+  window.postMessage({ type: "SOCYBASE_EXTENSION_INSTALLED", version: "1.0.0" }, "*");
+}
+announce();
+setTimeout(announce, 500);
+setTimeout(announce, 1500);
 
-// Listen for connect requests from the SocyBase web app
+// Listen for messages from the SocyBase web app
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
+
+  // Respond to pings (page can ask "are you there?" at any time)
+  if (event.data?.type === "SOCYBASE_EXTENSION_PING") {
+    announce();
+    return;
+  }
 
   if (event.data?.type === "SOCYBASE_EXTENSION_CONNECT") {
     const { apiUrl, authToken } = event.data;
