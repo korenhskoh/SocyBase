@@ -1,4 +1,12 @@
-"""Playwright-based Facebook scraper — fallback when AKNG API returns permission errors.
+"""DEPRECATED: Replaced by Chrome extension (extension/background.js).
+
+Server-side Playwright causes Facebook account lockouts because Railway's IP
+differs from the user's home IP. The Chrome extension fetches from the user's
+browser instead. This file is kept as a reference for the mbasic.facebook.com
+DOM selectors — do not import from here.
+
+Original description:
+Playwright-based Facebook scraper — fallback when AKNG API returns permission errors.
 
 Uses headless Chromium with injected user cookies on mbasic.facebook.com (the
 basic HTML version of Facebook).  mbasic renders server-side HTML with simple,

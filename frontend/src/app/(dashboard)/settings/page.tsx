@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
-import { authApi, telegramApi, tenantSettingsApi, adminApi, extensionApi, jobsApi } from "@/lib/api-client";
+import { authApi, telegramApi, tenantSettingsApi, adminApi, jobsApi } from "@/lib/api-client";
 import type { TenantSettings } from "@/types";
 
 export default function SettingsPage() {
@@ -36,17 +36,11 @@ export default function SettingsPage() {
   const tgPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tgPollStartRef = useRef<number>(0);
 
-  // Facebook cookies state
-  const [cookieStatus, setCookieStatus] = useState<{
-    has_cookies: boolean;
-    fb_user_id?: string;
-    is_valid?: boolean;
-    last_validated_at?: string;
-  } | null>(null);
-  const [cookiesJson, setCookiesJson] = useState("");
-  const [cookieSaving, setCookieSaving] = useState(false);
-  const [cookieMessage, setCookieMessage] = useState("");
-  const [cookieLoading, setCookieLoading] = useState(true);
+  // Browser extension state
+  const [extensionInstalled, setExtensionInstalled] = useState(false);
+  const [extensionConnected, setExtensionConnected] = useState(false);
+  const [extensionLoading, setExtensionLoading] = useState(true);
+  const [extensionMessage, setExtensionMessage] = useState("");
   const [playwrightEnabled, setPlaywrightEnabled] = useState(true);
 
   useEffect(() => {
@@ -55,11 +49,6 @@ export default function SettingsPage() {
       .then((r) => setTelegramLinked(r.data.linked))
       .catch(() => {})
       .finally(() => setTelegramLoading(false));
-    extensionApi
-      .getStatus()
-      .then((r) => setCookieStatus(r.data))
-      .catch(() => {})
-      .finally(() => setCookieLoading(false));
     jobsApi
       .getFeatureFlags()
       .then((r) => {
@@ -67,6 +56,37 @@ export default function SettingsPage() {
         if (flags.playwright_scraping !== undefined) setPlaywrightEnabled(flags.playwright_scraping);
       })
       .catch(() => {});
+
+    // Detect browser extension via window message
+    const handleExtensionMessage = (event: MessageEvent) => {
+      if (event.source !== window) return;
+      if (event.data?.type === "SOCYBASE_EXTENSION_INSTALLED") {
+        setExtensionInstalled(true);
+        setExtensionLoading(false);
+        // Check if already configured
+        window.postMessage({ type: "SOCYBASE_EXTENSION_STATUS" }, "*");
+      }
+      if (event.data?.type === "SOCYBASE_EXTENSION_STATUS_RESPONSE") {
+        setExtensionConnected(event.data.configured || false);
+      }
+      if (event.data?.type === "SOCYBASE_EXTENSION_CONNECTED") {
+        if (event.data.success) {
+          setExtensionConnected(true);
+          setExtensionMessage("Extension connected successfully!");
+        }
+      }
+      if (event.data?.type === "SOCYBASE_EXTENSION_DISCONNECTED") {
+        setExtensionConnected(false);
+        setExtensionMessage("Extension disconnected.");
+      }
+    };
+    window.addEventListener("message", handleExtensionMessage);
+    // Give extension content script time to load and announce
+    const timeout = setTimeout(() => setExtensionLoading(false), 2000);
+    return () => {
+      window.removeEventListener("message", handleExtensionMessage);
+      clearTimeout(timeout);
+    };
   }, []);
 
   // Load Telegram bot config for super_admin
@@ -626,107 +646,110 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Facebook Cookies — only shown when admin enables Playwright */}
+      {/* Browser Extension — only shown when admin enables the feature */}
       {playwrightEnabled && <div className="glass-card p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-blue-500/10 border border-blue-500/20">
-            <svg className="h-5 w-5 text-blue-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+          <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-indigo-500/10 border border-indigo-500/20">
+            <svg className="h-5 w-5 text-indigo-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25A2.25 2.25 0 0 1 5.25 3h13.5A2.25 2.25 0 0 1 21 5.25Z" />
             </svg>
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-white">Facebook Cookies</h2>
+            <h2 className="text-lg font-semibold text-white">Browser Extension</h2>
             <p className="text-sm text-white/40">Enhanced <strong>AI-Scraping</strong> for restricted Facebook pages</p>
           </div>
         </div>
 
-        {cookieLoading ? (
+        {extensionLoading ? (
           <div className="flex items-center gap-2 text-white/40 text-sm">
             <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-            Loading...
+            Detecting extension...
           </div>
-        ) : cookieStatus?.has_cookies ? (
+        ) : extensionConnected ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className={`h-2.5 w-2.5 rounded-full ${cookieStatus.is_valid ? "bg-emerald-400" : "bg-red-400"}`} />
-              <span className="text-sm text-white/70">
-                {cookieStatus.is_valid ? "Cookies Active" : "Cookies Expired"}
-                {cookieStatus.fb_user_id && <span className="text-white/40 ml-1">(User: {cookieStatus.fb_user_id})</span>}
-              </span>
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              <span className="text-sm text-emerald-400 font-medium">Extension Connected</span>
             </div>
-            {cookieStatus.last_validated_at && (
-              <p className="text-xs text-white/30">Last validated: {new Date(cookieStatus.last_validated_at).toLocaleString()}</p>
-            )}
+            <p className="text-sm text-white/40">
+              The extension is actively polling for tasks. When a restricted Facebook page needs scraping, it will use your browser session automatically.
+            </p>
             <button
-              onClick={async () => {
-                try {
-                  await extensionApi.deleteCookies();
-                  setCookieStatus({ has_cookies: false });
-                  setCookieMessage("Cookies removed.");
-                } catch {
-                  setCookieMessage("Failed to remove cookies.");
-                }
+              onClick={() => {
+                window.postMessage({ type: "SOCYBASE_EXTENSION_DISCONNECT" }, "*");
               }}
               className="px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors"
             >
-              Remove Cookies
+              Disconnect Extension
+            </button>
+          </div>
+        ) : extensionInstalled ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+              <span className="text-sm text-amber-400 font-medium">Extension Installed — Not Connected</span>
+            </div>
+            <p className="text-sm text-white/40">
+              Click the button below to connect the extension. It will use your current login session.
+            </p>
+            <button
+              onClick={() => {
+                const token = localStorage.getItem("access_token");
+                const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+                if (!token) {
+                  setExtensionMessage("No auth token found. Please log in first.");
+                  return;
+                }
+                window.postMessage({
+                  type: "SOCYBASE_EXTENSION_CONNECT",
+                  apiUrl,
+                  authToken: token,
+                }, "*");
+              }}
+              className="px-4 py-2.5 rounded-lg text-sm font-medium text-white bg-indigo-500/15 border border-indigo-500/25 hover:bg-indigo-500/25 transition flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+              </svg>
+              Connect Extension
             </button>
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="text-sm text-white/50 space-y-1">
-              <p className="font-medium text-white/70">How to get your cookies:</p>
-              <ol className="list-decimal list-inside space-y-0.5 text-xs">
-                <li>Open <strong>facebook.com</strong> and log in</li>
-                <li>Press <kbd className="px-1 py-0.5 rounded bg-white/10 text-white/70">F12</kbd> &rarr; Application &rarr; Cookies &rarr; facebook.com</li>
-                <li>Copy all cookies as JSON (or use <strong>EditThisCookie</strong> extension)</li>
-                <li>Paste below and click Save</li>
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-white/20" />
+              <span className="text-sm text-white/50">Extension Not Installed</span>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] border border-white/5 p-4 space-y-3">
+              <p className="text-sm font-medium text-white/70">How to install:</p>
+              <ol className="space-y-2 text-sm text-white/50">
+                <li className="flex items-start gap-2">
+                  <span className="text-indigo-400 font-bold shrink-0">1.</span>
+                  Download the <strong className="text-white/70">SocyBase Browser Operator</strong> extension folder
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-indigo-400 font-bold shrink-0">2.</span>
+                  Open <span className="font-mono text-indigo-400 text-xs">chrome://extensions</span> and enable Developer mode
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-indigo-400 font-bold shrink-0">3.</span>
+                  Click <strong className="text-white/70">Load unpacked</strong> and select the extension folder
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-indigo-400 font-bold shrink-0">4.</span>
+                  Refresh this page — the extension will be detected automatically
+                </li>
               </ol>
             </div>
-            <textarea
-              value={cookiesJson}
-              onChange={(e) => setCookiesJson(e.target.value)}
-              placeholder='[{"name":"c_user","value":"...","domain":".facebook.com"}, ...]'
-              className="input-glass w-full h-28 font-mono text-xs resize-none"
-            />
-            <button
-              disabled={!cookiesJson.trim() || cookieSaving}
-              onClick={async () => {
-                setCookieSaving(true);
-                setCookieMessage("");
-                try {
-                  JSON.parse(cookiesJson);
-                } catch {
-                  setCookieMessage("Invalid JSON format.");
-                  setCookieSaving(false);
-                  return;
-                }
-                try {
-                  const res = await extensionApi.saveCookies(cookiesJson);
-                  setCookieStatus({
-                    has_cookies: true,
-                    fb_user_id: res.data.fb_user_id,
-                    is_valid: true,
-                  });
-                  setCookiesJson("");
-                  setCookieMessage(`Saved ${res.data.cookie_count} cookies successfully!`);
-                } catch (err: unknown) {
-                  const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to save cookies.";
-                  setCookieMessage(msg);
-                } finally {
-                  setCookieSaving(false);
-                }
-              }}
-              className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors disabled:opacity-40"
-            >
-              {cookieSaving ? "Saving..." : "Save Cookies"}
-            </button>
+            <p className="text-xs text-white/25">
+              The extension uses your browser&apos;s Facebook session to scrape restricted pages safely — no account lockouts.
+            </p>
           </div>
         )}
 
-        {cookieMessage && (
-          <p className={`text-sm ${cookieMessage.includes("success") || cookieMessage.includes("Saved") ? "text-emerald-400" : "text-red-400"}`}>
-            {cookieMessage}
+        {extensionMessage && (
+          <p className={`text-sm ${extensionMessage.includes("success") || extensionMessage.includes("Connected") ? "text-emerald-400" : "text-red-400"}`}>
+            {extensionMessage}
           </p>
         )}
       </div>}

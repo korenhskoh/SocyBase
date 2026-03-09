@@ -15,6 +15,7 @@ from app.models.fb_ads import (
 )
 from app.models.competitor import CompetitorPage
 from app.models.fb_cookie_session import FBCookieSession
+from app.models.browser_scrape_task import BrowserScrapeTask
 from app.models.traffic_bot import (
     TrafficBotWallet, TrafficBotTransaction,
     TrafficBotService, TrafficBotOrder,
@@ -53,6 +54,8 @@ __all__ = [
     "CompetitorPage",
     # Cookie Sessions
     "FBCookieSession",
+    # Browser Scrape Tasks
+    "BrowserScrapeTask",
     # Traffic Bot
     "TrafficBotWallet",
     "TrafficBotTransaction",

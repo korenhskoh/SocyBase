@@ -536,6 +536,7 @@ export const extensionApi = {
   saveCookies: (cookiesJson: string) =>
     api.post("/extension/cookies", { cookies_json: cookiesJson }),
   deleteCookies: () => api.delete("/extension/cookies"),
+  getPendingTasks: () => api.get("/extension/tasks"),
 };
 
 export default api;

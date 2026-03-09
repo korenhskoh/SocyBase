@@ -22,7 +22,7 @@ from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, PageAu
 from app.models.credit import CreditBalance, CreditTransaction
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
-from app.scraping.clients.playwright_facebook import try_playwright_comments
+from app.models.browser_scrape_task import BrowserScrapeTask
 from app.scraping.mappers.facebook_mapper import FacebookProfileMapper
 from app.scraping.rate_limiter import RateLimiter
 from app.celery_app import celery_app
@@ -46,10 +46,9 @@ def _parse_comment_time(val) -> datetime | None:
         return None
 
 
-async def _try_playwright_comment_fallback(db, job, input_url: str) -> dict | None:
-    """Try Playwright browser-based comment scraping as last-resort fallback."""
+async def _try_extension_comment_fallback(db, job, input_url: str) -> dict | None:
+    """Create a browser scrape task and wait for the Chrome extension to complete it."""
     from app.models.system import SystemSetting
-    from app.models.fb_cookie_session import FBCookieSession
 
     # Check feature flag
     ff_result = await db.execute(
@@ -59,34 +58,52 @@ async def _try_playwright_comment_fallback(db, job, input_url: str) -> dict | No
     if ff and not ff.value.get("enabled", True):
         return None
 
-    result = await db.execute(
-        select(FBCookieSession).where(
-            FBCookieSession.tenant_id == job.tenant_id,
-            FBCookieSession.is_valid == True,
+    # Build mbasic URL
+    import re
+    mbasic_url = input_url
+    if not mbasic_url.startswith("http"):
+        mbasic_url = f"https://mbasic.facebook.com/{mbasic_url}"
+    else:
+        mbasic_url = re.sub(
+            r"https?://(www\.|m\.|web\.|mbasic\.)?facebook\.com",
+            "https://mbasic.facebook.com",
+            mbasic_url,
         )
+        mbasic_url = mbasic_url.replace("/permalink.php?", "/story.php?")
+
+    # Create task
+    task = BrowserScrapeTask(
+        tenant_id=job.tenant_id,
+        job_id=job.id,
+        task_type="scrape_comments",
+        target_url=mbasic_url,
+        limit=100,
     )
-    cookie_session = result.scalar_one_or_none()
-    if not cookie_session:
-        return None
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    logger.info("[Job %s] Created browser scrape task %s, waiting for extension", job.id, task.id)
 
-    logger.info("[Job %s] Trying Playwright browser fallback for comments", job.id)
+    # Poll DB every 2s, timeout 90s
+    for _ in range(45):
+        await asyncio.sleep(2)
+        await db.refresh(task)
+        if task.status in ("completed", "failed"):
+            break
 
-    # Build a proper Facebook URL if input is just a post ID
-    post_url = input_url
-    if not input_url.startswith("http"):
-        post_url = f"https://www.facebook.com/{input_url}"
+    if task.status == "completed" and task.result_data:
+        logger.info("[Job %s] Extension returned %d items", job.id, len(task.result_data.get("data", [])))
+        return task.result_data
 
-    response = await try_playwright_comments(
-        cookie_session.cookies_encrypted, post_url
-    )
-
-    if response is None:
-        # Cookies may be invalid — mark them
-        cookie_session.is_valid = False
+    if task.status == "failed":
+        logger.warning("[Job %s] Extension task failed: %s", job.id, task.error_message)
+    else:
+        logger.warning("[Job %s] Extension task timed out (90s)", job.id)
+        task.status = "failed"
+        task.error_message = "Timed out waiting for extension"
         await db.commit()
-        logger.warning("[Job %s] Playwright fallback failed (cookies may be expired)", job.id)
 
-    return response
+    return None
 
 
 def _calc_stage_progress(stage: str, **ctx) -> float:
@@ -581,7 +598,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 if fallback_response is not None:
                                     response = fallback_response
                                 else:
-                                    # Try Playwright browser-based fallback
+                                    # Try browser extension fallback
                                     # Build a proper post URL from the post ID (not job.input_value which may be a page URL)
                                     _pw_post_url = job.input_value
                                     if "_" in post_id:
@@ -589,13 +606,13 @@ async def _execute_pipeline(job_id: str, celery_task):
                                         _pw_post_url = f"https://mbasic.facebook.com/story.php?story_fbid={_post_id}&id={_page_id}"
                                     elif post_id and not post_id.startswith("http"):
                                         _pw_post_url = f"https://www.facebook.com/{post_id}"
-                                    pw_response = await _try_playwright_comment_fallback(
+                                    pw_response = await _try_extension_comment_fallback(
                                         db, job, _pw_post_url
                                     )
                                     if pw_response is not None:
                                         response = pw_response
                                         await _append_log(db, job, "info", "fetch_comments",
-                                            "Switched to browser-based AI-Scraping (Playwright)")
+                                            "Switched to browser extension fallback")
                                     else:
                                         # All fallbacks exhausted — stop with 0 comments
                                         logger.error(f"[Job {job_id}] All comment fetch approaches failed for post {post_id}")

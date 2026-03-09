@@ -22,7 +22,7 @@ from app.models.job import ScrapingJob, ScrapedPost, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
-from app.scraping.clients.playwright_facebook import try_playwright_feed
+from app.models.browser_scrape_task import BrowserScrapeTask
 from app.scraping.mappers.facebook_mapper import FacebookProfileMapper
 from app.scraping.rate_limiter import RateLimiter
 from app.celery_app import celery_app
@@ -51,10 +51,9 @@ def _parse_dt(val) -> datetime | None:
         return None
 
 
-async def _try_playwright_feed_fallback(db, job, page_id: str) -> dict | None:
-    """Try Playwright browser-based feed scraping as last-resort fallback."""
+async def _try_extension_feed_fallback(db, job, page_id: str) -> dict | None:
+    """Create a browser scrape task and wait for the Chrome extension to complete it."""
     from app.models.system import SystemSetting
-    from app.models.fb_cookie_session import FBCookieSession
 
     # Check feature flag
     ff_result = await db.execute(
@@ -64,29 +63,40 @@ async def _try_playwright_feed_fallback(db, job, page_id: str) -> dict | None:
     if ff and not ff.value.get("enabled", True):
         return None
 
-    result = await db.execute(
-        select(FBCookieSession).where(
-            FBCookieSession.tenant_id == job.tenant_id,
-            FBCookieSession.is_valid == True,
-        )
+    mbasic_url = f"https://mbasic.facebook.com/{page_id}"
+
+    task = BrowserScrapeTask(
+        tenant_id=job.tenant_id,
+        job_id=job.id,
+        task_type="scrape_feed",
+        target_url=mbasic_url,
+        limit=10,
     )
-    cookie_session = result.scalar_one_or_none()
-    if not cookie_session:
-        return None
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    logger.info("[Job %s] Created browser scrape task %s for feed, waiting for extension", job.id, task.id)
 
-    logger.info("[Job %s] Trying Playwright browser fallback for feed", job.id)
+    # Poll DB every 2s, timeout 90s
+    for _ in range(45):
+        await asyncio.sleep(2)
+        await db.refresh(task)
+        if task.status in ("completed", "failed"):
+            break
 
-    page_url = f"https://www.facebook.com/{page_id}"
-    response = await try_playwright_feed(
-        cookie_session.cookies_encrypted, page_url
-    )
+    if task.status == "completed" and task.result_data:
+        logger.info("[Job %s] Extension returned feed data", job.id)
+        return task.result_data
 
-    if response is None:
-        cookie_session.is_valid = False
+    if task.status == "failed":
+        logger.warning("[Job %s] Extension feed task failed: %s", job.id, task.error_message)
+    else:
+        logger.warning("[Job %s] Extension feed task timed out (90s)", job.id)
+        task.status = "failed"
+        task.error_message = "Timed out waiting for extension"
         await db.commit()
-        logger.warning("[Job %s] Playwright feed fallback failed (cookies may be expired)", job.id)
 
-    return response
+    return None
 
 
 def _extract_post_fields(item: dict) -> dict:
@@ -579,10 +589,10 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                 break
                             raise last_err  # No data collected
 
-                    # Graceful fallback broke out of retry loop — try Playwright, then break
+                    # Graceful fallback broke out of retry loop — try extension, then break
                     if posts_data is None:
                         if pages_fetched == 0 and total_posts_fetched == 0:
-                            pw_result = await _try_playwright_feed_fallback(
+                            pw_result = await _try_extension_feed_fallback(
                                 db, job, page_id
                             )
                             if pw_result is not None:
@@ -590,7 +600,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                 paging = pw_result.get("paging", {})
                                 raw_response = pw_result
                                 await _append_log(db, job, "info", "fetch_posts",
-                                    "Switched to browser-based AI-Scraping (Playwright)")
+                                    "Switched to browser extension fallback")
                             else:
                                 break
                         else:
@@ -829,7 +839,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
             except Exception as e:
-                # Try Playwright fallback for permission errors before giving up
+                # Try extension fallback for permission errors before giving up
                 pw_recovered = False
                 try:
                     err_str_check = str(e)
@@ -837,11 +847,11 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         "code 100" in err_str_check or "code 190" in err_str_check
                         or "401" in err_str_check or "does not exist" in err_str_check
                     ):
-                        pw_result = await _try_playwright_feed_fallback(db, job, page_id)
+                        pw_result = await _try_extension_feed_fallback(db, job, page_id)
                         if pw_result is not None and pw_result.get("data"):
                             await _append_log(db, job, "info", "fetch_posts",
-                                "API failed, switched to browser-based AI-Scraping (Playwright)")
-                            # Process Playwright posts through the normal flow
+                                "API failed, switched to browser extension fallback")
+                            # Process extension posts through the normal flow
                             for item in pw_result["data"]:
                                 fields = _extract_post_fields(item)
                                 pid = fields["post_id"]
@@ -870,15 +880,15 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 except NameError:
                     pass  # Variables not yet defined
                 except Exception as pw_err:
-                    logger.warning(f"[Job {job_id}] Playwright feed fallback failed: {pw_err}")
+                    logger.warning(f"[Job {job_id}] Extension feed fallback failed: {pw_err}")
 
                 if pw_recovered:
-                    # Continue to finalization with Playwright data
+                    # Continue to finalization with extension data
                     pages_fetched = 1
                     pages_with_posts = 1
-                    logger.info(f"[Job {job_id}] Playwright recovered {total_posts_fetched} posts")
+                    logger.info(f"[Job {job_id}] Extension recovered {total_posts_fetched} posts")
                 if pw_recovered:
-                    # Jump to finalization with Playwright data
+                    # Jump to finalization with extension data
                     job.status = "completed"
                     job.completed_at = datetime.now(timezone.utc)
                     job.result_row_count = total_posts_fetched
@@ -890,9 +900,9 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         pages_fetched=pages_fetched, pages_with_posts=pages_with_posts,
                         total_posts_fetched=total_posts_fetched)
                     await _append_log(db, job, "info", "finalize",
-                        f"Completed via Playwright: {total_posts_fetched} posts, {credits_used} credits used")
+                        f"Completed via extension: {total_posts_fetched} posts, {credits_used} credits used")
                     _publish_progress(job, "finalize")
-                    logger.info(f"[Job {job_id}] Completed via Playwright: {total_posts_fetched} posts")
+                    logger.info(f"[Job {job_id}] Completed via extension: {total_posts_fetched} posts")
                 else:
                     logger.exception(f"[Job {job_id}] Post discovery pipeline failed: {e}")
                     try:
