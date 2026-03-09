@@ -531,4 +531,11 @@ export const trafficBotApi = {
     api.post(`/admin/traffic-bot/wallet/deposits/${id}/reject`, { admin_notes }),
 };
 
+export const extensionApi = {
+  getStatus: () => api.get("/extension/status"),
+  saveCookies: (cookiesJson: string) =>
+    api.post("/extension/cookies", { cookies_json: cookiesJson }),
+  deleteCookies: () => api.delete("/extension/cookies"),
+};
+
 export default api;

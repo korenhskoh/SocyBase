@@ -22,6 +22,7 @@ from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, PageAu
 from app.models.credit import CreditBalance, CreditTransaction
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
+from app.scraping.clients.playwright_facebook import try_playwright_comments
 from app.scraping.mappers.facebook_mapper import FacebookProfileMapper
 from app.scraping.rate_limiter import RateLimiter
 from app.celery_app import celery_app
@@ -43,6 +44,49 @@ def _parse_comment_time(val) -> datetime | None:
         return dt
     except (ValueError, TypeError):
         return None
+
+
+async def _try_playwright_comment_fallback(db, job, input_url: str) -> dict | None:
+    """Try Playwright browser-based comment scraping as last-resort fallback."""
+    from app.models.system import SystemSetting
+    from app.models.fb_cookie_session import FBCookieSession
+
+    # Check feature flag
+    ff_result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "feature_flag_playwright_scraping")
+    )
+    ff = ff_result.scalar_one_or_none()
+    if ff and not ff.value.get("enabled", True):
+        return None
+
+    result = await db.execute(
+        select(FBCookieSession).where(
+            FBCookieSession.tenant_id == job.tenant_id,
+            FBCookieSession.is_valid == True,
+        )
+    )
+    cookie_session = result.scalar_one_or_none()
+    if not cookie_session:
+        return None
+
+    logger.info("[Job %s] Trying Playwright browser fallback for comments", job.id)
+
+    # Build a proper Facebook URL if input is just a post ID
+    post_url = input_url
+    if not input_url.startswith("http"):
+        post_url = f"https://www.facebook.com/{input_url}"
+
+    response = await try_playwright_comments(
+        cookie_session.cookies_encrypted, post_url
+    )
+
+    if response is None:
+        # Cookies may be invalid — mark them
+        cookie_session.is_valid = False
+        await db.commit()
+        logger.warning("[Job %s] Playwright fallback failed (cookies may be expired)", job.id)
+
+    return response
 
 
 def _calc_stage_progress(stage: str, **ctx) -> float:
@@ -537,18 +581,27 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 if fallback_response is not None:
                                     response = fallback_response
                                 else:
-                                    # All fallbacks exhausted — stop with 0 comments
-                                    logger.error(f"[Job {job_id}] All comment fetch approaches failed for post {post_id}")
-                                    await _append_log(db, job, "error", "fetch_comments",
-                                        f"Cannot access comments for this post (API error {err_code})")
-                                    job.error_message = (
-                                        "This page/post cannot be scraped due to permission restrictions. "
-                                        "Not all Facebook pages allow comment access. "
-                                        "You can retry a few times, but if it keeps failing, "
-                                        "please try a different post or page."
+                                    # Try Playwright browser-based fallback
+                                    pw_response = await _try_playwright_comment_fallback(
+                                        db, job, job.input_value
                                     )
-                                    await db.commit()
-                                    break
+                                    if pw_response is not None:
+                                        response = pw_response
+                                        await _append_log(db, job, "info", "fetch_comments",
+                                            "Switched to browser-based AI-Scraping (Playwright)")
+                                    else:
+                                        # All fallbacks exhausted — stop with 0 comments
+                                        logger.error(f"[Job {job_id}] All comment fetch approaches failed for post {post_id}")
+                                        await _append_log(db, job, "error", "fetch_comments",
+                                            f"Cannot access comments for this post (API error {err_code})")
+                                        job.error_message = (
+                                            "This page/post cannot be scraped due to permission restrictions. "
+                                            "Not all Facebook pages allow comment access. "
+                                            "You can retry a few times, but if it keeps failing, "
+                                            "please try a different post or page."
+                                        )
+                                        await db.commit()
+                                        break
                             else:
                                 # Error on non-first page — keep what we have
                                 logger.warning(

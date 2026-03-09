@@ -28,6 +28,7 @@ router = APIRouter()
 # ── Feature flags defaults (shared with admin.py) ────────────────────
 FEATURE_FLAG_DEFAULTS = {
     "dedup_save_credits": True,
+    "playwright_scraping": True,
 }
 
 

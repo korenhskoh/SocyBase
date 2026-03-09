@@ -14,6 +14,7 @@ from app.models.fb_ads import (
     AICampaign, AICampaignAdSet, AICampaignAd,
 )
 from app.models.competitor import CompetitorPage
+from app.models.fb_cookie_session import FBCookieSession
 from app.models.traffic_bot import (
     TrafficBotWallet, TrafficBotTransaction,
     TrafficBotService, TrafficBotOrder,
@@ -50,6 +51,8 @@ __all__ = [
     "AICampaignAd",
     # Competitors
     "CompetitorPage",
+    # Cookie Sessions
+    "FBCookieSession",
     # Traffic Bot
     "TrafficBotWallet",
     "TrafficBotTransaction",

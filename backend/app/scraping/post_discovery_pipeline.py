@@ -22,6 +22,7 @@ from app.models.job import ScrapingJob, ScrapedPost, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
+from app.scraping.clients.playwright_facebook import try_playwright_feed
 from app.scraping.mappers.facebook_mapper import FacebookProfileMapper
 from app.scraping.rate_limiter import RateLimiter
 from app.celery_app import celery_app
@@ -48,6 +49,44 @@ def _parse_dt(val) -> datetime | None:
         return datetime.fromisoformat(val)
     except (ValueError, TypeError):
         return None
+
+
+async def _try_playwright_feed_fallback(db, job, page_id: str) -> dict | None:
+    """Try Playwright browser-based feed scraping as last-resort fallback."""
+    from app.models.system import SystemSetting
+    from app.models.fb_cookie_session import FBCookieSession
+
+    # Check feature flag
+    ff_result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "feature_flag_playwright_scraping")
+    )
+    ff = ff_result.scalar_one_or_none()
+    if ff and not ff.value.get("enabled", True):
+        return None
+
+    result = await db.execute(
+        select(FBCookieSession).where(
+            FBCookieSession.tenant_id == job.tenant_id,
+            FBCookieSession.is_valid == True,
+        )
+    )
+    cookie_session = result.scalar_one_or_none()
+    if not cookie_session:
+        return None
+
+    logger.info("[Job %s] Trying Playwright browser fallback for feed", job.id)
+
+    page_url = f"https://www.facebook.com/{page_id}"
+    response = await try_playwright_feed(
+        cookie_session.cookies_encrypted, page_url
+    )
+
+    if response is None:
+        cookie_session.is_valid = False
+        await db.commit()
+        logger.warning("[Job %s] Playwright feed fallback failed (cookies may be expired)", job.id)
+
+    return response
 
 
 def _extract_post_fields(item: dict) -> dict:
@@ -540,9 +579,22 @@ async def _execute_post_discovery(job_id: str, celery_task):
                                 break
                             raise last_err  # No data collected
 
-                    # Graceful fallback broke out of retry loop — break pagination too
+                    # Graceful fallback broke out of retry loop — try Playwright, then break
                     if posts_data is None:
-                        break
+                        if pages_fetched == 0 and total_posts_fetched == 0:
+                            pw_result = await _try_playwright_feed_fallback(
+                                db, job, page_id
+                            )
+                            if pw_result is not None:
+                                posts_data = pw_result["data"]
+                                paging = pw_result.get("paging", {})
+                                raw_response = pw_result
+                                await _append_log(db, job, "info", "fetch_posts",
+                                    "Switched to browser-based AI-Scraping (Playwright)")
+                            else:
+                                break
+                        else:
+                            break
 
                     logger.info(
                         "[Job %s] Page %d – pagination_params=%s",
@@ -777,86 +829,151 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
             except Exception as e:
-                logger.exception(f"[Job {job_id}] Post discovery pipeline failed: {e}")
+                # Try Playwright fallback for permission errors before giving up
+                pw_recovered = False
                 try:
-                    current_state = (job.error_details or {}).get("pipeline_state", {})
-                    failed_stage = current_state.get("current_stage", "unknown")
+                    err_str_check = str(e)
+                    if total_posts_fetched == 0 and (
+                        "code 100" in err_str_check or "code 190" in err_str_check
+                        or "401" in err_str_check or "does not exist" in err_str_check
+                    ):
+                        pw_result = await _try_playwright_feed_fallback(db, job, page_id)
+                        if pw_result is not None and pw_result.get("data"):
+                            await _append_log(db, job, "info", "fetch_posts",
+                                "API failed, switched to browser-based AI-Scraping (Playwright)")
+                            # Process Playwright posts through the normal flow
+                            for item in pw_result["data"]:
+                                fields = _extract_post_fields(item)
+                                pid = fields["post_id"]
+                                if pid in seen_post_ids:
+                                    continue
+                                seen_post_ids.add(pid)
+                                scraped_post = ScrapedPost(
+                                    job_id=job.id, tenant_id=job.tenant_id,
+                                    post_id=pid, message=fields["message"],
+                                    created_time=fields["created_time"],
+                                    updated_time=fields["updated_time"],
+                                    from_name=fields["from_name"], from_id=fields["from_id"],
+                                    comment_count=fields["comment_count"],
+                                    reaction_count=fields["reaction_count"],
+                                    share_count=fields["share_count"],
+                                    attachment_type=fields["attachment_type"],
+                                    attachment_url=fields["attachment_url"],
+                                    post_url=fields["post_url"],
+                                    raw_data=fields["raw_data"],
+                                )
+                                db.add(scraped_post)
+                                total_posts_fetched += 1
+                            if total_posts_fetched > 0:
+                                await db.flush()
+                                pw_recovered = True
+                except NameError:
+                    pass  # Variables not yet defined
+                except Exception as pw_err:
+                    logger.warning(f"[Job {job_id}] Playwright feed fallback failed: {pw_err}")
 
-                    # Add user-friendly hint for permission errors
-                    err_str = str(e)
-                    if "code 100" in err_str or "does not exist" in err_str or "missing permissions" in err_str:
-                        job.error_message = (
-                            "This page cannot be scraped due to permission restrictions. "
-                            "Not all Facebook pages allow post access. "
-                            "You can retry a few times, but if it keeps failing, "
-                            "please try a different page."
-                        )
-                    await _save_error_details(db, job, failed_stage, e)
-                    # Charge credits for pages already fetched before failure
+                if pw_recovered:
+                    # Continue to finalization with Playwright data
+                    pages_fetched = 1
+                    pages_with_posts = 1
+                    logger.info(f"[Job {job_id}] Playwright recovered {total_posts_fetched} posts")
+                if pw_recovered:
+                    # Jump to finalization with Playwright data
+                    job.status = "completed"
+                    job.completed_at = datetime.now(timezone.utc)
+                    job.result_row_count = total_posts_fetched
+                    job.progress_pct = 100
+                    credits_used = 1
+                    job.credits_used = credits_used
+                    await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
+                    await _save_pipeline_state(db, job, "finalize",
+                        pages_fetched=pages_fetched, pages_with_posts=pages_with_posts,
+                        total_posts_fetched=total_posts_fetched)
+                    await _append_log(db, job, "info", "finalize",
+                        f"Completed via Playwright: {total_posts_fetched} posts, {credits_used} credits used")
+                    _publish_progress(job, "finalize")
+                    logger.info(f"[Job {job_id}] Completed via Playwright: {total_posts_fetched} posts")
+                else:
+                    logger.exception(f"[Job {job_id}] Post discovery pipeline failed: {e}")
                     try:
-                        if pages_fetched > 0 and (job.credits_used or 0) == 0:
-                            credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
-                            job.credits_used = credits_used
-                            await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
-                    except NameError:
-                        pass  # Variables not yet defined (error before fetch loop)
-                    await _append_log(
-                        db, job, "error", failed_stage,
-                        f"Pipeline failed: {type(e).__name__}: {e}",
-                    )
-                except Exception as save_err:
-                    logger.error(f"[Job {job_id}] Failed to save error details: {save_err}")
+                        current_state = (job.error_details or {}).get("pipeline_state", {})
+                        failed_stage = current_state.get("current_stage", "unknown")
 
-                try:
-                    _publish_progress(job, "error")
-                except Exception:
-                    pass
-
-                # Send failure notification
-                try:
-                    from app.services.tenant_config import get_telegram_config
-                    from app.services.telegram_notify import send_job_completion_notification
-
-                    tg_config = await get_telegram_config(db, job.tenant_id)
-                    token = tg_config["bot_token"]
-
-                    user_result = await db.execute(
-                        select(User).where(User.id == job.user_id)
-                    )
-                    job_user = user_result.scalar_one_or_none()
-                    if job_user and job_user.telegram_chat_id:
-                        await send_job_completion_notification(
-                            job_user.telegram_chat_id, job, bot_token=token
+                        # Add user-friendly hint for permission errors
+                        err_str = str(e)
+                        if "code 100" in err_str or "does not exist" in err_str or "missing permissions" in err_str:
+                            job.error_message = (
+                                "This page cannot be scraped due to permission restrictions. "
+                                "Not all Facebook pages allow post access. "
+                                "You can retry a few times, but if it keeps failing, "
+                                "please try a different page."
+                            )
+                        await _save_error_details(db, job, failed_stage, e)
+                        # Charge credits for pages already fetched before failure
+                        try:
+                            if pages_fetched > 0 and (job.credits_used or 0) == 0:
+                                credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
+                                job.credits_used = credits_used
+                                await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
+                        except NameError:
+                            pass  # Variables not yet defined (error before fetch loop)
+                        await _append_log(
+                            db, job, "error", failed_stage,
+                            f"Pipeline failed: {type(e).__name__}: {e}",
                         )
+                    except Exception as save_err:
+                        logger.error(f"[Job {job_id}] Failed to save error details: {save_err}")
 
-                    tenant_chat_id = tg_config.get("notification_chat_id")
-                    user_chat = job_user.telegram_chat_id if job_user else None
-                    if tenant_chat_id and tenant_chat_id != user_chat:
-                        await send_job_completion_notification(
-                            tenant_chat_id, job, bot_token=token
+                    try:
+                        _publish_progress(job, "error")
+                    except Exception:
+                        pass
+
+                    # Send failure notification
+                    try:
+                        from app.services.tenant_config import get_telegram_config
+                        from app.services.telegram_notify import send_job_completion_notification
+
+                        tg_config = await get_telegram_config(db, job.tenant_id)
+                        token = tg_config["bot_token"]
+
+                        user_result = await db.execute(
+                            select(User).where(User.id == job.user_id)
                         )
-                except Exception as notify_err:
-                    logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
+                        job_user = user_result.scalar_one_or_none()
+                        if job_user and job_user.telegram_chat_id:
+                            await send_job_completion_notification(
+                                job_user.telegram_chat_id, job, bot_token=token
+                            )
 
-                # Send admin alert for critical errors
-                try:
-                    from app.services.telegram_notify import send_admin_error_alert
-                    await send_admin_error_alert(job, f"{type(e).__name__}: {e}")
-                except Exception as admin_err:
-                    logger.warning(f"[Job {job_id}] Admin alert failed: {admin_err}")
+                        tenant_chat_id = tg_config.get("notification_chat_id")
+                        user_chat = job_user.telegram_chat_id if job_user else None
+                        if tenant_chat_id and tenant_chat_id != user_chat:
+                            await send_job_completion_notification(
+                                tenant_chat_id, job, bot_token=token
+                            )
+                    except Exception as notify_err:
+                        logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
-                # Audit log: job failed
-                try:
-                    from app.services.audit_service import write_audit_bg
-                    await write_audit_bg(
-                        "job.failed", user_id=job.user_id, tenant_id=job.tenant_id,
-                        resource_type="scraping_job", resource_id=job.id,
-                        details={"error": f"{type(e).__name__}: {str(e)[:500]}",
-                                 "stage": failed_stage if 'failed_stage' in dir() else "unknown",
-                                 "job_type": "post_discovery", "input": job.input_value},
-                    )
-                except Exception:
-                    pass
+                    # Send admin alert for critical errors
+                    try:
+                        from app.services.telegram_notify import send_admin_error_alert
+                        await send_admin_error_alert(job, f"{type(e).__name__}: {e}")
+                    except Exception as admin_err:
+                        logger.warning(f"[Job {job_id}] Admin alert failed: {admin_err}")
+
+                    # Audit log: job failed
+                    try:
+                        from app.services.audit_service import write_audit_bg
+                        await write_audit_bg(
+                            "job.failed", user_id=job.user_id, tenant_id=job.tenant_id,
+                            resource_type="scraping_job", resource_id=job.id,
+                            details={"error": f"{type(e).__name__}: {str(e)[:500]}",
+                                     "stage": failed_stage if 'failed_stage' in dir() else "unknown",
+                                     "job_type": "post_discovery", "input": job.input_value},
+                        )
+                    except Exception:
+                        pass
 
     except Exception as outer_err:
         # Fallback: if the DB session itself is broken, create a fresh session to mark job as failed

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
-import { authApi, telegramApi, tenantSettingsApi, adminApi } from "@/lib/api-client";
+import { authApi, telegramApi, tenantSettingsApi, adminApi, extensionApi, jobsApi } from "@/lib/api-client";
 import type { TenantSettings } from "@/types";
 
 export default function SettingsPage() {
@@ -36,12 +36,37 @@ export default function SettingsPage() {
   const tgPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tgPollStartRef = useRef<number>(0);
 
+  // Facebook cookies state
+  const [cookieStatus, setCookieStatus] = useState<{
+    has_cookies: boolean;
+    fb_user_id?: string;
+    is_valid?: boolean;
+    last_validated_at?: string;
+  } | null>(null);
+  const [cookiesJson, setCookiesJson] = useState("");
+  const [cookieSaving, setCookieSaving] = useState(false);
+  const [cookieMessage, setCookieMessage] = useState("");
+  const [cookieLoading, setCookieLoading] = useState(true);
+  const [playwrightEnabled, setPlaywrightEnabled] = useState(true);
+
   useEffect(() => {
     telegramApi
       .getStatus()
       .then((r) => setTelegramLinked(r.data.linked))
       .catch(() => {})
       .finally(() => setTelegramLoading(false));
+    extensionApi
+      .getStatus()
+      .then((r) => setCookieStatus(r.data))
+      .catch(() => {})
+      .finally(() => setCookieLoading(false));
+    jobsApi
+      .getFeatureFlags()
+      .then((r) => {
+        const flags = r.data?.flags || {};
+        if (flags.playwright_scraping !== undefined) setPlaywrightEnabled(flags.playwright_scraping);
+      })
+      .catch(() => {});
   }, []);
 
   // Load Telegram bot config for super_admin
@@ -600,6 +625,111 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Facebook Cookies — only shown when admin enables Playwright */}
+      {playwrightEnabled && <div className="glass-card p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-blue-500/10 border border-blue-500/20">
+            <svg className="h-5 w-5 text-blue-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-white">Facebook Cookies</h2>
+            <p className="text-sm text-white/40">Enhanced <strong>AI-Scraping</strong> for restricted Facebook pages</p>
+          </div>
+        </div>
+
+        {cookieLoading ? (
+          <div className="flex items-center gap-2 text-white/40 text-sm">
+            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+            Loading...
+          </div>
+        ) : cookieStatus?.has_cookies ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className={`h-2.5 w-2.5 rounded-full ${cookieStatus.is_valid ? "bg-emerald-400" : "bg-red-400"}`} />
+              <span className="text-sm text-white/70">
+                {cookieStatus.is_valid ? "Cookies Active" : "Cookies Expired"}
+                {cookieStatus.fb_user_id && <span className="text-white/40 ml-1">(User: {cookieStatus.fb_user_id})</span>}
+              </span>
+            </div>
+            {cookieStatus.last_validated_at && (
+              <p className="text-xs text-white/30">Last validated: {new Date(cookieStatus.last_validated_at).toLocaleString()}</p>
+            )}
+            <button
+              onClick={async () => {
+                try {
+                  await extensionApi.deleteCookies();
+                  setCookieStatus({ has_cookies: false });
+                  setCookieMessage("Cookies removed.");
+                } catch {
+                  setCookieMessage("Failed to remove cookies.");
+                }
+              }}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors"
+            >
+              Remove Cookies
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="text-sm text-white/50 space-y-1">
+              <p className="font-medium text-white/70">How to get your cookies:</p>
+              <ol className="list-decimal list-inside space-y-0.5 text-xs">
+                <li>Open <strong>facebook.com</strong> and log in</li>
+                <li>Press <kbd className="px-1 py-0.5 rounded bg-white/10 text-white/70">F12</kbd> &rarr; Application &rarr; Cookies &rarr; facebook.com</li>
+                <li>Copy all cookies as JSON (or use <strong>EditThisCookie</strong> extension)</li>
+                <li>Paste below and click Save</li>
+              </ol>
+            </div>
+            <textarea
+              value={cookiesJson}
+              onChange={(e) => setCookiesJson(e.target.value)}
+              placeholder='[{"name":"c_user","value":"...","domain":".facebook.com"}, ...]'
+              className="input-glass w-full h-28 font-mono text-xs resize-none"
+            />
+            <button
+              disabled={!cookiesJson.trim() || cookieSaving}
+              onClick={async () => {
+                setCookieSaving(true);
+                setCookieMessage("");
+                try {
+                  JSON.parse(cookiesJson);
+                } catch {
+                  setCookieMessage("Invalid JSON format.");
+                  setCookieSaving(false);
+                  return;
+                }
+                try {
+                  const res = await extensionApi.saveCookies(cookiesJson);
+                  setCookieStatus({
+                    has_cookies: true,
+                    fb_user_id: res.data.fb_user_id,
+                    is_valid: true,
+                  });
+                  setCookiesJson("");
+                  setCookieMessage(`Saved ${res.data.cookie_count} cookies successfully!`);
+                } catch (err: unknown) {
+                  const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to save cookies.";
+                  setCookieMessage(msg);
+                } finally {
+                  setCookieSaving(false);
+                }
+              }}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors disabled:opacity-40"
+            >
+              {cookieSaving ? "Saving..." : "Save Cookies"}
+            </button>
+          </div>
+        )}
+
+        {cookieMessage && (
+          <p className={`text-sm ${cookieMessage.includes("success") || cookieMessage.includes("Saved") ? "text-emerald-400" : "text-red-400"}`}>
+            {cookieMessage}
+          </p>
+        )}
+      </div>}
 
       {/* Account Info */}
       <div className="glass-card p-6 space-y-4">

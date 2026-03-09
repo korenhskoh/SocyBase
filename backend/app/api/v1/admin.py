@@ -909,6 +909,7 @@ class FeatureFlagUpdate(BaseModel):
 # Known feature flags with their defaults
 FEATURE_FLAG_DEFAULTS = {
     "dedup_save_credits": {"enabled": True, "description": "Allow users to skip duplicate comment users across jobs to save credits"},
+    "playwright_scraping": {"enabled": True, "description": "Enable Playwright browser-based fallback for restricted Facebook pages"},
 }
 
 
