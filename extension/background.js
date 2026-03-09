@@ -100,232 +100,33 @@ async function fetchFacebookPage(url) {
   return html;
 }
 
-// ── Facebook HTML parsing ───────────────────────────────────────────
+// ── Offscreen document for HTML parsing ─────────────────────────────
+// Service workers can't use DOMParser, so we delegate to an offscreen document.
 
-function extractUserIdFromHref(href) {
-  if (!href) return "";
-  // profile.php?id=NUM
-  let m = href.match(/profile\.php\?id=(\d+)/);
-  if (m) return m[1];
-  // /NUM? (direct numeric ID)
-  m = href.match(/^\/(\d+)/);
-  if (m) return m[1];
-  // /username?...
-  m = href.match(/^\/([^/?]+)/);
-  if (m) return m[1];
-  return "";
+let offscreenReady = false;
+
+async function ensureOffscreen() {
+  if (offscreenReady) return;
+  try {
+    await chrome.offscreen.createDocument({
+      url: "offscreen.html",
+      reasons: ["DOM_PARSER"],
+      justification: "Parse Facebook HTML with DOMParser",
+    });
+  } catch (e) {
+    // Already exists — that's fine
+    if (!e.message.includes("already exists")) throw e;
+  }
+  offscreenReady = true;
 }
 
-function parseCommentsFromHTML(html) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-  const comments = [];
-  const seenIds = new Set();
-
-  // Try multiple selectors (same as playwright_facebook.py)
-  let commentDivs = doc.querySelectorAll('[id^="ufi"] > div > div');
-  if (!commentDivs.length) commentDivs = doc.querySelectorAll('div[data-sigil="comment"]');
-  if (!commentDivs.length) commentDivs = doc.querySelectorAll("div.dw > div");
-  if (!commentDivs.length) commentDivs = doc.querySelectorAll("#root div > div > div");
-
-  for (const div of commentDivs) {
-    try {
-      // Find profile link
-      let profileLink = div.querySelector('a[href*="profile.php"], a[href*="fref="]');
-      if (!profileLink) {
-        for (const link of div.querySelectorAll("a")) {
-          const href = link.getAttribute("href") || "";
-          const text = link.textContent.trim();
-          if (
-            text &&
-            text.length > 1 &&
-            (href.includes("profile.php") ||
-              (href.startsWith("/") && href.includes("?") && !href.startsWith("/story")))
-          ) {
-            profileLink = link;
-            break;
-          }
-        }
-      }
-      if (!profileLink) continue;
-
-      const name = profileLink.textContent.trim();
-      const href = profileLink.getAttribute("href") || "";
-      const userId = extractUserIdFromHref(href);
-
-      if (!name || name.length < 2) continue;
-
-      // Get comment text
-      let message = div.textContent.trim();
-      if (message.startsWith(name)) {
-        message = message.slice(name.length).trim();
-      }
-      // Remove trailing metadata
-      message = message.split(/\n\s*(?:Like|Reply|Comment|Suka|Balas|·)/)[0].trim();
-
-      if (!message) continue;
-
-      const commentId = `ext_${userId}_${(hashCode(message) & 0xffffff).toString(16).padStart(6, "0")}`;
-
-      if (seenIds.has(commentId)) continue;
-      seenIds.add(commentId);
-
-      comments.push({
-        from: { id: String(userId), name },
-        id: commentId,
-        message,
-        created_time: "",
-      });
-    } catch {
-      continue;
-    }
-  }
-
-  return comments;
-}
-
-function parseFeedFromHTML(html) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-  const posts = [];
-  const seenIds = new Set();
-
-  // Try multiple selectors (same as playwright_facebook.py)
-  let postElements = doc.querySelectorAll("article");
-  if (!postElements.length) postElements = doc.querySelectorAll("[data-ft]");
-  if (!postElements.length) postElements = doc.querySelectorAll("div.story_body_container");
-  if (!postElements.length) {
-    postElements = doc.querySelectorAll(
-      "#structured_composer_async_container ~ div > div > div"
-    );
-  }
-
-  for (const el of postElements) {
-    try {
-      // Extract post ID from links
-      let postId = "";
-      let postUrl = "";
-      for (const link of el.querySelectorAll("a")) {
-        const href = link.getAttribute("href") || "";
-        let m = href.match(/story_fbid=(\d+)/);
-        if (m) {
-          postId = m[1];
-          postUrl = href.includes("?")
-            ? `https://www.facebook.com/permalink.php?${href.split("?")[1]}`
-            : "";
-          break;
-        }
-        m = href.match(/\/posts\/(\w+)/);
-        if (m) {
-          postId = m[1];
-          postUrl = `https://www.facebook.com${href}`;
-          break;
-        }
-        m = href.match(/(pfbid\w+)/);
-        if (m) {
-          postId = m[1];
-          postUrl = `https://www.facebook.com${href}`;
-          break;
-        }
-      }
-
-      if (!postId) {
-        const text = el.textContent.trim();
-        if (!text || text.length < 10) continue;
-        postId = `ext_${(hashCode(text) >>> 0).toString(16).padStart(8, "0")}`;
-      }
-
-      if (seenIds.has(postId)) continue;
-      seenIds.add(postId);
-
-      // Extract author
-      let fromName = "";
-      let fromId = "";
-      const headerLink = el.querySelector(
-        "header a, h3 a, strong a, a[href*='profile.php'], a[href*='fref=']"
-      );
-      if (headerLink) {
-        fromName = headerLink.textContent.trim();
-        fromId = extractUserIdFromHref(headerLink.getAttribute("href") || "");
-      }
-
-      // Extract message
-      let message = "";
-      const pTags = el.querySelectorAll("p");
-      if (pTags.length) {
-        message = Array.from(pTags)
-          .map((p) => p.textContent.trim())
-          .filter(Boolean)
-          .join("\n");
-      } else {
-        message = el.textContent.trim();
-        if (fromName && message.startsWith(fromName)) {
-          message = message.slice(fromName.length).trim();
-        }
-      }
-
-      // Extract engagement from text
-      let commentCount = 0;
-      let reactionCount = 0;
-      let shareCount = 0;
-      const footer = el.querySelector("footer, abbr");
-      const footerText = footer ? footer.textContent : el.textContent;
-      let cm = footerText.match(/(\d+)\s*(?:comment|komen)/i);
-      if (cm) commentCount = parseInt(cm[1]);
-      let rm = footerText.match(/(\d+)\s*(?:reaction|like|suka)/i);
-      if (rm) reactionCount = parseInt(rm[1]);
-      let sm = footerText.match(/(\d+)\s*(?:share|kongsi)/i);
-      if (sm) shareCount = parseInt(sm[1]);
-
-      if (!message && !fromName) continue;
-
-      posts.push({
-        id: String(postId),
-        message: message.slice(0, 2000),
-        created_time: "",
-        updated_time: "",
-        from: { name: fromName, id: String(fromId) },
-        comments: { summary: { total_count: commentCount } },
-        reactions: { summary: { total_count: reactionCount } },
-        shares: { count: shareCount },
-        attachments: { data: [] },
-        post_url: postUrl,
-      });
-    } catch {
-      continue;
-    }
-  }
-
-  return posts;
-}
-
-function hashCode(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;
-  }
-  return hash;
-}
-
-// ── Pagination helpers ──────────────────────────────────────────────
-
-function findNextPageUrl(doc, taskType) {
-  const keywords =
-    taskType === "scrape_comments"
-      ? ["more comment", "previous comment", "view more", "see more", "komen lagi", "lihat lagi"]
-      : ["see more post", "show more", "more stories", "older post", "lagi cerita", "lihat lagi"];
-
-  for (const link of doc.querySelectorAll("a")) {
-    const text = link.textContent.trim().toLowerCase();
-    if (keywords.some((kw) => text.includes(kw))) {
-      const href = link.getAttribute("href");
-      if (href) {
-        if (href.startsWith("http")) return href;
-        return `https://mbasic.facebook.com${href}`;
-      }
-    }
-  }
-  return null;
+async function parseHTML(html, taskType) {
+  await ensureOffscreen();
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "PARSE_HTML", html, taskType }, (response) => {
+      resolve(response || { items: [], nextUrl: null });
+    });
+  });
 }
 
 // ── Main task processor ─────────────────────────────────────────────
@@ -353,31 +154,17 @@ async function processTask(task) {
       console.log(`[SocyBase] Fetching page ${pagesLoaded + 1}: ${currentUrl}`);
       const html = await fetchFacebookPage(currentUrl);
 
-      // Parse based on task type
-      if (task.task_type === "scrape_comments") {
-        const comments = parseCommentsFromHTML(html);
-        for (const c of comments) {
-          if (!allItems.some((existing) => existing.id === c.id)) {
-            allItems.push(c);
-          }
-        }
-      } else {
-        const posts = parseFeedFromHTML(html);
-        for (const p of posts) {
-          if (!allItems.some((existing) => existing.id === p.id)) {
-            allItems.push(p);
-          }
+      // Parse via offscreen document (has DOMParser)
+      const { items, nextUrl } = await parseHTML(html, task.task_type);
+      for (const item of items) {
+        if (!allItems.some((existing) => existing.id === item.id)) {
+          allItems.push(item);
         }
       }
 
       pagesLoaded++;
 
       if (allItems.length >= limit) break;
-
-      // Find next page link
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, "text/html");
-      const nextUrl = findNextPageUrl(doc, task.task_type);
       if (!nextUrl) break;
 
       currentUrl = nextUrl;
