@@ -1,5 +1,8 @@
+import logging
 from datetime import datetime, timezone
 from app.scraping.mappers.base import AbstractProfileMapper, STANDARD_FIELDNAMES
+
+logger = logging.getLogger(__name__)
 
 
 class FacebookProfileMapper(AbstractProfileMapper):
@@ -221,13 +224,17 @@ class FacebookProfileMapper(AbstractProfileMapper):
         if "data" in inner and isinstance(inner.get("data"), list):
             data = inner["data"]
             paging = inner.get("paging", {})
+            logger.info("extract_comments: direct format, %d items, paging keys: %s", len(data), list(paging.keys()))
         elif "comments" in inner:
             comments_obj = inner["comments"]
             data = comments_obj.get("data", [])
             paging = comments_obj.get("paging", {})
+            logger.info("extract_comments: nested format, %d items, comments keys: %s, paging keys: %s",
+                        len(data), list(comments_obj.keys()), list(paging.keys()))
         else:
             data = []
             paging = {}
+            logger.warning("extract_comments: unknown format, inner keys: %s", list(inner.keys()))
 
         for comment in data:
             from_data = comment.get("from", {})

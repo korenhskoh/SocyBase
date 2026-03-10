@@ -661,6 +661,12 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 break
 
                         extracted = mapper.extract_comments_data(response, is_group=is_group)
+                        logger.info(
+                            "[Job %s] Page %d extraction: %d comments, next_cursor=%s, has_next=%s",
+                            job_id, page_count + 1, len(extracted["comments"]),
+                            extracted.get("next_cursor", "NONE")[:50] if extracted.get("next_cursor") else "NONE",
+                            extracted.get("has_next"),
+                        )
                         all_comments.extend(extracted["comments"])
                         total_top_level += extracted.get("top_level_count", 0)
                         total_replies += extracted.get("reply_count", 0)
