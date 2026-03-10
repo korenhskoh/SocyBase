@@ -339,73 +339,94 @@ function extractDataFromRenderedPage(taskType) {
 
     for (const div of commentDivs) {
       try {
-        // Find the FIRST profile link — the commenter's name link
-        // On desktop FB, the name link is typically the first <a> with role="link" in the comment
-        let profileLink = null;
+        let name = "";
+        let href = "";
+        let userId = "";
 
-        // Strategy 1: Look for the name link — usually the first <a> with a short text and profile href
-        for (const link of div.querySelectorAll('a[role="link"]')) {
-          const href = link.getAttribute("href") || "";
-          const text = link.textContent.trim();
-          if (
-            text && text.length > 1 && text.length < 80 &&
-            (href.includes("profile.php") || href.includes("facebook.com/")) &&
-            !href.includes("/photo") && !href.includes("/story") &&
-            !href.includes("comment_id") // Skip "time ago" links that also have profile hrefs
-          ) {
-            profileLink = link;
-            break;
-          }
-        }
-
-        // Strategy 2: Fallback to any <a> with profile-like href
-        if (!profileLink) {
+        if (isMbasic) {
+          // mbasic: find the first link with profile-like href
           for (const link of div.querySelectorAll("a")) {
-            const href = link.getAttribute("href") || "";
-            const text = link.textContent.trim();
+            const h = link.getAttribute("href") || "";
+            const t = link.textContent.trim();
             if (
-              text && text.length > 1 && text.length < 60 &&
-              (href.includes("profile.php") ||
-                href.includes("facebook.com/") ||
-                (href.startsWith("/") && !href.startsWith("/story") && !href.startsWith("/photo")))
+              t && t.length > 1 && t.length < 60 &&
+              (h.includes("profile.php") || h.includes("facebook.com/") ||
+                (h.startsWith("/") && !h.startsWith("/story") && !h.startsWith("/photo")))
             ) {
-              profileLink = link;
+              name = t;
+              href = h;
               break;
+            }
+          }
+        } else {
+          // Desktop Facebook: name link has aria-hidden="false" and role="link"
+          // Avatar link has aria-hidden="true" — skip that one.
+          // Both links contain comment_id in their href, so we CANNOT filter on that.
+          for (const link of div.querySelectorAll('a[role="link"]')) {
+            if (link.getAttribute("aria-hidden") === "true") continue; // skip avatar
+            if (link.getAttribute("tabindex") === "-1") continue; // skip avatar (alt check)
+            const h = link.getAttribute("href") || "";
+            const t = link.textContent.trim();
+            if (
+              t && t.length > 1 && t.length < 80 &&
+              (h.includes("profile.php") || h.includes("facebook.com/")) &&
+              !h.includes("/photo") && !h.includes("/story")
+            ) {
+              name = t;
+              href = h;
+              break;
+            }
+          }
+
+          // Fallback: parse name from article's aria-label "Comment by {name} {time} ago"
+          if (!name) {
+            const ariaLabel = div.getAttribute("aria-label") || "";
+            const m = ariaLabel.match(/^Comment by (.+?)\s+\d+\s*(h|m|d|w|hr|min|s|hour|minute|day|week|month|year)/i);
+            if (m) name = m[1].trim();
+            // Still need the href — grab the first non-avatar profile link
+            if (name) {
+              for (const link of div.querySelectorAll('a[role="link"]')) {
+                const h = link.getAttribute("href") || "";
+                if ((h.includes("profile.php") || h.includes("facebook.com/")) &&
+                    !h.includes("/photo") && !h.includes("/story")) {
+                  href = h;
+                  break;
+                }
+              }
             }
           }
         }
 
-        if (!profileLink) { dbgNoLink++; continue; }
-
-        const name = profileLink.textContent.trim();
-        const href = profileLink.getAttribute("href") || "";
-        const userId = extractUserIdFromHref(href);
-
         if (!name || name.length < 2) { dbgNoName++; continue; }
 
-        // Extract comment text — get the text content div AFTER the name
+        userId = extractUserIdFromHref(href);
+        if (!userId) { dbgNoLink++; continue; }
+
+        // Extract comment text
         let message = "";
         if (isMbasic) {
           message = div.textContent.trim();
           if (message.startsWith(name)) message = message.slice(name.length).trim();
           message = message.split(/\n\s*(?:Like|Reply|Comment|Suka|Balas|·)/)[0].trim();
         } else {
-          // Desktop: the comment text is in div[dir="auto"] elements inside the article.
-          // Get ALL dir="auto" text, then strip out the commenter name and UI elements.
-          const textEls = div.querySelectorAll('div[dir="auto"], span[dir="auto"]');
-          const texts = [];
-          const nameLower = name.toLowerCase();
-          for (const el of textEls) {
-            const t = el.textContent.trim();
-            // Skip if it's the commenter name, a UI label, or too short
-            if (!t || t.toLowerCase() === nameLower) continue;
-            // Skip known UI text
-            if (/^(Like|Reply|Haha|Love|Wow|Sad|Angry|Share|Hide|Report|\d+\s*(h|m|d|w|hr|min|s)|Most relevant|Newest|All comments)/i.test(t)) continue;
-            if (t.length >= 1) texts.push(t);
+          // Desktop: comment text is in div[dir="auto"][style*="text-align:start"]
+          const textEl = div.querySelector('div[dir="auto"][style*="text-align:start"]');
+          if (textEl) {
+            message = textEl.textContent.trim();
           }
-          message = texts[0] || ""; // Take the first real text block as the comment
+          // Fallback: any div[dir="auto"] that isn't the name
           if (!message) {
-            // Fallback: strip full text
+            const textEls = div.querySelectorAll('div[dir="auto"], span[dir="auto"]');
+            const nameLower = name.toLowerCase();
+            for (const el of textEls) {
+              const t = el.textContent.trim();
+              if (!t || t.toLowerCase() === nameLower) continue;
+              if (/^(Like|Reply|Haha|Love|Wow|Sad|Angry|Share|Hide|Report|\d+\s*(h|m|d|w|hr|min|s)|Most relevant|Newest|All comments)/i.test(t)) continue;
+              if (t.length >= 1) { message = t; break; }
+            }
+          }
+          // Last fallback: strip full text
+          if (!message) {
             message = div.textContent.trim();
             if (message.startsWith(name)) message = message.slice(name.length).trim();
             message = message.split(/\n\s*(?:Like|Reply|Haha|Love|Wow|Sad|Angry|·|\d+\s*[hmdw])/i)[0].trim();
