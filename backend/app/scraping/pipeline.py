@@ -20,6 +20,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.job import ScrapingJob, ScrapedProfile, ExtractedComment, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
+from app.models.platform import Platform
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
 from app.models.browser_scrape_task import BrowserScrapeTask
@@ -293,6 +294,11 @@ async def _execute_pipeline(job_id: str, celery_task):
             job_settings = job.settings or {}
             profile_retry_count = min(int(job_settings.get("profile_retry_count", 2)), 3)
             resume_from_job_id = job_settings.get("resume_from_job_id")
+
+            # Load admin-configurable credit costs
+            platform_result = await db.execute(select(Platform).where(Platform.name == "facebook"))
+            _platform = platform_result.scalar_one_or_none()
+            cost_per_profile = (_platform.credit_cost_per_profile if _platform else None) or 1
 
             # Load original job if resuming
             original_job = None
@@ -824,7 +830,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     skip_user_ids = {op.platform_user_id for op in orig_profiles if op.platform_user_id in unique_users}
 
                 # Only charge for profiles enriched (comment page fetching is free)
-                estimated_cost = len(user_ids) - len(skip_user_ids)
+                estimated_cost = (len(user_ids) - len(skip_user_ids)) * cost_per_profile
                 logger.info(f"[Job {job_id}] Step: estimated_cost={estimated_cost} (profiles to enrich={len(user_ids)}, skipped={len(skip_user_ids)})")
 
                 job.credits_estimated = estimated_cost
@@ -944,7 +950,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                             profile.scrape_status = "success"
                             profile.scraped_at = datetime.now(timezone.utc)
 
-                        credits_used += 1
+                        credits_used += cost_per_profile
 
                     except Exception as e:
                         logger.warning(

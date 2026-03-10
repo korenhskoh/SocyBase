@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import ScrapingJob, ScrapedPost, PageAuthorProfile
 from app.models.credit import CreditBalance, CreditTransaction
+from app.models.platform import Platform
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
 from app.models.browser_scrape_task import BrowserScrapeTask
@@ -291,6 +292,19 @@ def _publish_progress(job: ScrapingJob, stage: str = "", stage_data: dict | None
     })
 
 
+async def _get_platform_costs(db: AsyncSession) -> dict:
+    """Fetch credit cost config from the facebook platform row."""
+    result = await db.execute(select(Platform).where(Platform.name == "facebook"))
+    platform = result.scalar_one_or_none()
+    if platform:
+        return {
+            "cost_per_post": platform.credit_cost_per_post or 1,
+            "cost_per_profile": platform.credit_cost_per_profile or 1,
+            "cost_per_comment_page": platform.credit_cost_per_comment_page or 1,
+        }
+    return {"cost_per_post": 1, "cost_per_profile": 1, "cost_per_comment_page": 1}
+
+
 async def _charge_credits(
     db: AsyncSession, job: ScrapingJob, credits_used: int,
     pages_fetched: int, total_posts_fetched: int,
@@ -373,6 +387,10 @@ async def _execute_post_discovery(job_id: str, celery_task):
             _publish_progress(job, "start")
 
             job_settings = job.settings or {}
+
+            # Load admin-configurable credit costs
+            platform_costs = await _get_platform_costs(db)
+            cost_per_post = platform_costs["cost_per_post"]
 
             try:
                 # ── STAGE 1: Parse Input ────────────────────────
@@ -721,7 +739,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     if current_status in ("paused", "cancelled"):
                         job.status = current_status
                         # Charge credits for pages actually fetched
-                        credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
+                        credits_used = total_posts_fetched * cost_per_post
                         job.credits_used = credits_used
                         await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
                         # Save cursors so "Discover Older Posts" works for stopped jobs
@@ -770,7 +788,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 if current_status in ("paused", "cancelled"):
                     job.status = current_status
                     # Charge credits for pages actually fetched
-                    credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
+                    credits_used = total_posts_fetched * cost_per_post
                     job.credits_used = credits_used
                     await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
                     await _save_pipeline_state(db, job, "finalize")
@@ -788,7 +806,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                 job.progress_pct = 100
 
                 # Credits: charge for productive pages + 1 confirming empty page
-                credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
+                credits_used = total_posts_fetched * cost_per_post
                 job.credits_used = credits_used
                 await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
 
@@ -906,7 +924,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     job.completed_at = datetime.now(timezone.utc)
                     job.result_row_count = total_posts_fetched
                     job.progress_pct = 100
-                    credits_used = 1
+                    credits_used = total_posts_fetched * cost_per_post
                     job.credits_used = credits_used
                     await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
                     await _save_pipeline_state(db, job, "finalize",
@@ -935,7 +953,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         # Charge credits for pages already fetched before failure
                         try:
                             if pages_fetched > 0 and (job.credits_used or 0) == 0:
-                                credits_used = min(pages_fetched, max(pages_with_posts + 1, 1))
+                                credits_used = total_posts_fetched * cost_per_post
                                 job.credits_used = credits_used
                                 await _charge_credits(db, job, credits_used, pages_fetched, total_posts_fetched)
                         except NameError:
