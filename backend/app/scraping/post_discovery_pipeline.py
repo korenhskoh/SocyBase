@@ -101,7 +101,9 @@ async def _try_extension_feed_fallback(db, job, page_id: str) -> dict | None:
 
 def _extract_post_fields(item: dict) -> dict:
     """Extract standardised post fields from a single feed item."""
-    post_id = item["id"]
+    post_id = item.get("id", "")
+    if not post_id:
+        return None  # Skip items without an ID
     from_info = item.get("from", {}) or {}
     from_name = from_info.get("name")
     from_id = from_info.get("id")
@@ -168,17 +170,26 @@ def _extract_post_fields(item: dict) -> dict:
         media = first_attachment.get("media") or {}
         video_views = media.get("view_count")
     if video_views:
-        video_views = int(video_views)
+        try:
+            video_views = int(video_views)
+        except (ValueError, TypeError):
+            video_views = None
 
     live_views = item.get("live_views")
     if live_views:
-        live_views = int(live_views)
+        try:
+            live_views = int(live_views)
+        except (ValueError, TypeError):
+            live_views = None
 
     if first_attachment:
         media = first_attachment.get("media") or {}
         dur = media.get("duration")
         if dur is not None:
-            video_length = float(dur)
+            try:
+                video_length = float(dur)
+            except (ValueError, TypeError):
+                video_length = None
 
     return {
         "post_id": post_id,
@@ -631,6 +642,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
                     new_posts_this_page = 0
                     for item in posts_data:
                         fields = _extract_post_fields(item)
+                        if fields is None:
+                            continue
                         pid = fields["post_id"]
                         if pid in seen_post_ids:
                             duplicate_count += 1
