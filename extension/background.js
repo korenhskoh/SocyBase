@@ -102,9 +102,41 @@ async function fetchFacebookPage(url) {
   return { html, isDesktop };
 }
 
-// ── Tab-based fallback ──────────────────────────────────────────────
-// If fetch() gets desktop HTML (JS-rendered), open the page in a real
-// browser tab so JavaScript executes and we can extract the rendered DOM.
+// ── Tab-based scraping with chrome.debugger CDP ─────────────────────
+// Uses Chrome DevTools Protocol for real mouse wheel scrolling and
+// incremental comment extraction — like a real user browsing.
+
+// CDP helper: send a command via chrome.debugger
+function cdp(tabId, method, params = {}) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand({ tabId }, method, params, (result) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(result);
+    });
+  });
+}
+
+// CDP helper: evaluate JS in the page and return result
+async function cdpEval(tabId, expression) {
+  const res = await cdp(tabId, "Runtime.evaluate", {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  if (res.exceptionDetails) throw new Error(res.exceptionDetails.text || "JS eval error");
+  return res.result?.value;
+}
+
+// CDP helper: dispatch mouse wheel scroll at given coordinates
+async function cdpScroll(tabId, x, y, deltaY = 600) {
+  await cdp(tabId, "Input.dispatchMouseEvent", {
+    type: "mouseWheel",
+    x,
+    y,
+    deltaX: 0,
+    deltaY,
+  });
+}
 
 async function fetchAndParseViaTab(url, taskType) {
   console.log(`[SocyBase] Tab fallback: opening ${url}`);
@@ -118,7 +150,6 @@ async function fetchAndParseViaTab(url, taskType) {
         chrome.tabs.onUpdated.removeListener(listener);
         reject(new Error("Tab load timeout after 30s"));
       }, 30000);
-
       function listener(tabId, changeInfo) {
         if (tabId === tab.id && changeInfo.status === "complete") {
           chrome.tabs.onUpdated.removeListener(listener);
@@ -129,241 +160,263 @@ async function fetchAndParseViaTab(url, taskType) {
       chrome.tabs.onUpdated.addListener(listener);
     });
 
-    // Wait for dynamic content to render (modal to appear)
+    // Wait for modal to appear
     await new Promise((r) => setTimeout(r, 2000));
 
     if (taskType === "scrape_comments") {
-      // Single injected function: scroll to "All comments", scroll to load all, extract
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: scrollAndExtractComments,
-      });
-      const result = results?.[0]?.result || { items: [], nextUrl: null };
-      console.log(`[SocyBase] Tab extraction: ${result.items.length} items, nextUrl=${result.nextUrl}`);
-      return result;
+      return await scrapeCommentsWithCDP(tab.id);
     }
 
-    // Non-comment tasks: just extract
+    // Non-comment tasks: just extract via scripting
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: extractDataFromRenderedPage,
       args: [taskType],
     });
-
     const result = results?.[0]?.result || { items: [], nextUrl: null };
     console.log(`[SocyBase] Tab extraction: ${result.items.length} items, nextUrl=${result.nextUrl}`);
     return result;
   } finally {
+    // Detach debugger if attached, then close tab
+    chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
     chrome.tabs.remove(tab.id).catch(() => {});
   }
 }
 
-// INJECTED into tab — single combined function that:
-// 1. Scrolls down using scrollIntoView on last article (no need to find scroll container)
-// 2. Finds "All comments" filter, clicks it
-// 3. Keeps scrolling to lazy-load all comments
-// 4. Extracts all comments at the end
-// Must be fully self-contained (no external references).
-async function scrollAndExtractComments() {
+// ── Main CDP-based comment scraper ──────────────────────────────────
+// Flow:
+// 1. Attach debugger → get viewport size
+// 2. Scroll down in modal to find "All comments" filter → click it
+// 3. Scroll + extract incrementally until no new comments appear
+async function scrapeCommentsWithCDP(tabId) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // Helper: scroll down by scrollIntoView on the last article element.
-  // This works regardless of which div is the actual scrollable container.
-  function scrollToBottom() {
-    const articles = document.querySelectorAll('div[role="article"]');
-    if (articles.length > 0) {
-      articles[articles.length - 1].scrollIntoView({ behavior: "instant", block: "end" });
-    } else {
-      // No articles yet, scroll the modal or page
-      const modal = document.querySelector('div[role="dialog"]');
-      if (modal) modal.scrollTop = modal.scrollHeight;
-      else document.documentElement.scrollTop = document.documentElement.scrollHeight;
+  // Attach debugger
+  await new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, "1.3", () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
+  console.log("[SocyBase CDP] Debugger attached");
+
+  // Get viewport size so we know where to scroll
+  const layoutMetrics = await cdp(tabId, "Page.getLayoutMetrics");
+  const vw = layoutMetrics.cssVisualViewport?.clientWidth || 800;
+  const vh = layoutMetrics.cssVisualViewport?.clientHeight || 600;
+  // Scroll at center of viewport — will hit the modal content
+  const scrollX = Math.round(vw / 2);
+  const scrollY = Math.round(vh / 2);
+  console.log(`[SocyBase CDP] Viewport: ${vw}x${vh}, scroll target: (${scrollX}, ${scrollY})`);
+
+  // ── Step 1: Scroll down to find & click "All comments" filter ──
+  const filterFound = await cdpEval(tabId, `
+    (function() {
+      const keywords = ["most relevant", "newest first", "all comment", "paling relevan", "terbaru"];
+      for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
+        const text = el.textContent.trim().toLowerCase();
+        if (text.length < 50 && keywords.some(kw => text.includes(kw))) {
+          el.scrollIntoView({ behavior: "instant", block: "center" });
+          return true;
+        }
+      }
+      return false;
+    })()
+  `);
+
+  if (!filterFound) {
+    // Scroll down step by step to find it
+    for (let i = 0; i < 20; i++) {
+      await cdpScroll(tabId, scrollX, scrollY, 500);
+      await wait(800);
+      const found = await cdpEval(tabId, `
+        (function() {
+          const keywords = ["most relevant", "newest first", "all comment", "paling relevan", "terbaru"];
+          for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
+            const text = el.textContent.trim().toLowerCase();
+            if (text.length < 50 && keywords.some(kw => text.includes(kw))) {
+              el.scrollIntoView({ behavior: "instant", block: "center" });
+              return true;
+            }
+          }
+          return false;
+        })()
+      `);
+      if (found) break;
     }
   }
 
-  await wait(1000);
-  console.log(`[SocyBase Tab] Starting comment scroll+extract on ${location.href}`);
+  // Click the filter button
+  await wait(500);
+  const clickedFilter = await cdpEval(tabId, `
+    (function() {
+      const keywords = ["most relevant", "newest first", "all comment", "paling relevan", "terbaru"];
+      for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
+        const text = el.textContent.trim().toLowerCase();
+        if (text.length < 50 && keywords.some(kw => text.includes(kw))) {
+          el.click();
+          return text;
+        }
+      }
+      return null;
+    })()
+  `);
+  if (clickedFilter) {
+    console.log(`[SocyBase CDP] Clicked filter: "${clickedFilter}"`);
+    await wait(1500);
 
-  // ── Step 1: Scroll down to find "All comments" filter button ──
-  const filterKeywords = ["most relevant", "newest first", "all comment", "paling relevan", "terbaru"];
-  let filterFound = false;
-
-  for (let i = 0; i < 25 && !filterFound; i++) {
-    for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
-      const text = el.textContent.trim().toLowerCase();
-      if (text.length < 50 && filterKeywords.some((kw) => text.includes(kw))) {
-        el.scrollIntoView({ behavior: "instant", block: "center" });
-        await wait(400);
-        console.log(`[SocyBase Tab] Found filter: "${el.textContent.trim()}", clicking...`);
-        el.click();
-        await wait(1500);
-
-        // Select "All comments" from dropdown
+    // Select "All comments" from dropdown
+    const selected = await cdpEval(tabId, `
+      (function() {
         for (const opt of document.querySelectorAll('div[role="menuitem"], div[role="option"]')) {
           const t = opt.textContent.trim().toLowerCase();
           if (t.includes("all comment") || t.includes("semua komentar")) {
-            console.log(`[SocyBase Tab] Selecting: "${opt.textContent.trim()}"`);
             opt.click();
-            await wait(3000);
-            break;
+            return t;
           }
         }
-        filterFound = true;
-        break;
-      }
+        return null;
+      })()
+    `);
+    if (selected) {
+      console.log(`[SocyBase CDP] Selected: "${selected}"`);
+      await wait(3000);
     }
-    if (!filterFound) {
-      // Scroll down step by step to find the filter button
-      scrollToBottom();
-      await wait(800);
-    }
+  } else {
+    console.log("[SocyBase CDP] Filter button not found, using default sort");
   }
-  if (!filterFound) console.log("[SocyBase Tab] Filter not found, using default sort");
 
-  // ── Step 2: Keep scrolling down to lazy-load all comments ──
+  // ── Step 2: Scroll + extract incrementally ──
+  // The extraction JS that runs in page context each round
+  const extractJS = `
+    (function() {
+      function extractUserId(href) {
+        if (!href) return "";
+        let m = href.match(/profile\\.php\\?id=(\\d+)/);
+        if (m) return m[1];
+        m = href.match(/facebook\\.com\\/(\\d+)/);
+        if (m) return m[1];
+        m = href.match(/^\\/([\\d]+)/);
+        if (m) return m[1];
+        m = href.match(/facebook\\.com\\/([^/?#]+)/);
+        if (m && !["pages","groups","photo","story","watch","reel","share","sharer","login","help"].includes(m[1])) return m[1];
+        m = href.match(/^\\/([^/?#]+)/);
+        if (m && !["story.php","photo.php","permalink.php","groups","pages"].includes(m[1])) return m[1];
+        return "";
+      }
+      function hashCode(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;
+        return hash;
+      }
+
+      const allArticles = Array.from(document.querySelectorAll('div[role="article"]'));
+      const commentArts = allArticles.length > 1 ? allArticles.slice(1) : [];
+      const items = [];
+
+      for (const div of commentArts) {
+        try {
+          let name = "", href = "";
+
+          for (const link of div.querySelectorAll('a[role="link"]')) {
+            if (link.getAttribute("aria-hidden") === "true") continue;
+            if (link.getAttribute("tabindex") === "-1") continue;
+            const h = link.getAttribute("href") || "";
+            const t = link.textContent.trim();
+            if (t && t.length > 1 && t.length < 80 &&
+                (h.includes("profile.php") || h.includes("facebook.com/")) &&
+                !h.includes("/photo") && !h.includes("/story")) {
+              name = t; href = h; break;
+            }
+          }
+          if (!name) {
+            const label = div.getAttribute("aria-label") || "";
+            const m = label.match(/^Comment by (.+?)\\s+\\d+\\s*(h|m|d|w|s|hour|min|day|week|month|year)/i);
+            if (m) {
+              name = m[1].trim();
+              for (const link of div.querySelectorAll('a[role="link"]')) {
+                const h = link.getAttribute("href") || "";
+                if ((h.includes("profile.php") || h.includes("facebook.com/")) && !h.includes("/photo")) { href = h; break; }
+              }
+            }
+          }
+          if (!name || name.length < 2) continue;
+
+          const userId = extractUserId(href);
+          if (!userId) continue;
+
+          let message = "";
+          const textEl = div.querySelector('div[dir="auto"][style*="text-align:start"]');
+          if (textEl) message = textEl.textContent.trim();
+          if (!message) {
+            const nameLow = name.toLowerCase();
+            for (const el of div.querySelectorAll('div[dir="auto"], span[dir="auto"]')) {
+              const t = el.textContent.trim();
+              if (!t || t.toLowerCase() === nameLow) continue;
+              if (/^(Like|Reply|Haha|Love|Wow|Sad|Angry|Share|Hide|Report|\\d+\\s*(h|m|d|w|hr|min|s)|Most relevant|Newest|All comments)/i.test(t)) continue;
+              if (t.length >= 1) { message = t; break; }
+            }
+          }
+          if (!message) continue;
+
+          const cid = "ext_" + userId + "_" + ((hashCode(message) & 0xffffff) >>> 0).toString(16).padStart(6, "0");
+          items.push({ from: { id: String(userId), name }, id: cid, message: message.slice(0, 1000), created_time: "" });
+        } catch { continue; }
+      }
+      return { count: allArticles.length, items: items };
+    })()
+  `;
+
+  const allItems = new Map(); // cid → item, deduplicates across rounds
   let staleRounds = 0;
-  let lastArticleCount = 0;
+  let lastItemCount = 0;
 
   for (let round = 0; round < 300; round++) {
-    // Scroll the last article into view — triggers Facebook lazy-load
-    scrollToBottom();
-    await wait(2000);
+    // Scroll down using real mouse wheel event at center of viewport
+    await cdpScroll(tabId, scrollX, scrollY, 800);
+    await wait(1500);
 
-    const articleCount = document.querySelectorAll('div[role="article"]').length;
+    // Click any "view more" buttons
+    await cdpEval(tabId, `
+      (function() {
+        for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
+          const t = el.textContent.trim().toLowerCase();
+          if (t.length > 80) continue;
+          if (t.includes("view more") || t.includes("view previous") || t.includes("more replies") || t.includes("lihat komentar")) {
+            el.click();
+          }
+        }
+      })()
+    `);
 
-    if (round < 5 || round % 20 === 0) {
-      console.log(`[SocyBase Tab] Round ${round}: ${articleCount} articles`);
+    // Extract current comments
+    const result = await cdpEval(tabId, extractJS);
+    if (result && result.items) {
+      for (const item of result.items) {
+        allItems.set(item.id, item);
+      }
     }
 
-    if (articleCount === lastArticleCount) {
+    const currentCount = allItems.size;
+
+    if (round < 5 || round % 10 === 0) {
+      console.log(`[SocyBase CDP] Round ${round}: ${result?.count || 0} articles, ${currentCount} unique comments collected`);
+    }
+
+    if (currentCount === lastItemCount) {
       staleRounds++;
       if (staleRounds >= 10) {
-        console.log(`[SocyBase Tab] Fully loaded: ${articleCount} articles after ${round} rounds`);
+        console.log(`[SocyBase CDP] Done: ${currentCount} comments after ${round} rounds (10 stale)`);
         break;
       }
     } else {
       staleRounds = 0;
     }
-    lastArticleCount = articleCount;
-
-    // Click any "view more" / "view previous" buttons
-    for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
-      const t = el.textContent.trim().toLowerCase();
-      if (t.length > 80) continue;
-      if (t.includes("view more") || t.includes("view previous") || t.includes("more replies") || t.includes("lihat komentar")) {
-        el.click();
-      }
-    }
+    lastItemCount = currentCount;
   }
 
-  // ── Step 4: Extract all comments ──
-  function extractUserId(href) {
-    if (!href) return "";
-    let m = href.match(/profile\.php\?id=(\d+)/);
-    if (m) return m[1];
-    m = href.match(/facebook\.com\/(\d+)/);
-    if (m) return m[1];
-    m = href.match(/^\/(\d+)/);
-    if (m) return m[1];
-    m = href.match(/facebook\.com\/([^/?#]+)/);
-    if (m && !["pages","groups","photo","story","watch","reel","share","sharer","login","help"].includes(m[1])) return m[1];
-    m = href.match(/^\/([^/?#]+)/);
-    if (m && !["story.php","photo.php","permalink.php","groups","pages"].includes(m[1])) return m[1];
-    return "";
-  }
-
-  function hashCode(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;
-    return hash;
-  }
-
-  const allArticles = Array.from(document.querySelectorAll('div[role="article"]'));
-  console.log(`[SocyBase Tab] Extracting from ${allArticles.length} articles`);
-
-  // Skip first article (the main post), keep all comment articles
-  const commentArts = allArticles.length > 1 ? allArticles.slice(1) : [];
-
-  const items = [];
-  const seenIds = new Set();
-  let noName = 0, noId = 0, noMsg = 0, dupes = 0;
-
-  for (const div of commentArts) {
-    try {
-      let name = "";
-      let href = "";
-
-      // Find name link: aria-hidden="false" with role="link" (skip avatar which is aria-hidden="true")
-      for (const link of div.querySelectorAll('a[role="link"]')) {
-        if (link.getAttribute("aria-hidden") === "true") continue;
-        if (link.getAttribute("tabindex") === "-1") continue;
-        const h = link.getAttribute("href") || "";
-        const t = link.textContent.trim();
-        if (
-          t && t.length > 1 && t.length < 80 &&
-          (h.includes("profile.php") || h.includes("facebook.com/")) &&
-          !h.includes("/photo") && !h.includes("/story")
-        ) {
-          name = t;
-          href = h;
-          break;
-        }
-      }
-
-      // Fallback: parse from aria-label "Comment by {name} {time} ago"
-      if (!name) {
-        const label = div.getAttribute("aria-label") || "";
-        const m = label.match(/^Comment by (.+?)\s+\d+\s*(h|m|d|w|s|hour|min|day|week|month|year)/i);
-        if (m) {
-          name = m[1].trim();
-          for (const link of div.querySelectorAll('a[role="link"]')) {
-            const h = link.getAttribute("href") || "";
-            if ((h.includes("profile.php") || h.includes("facebook.com/")) && !h.includes("/photo")) {
-              href = h;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!name || name.length < 2) { noName++; continue; }
-
-      const userId = extractUserId(href);
-      if (!userId) { noId++; continue; }
-
-      // Extract comment text
-      let message = "";
-      // Primary: div with text-align:start is the actual comment
-      const textEl = div.querySelector('div[dir="auto"][style*="text-align:start"]');
-      if (textEl) message = textEl.textContent.trim();
-      // Fallback: dir="auto" elements that aren't the name or UI text
-      if (!message) {
-        const nameLow = name.toLowerCase();
-        for (const el of div.querySelectorAll('div[dir="auto"], span[dir="auto"]')) {
-          const t = el.textContent.trim();
-          if (!t || t.toLowerCase() === nameLow) continue;
-          if (/^(Like|Reply|Haha|Love|Wow|Sad|Angry|Share|Hide|Report|\d+\s*(h|m|d|w|hr|min|s)|Most relevant|Newest|All comments)/i.test(t)) continue;
-          if (t.length >= 1) { message = t; break; }
-        }
-      }
-
-      if (!message) { noMsg++; continue; }
-      message = message.slice(0, 1000);
-
-      const cid = `ext_${userId}_${(hashCode(message) & 0xffffff).toString(16).padStart(6, "0")}`;
-      if (seenIds.has(cid)) { dupes++; continue; }
-      seenIds.add(cid);
-
-      items.push({
-        from: { id: String(userId), name },
-        id: cid,
-        message,
-        created_time: "",
-      });
-    } catch { continue; }
-  }
-
-  console.log(`[SocyBase Tab] Result: ${items.length} comments extracted (${noName} noName, ${noId} noId, ${noMsg} noMsg, ${dupes} dupes)`);
+  const items = Array.from(allItems.values());
+  console.log(`[SocyBase CDP] Final: ${items.length} comments extracted`);
   return { items, nextUrl: null };
 }
 
