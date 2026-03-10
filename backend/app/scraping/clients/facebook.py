@@ -152,31 +152,22 @@ class FacebookGraphClient(AbstractSocialClient):
         """
         Fetch comments for a post with pagination.
 
-        Groups use the direct /comments endpoint.
-        Pages/profiles use nested field expansion on the post object.
+        Always uses the direct /comments endpoint for reliable pagination.
+        The nested field expansion approach doesn't return paging cursors from AKNG.
 
         Note: token_type is NOT supported by this endpoint (only by feed).
         """
         comment_fields = "message,created_time,from,like_count,can_remove,message_tags"
         reply_fields = "comments.limit(25)"
 
-        if is_group:
-            url = f"{self.base_url}/{post_id}/comments"
-            params = {
-                "access_token": self.access_token,
-                "fields": f"{comment_fields},{reply_fields}",
-                "limit": limit,
-            }
-            if after:
-                params["after"] = after
-        else:
-            url = f"{self.base_url}/{post_id}"
-            params = {
-                "access_token": self.access_token,
-                "fields": f"comments.limit({limit}){{{comment_fields},{reply_fields}}}",
-            }
-            if after:
-                params["fields"] = f"comments.limit({limit}).after({after}){{{comment_fields},{reply_fields}}}"
+        url = f"{self.base_url}/{post_id}/comments"
+        params = {
+            "access_token": self.access_token,
+            "fields": f"{comment_fields},{reply_fields}",
+            "limit": limit,
+        }
+        if after:
+            params["after"] = after
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()
