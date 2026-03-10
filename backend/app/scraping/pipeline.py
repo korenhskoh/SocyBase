@@ -714,7 +714,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                             publish_job_progress(str(job.id), _build_progress_event(job, "fetch_comments"))
                             return
 
-                        if not extracted["has_next"] or not next_cursor:
+                        if not next_cursor:
                             break
 
                 logger.info(f"[Job {job_id}] Fetched {len(all_comments)} total ({total_top_level} comments + {total_replies} replies) from {page_count} pages")
