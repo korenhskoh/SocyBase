@@ -152,14 +152,16 @@ class FacebookGraphClient(AbstractSocialClient):
         """
         Fetch comments for a post with pagination.
 
-        Always uses the direct /comments endpoint for reliable pagination.
-        The nested field expansion approach doesn't return paging cursors from AKNG.
+        Tries the direct /comments endpoint first (has proper pagination cursors).
+        If that returns Permission Denied, falls back to nested field expansion
+        on the post object (works for more posts but AKNG may not return cursors).
 
         Note: token_type is NOT supported by this endpoint (only by feed).
         """
         comment_fields = "message,created_time,from,like_count,can_remove,message_tags"
         reply_fields = "comments.limit(25)"
 
+        # Strategy 1: direct /comments endpoint (preferred — has pagination)
         url = f"{self.base_url}/{post_id}/comments"
         params = {
             "access_token": self.access_token,
@@ -171,7 +173,28 @@ class FacebookGraphClient(AbstractSocialClient):
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+
+        # Check if AKNG returned a permission error
+        inner = data
+        if "success" in data and isinstance(data.get("data"), dict):
+            inner = data["data"]
+        if "error" in inner and isinstance(inner.get("error"), dict):
+            err_code = inner["error"].get("code")
+            if err_code in (10, 100, 190, 200):
+                # Strategy 2: nested field expansion (wider access but no pagination)
+                url = f"{self.base_url}/{post_id}"
+                params = {
+                    "access_token": self.access_token,
+                    "fields": f"comments.limit({limit}){{{comment_fields},{reply_fields}}}",
+                }
+                if after:
+                    params["fields"] = f"comments.limit({limit}).after({after}){{{comment_fields},{reply_fields}}}"
+                response = await self.client.get(url, params=params)
+                response.raise_for_status()
+                return response.json()
+
+        return data
 
     async def get_user_profile(self, user_id: str) -> dict:
         """
