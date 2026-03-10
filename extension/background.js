@@ -263,24 +263,29 @@ async function scrapeCommentsWithCDP(tabId) {
   `);
   if (clickedFilter) {
     console.log(`[SocyBase CDP] Clicked filter: "${clickedFilter}"`);
-    await wait(1500);
 
-    // Select "All comments" from dropdown
-    const selected = await cdpEval(tabId, `
-      (function() {
-        for (const opt of document.querySelectorAll('div[role="menuitem"], div[role="option"]')) {
-          const t = opt.textContent.trim().toLowerCase();
-          if (t.includes("all comment") || t.includes("semua komentar")) {
-            opt.click();
-            return t;
+    // Wait for dropdown menu to render, retry a few times
+    let selected = null;
+    for (let attempt = 0; attempt < 5 && !selected; attempt++) {
+      await wait(1000);
+      selected = await cdpEval(tabId, `
+        (function() {
+          for (const opt of document.querySelectorAll('div[role="menuitem"], div[role="option"]')) {
+            const t = opt.textContent.trim().toLowerCase();
+            if (t.includes("all comment") || t.includes("semua komentar")) {
+              opt.click();
+              return t;
+            }
           }
-        }
-        return null;
-      })()
-    `);
+          return null;
+        })()
+      `);
+    }
     if (selected) {
       console.log(`[SocyBase CDP] Selected: "${selected}"`);
       await wait(3000);
+    } else {
+      console.log("[SocyBase CDP] Could not find 'All comments' option in dropdown");
     }
   } else {
     console.log("[SocyBase CDP] Filter button not found, using default sort");
@@ -752,7 +757,7 @@ async function processTask(task) {
     let allItems = [];
     let pagesLoaded = 0;
     const maxPages = task.task_type === "scrape_comments" ? 10 : 4;
-    const limit = task.limit || (task.task_type === "scrape_comments" ? 100 : 10);
+    const limit = task.limit || (task.task_type === "scrape_comments" ? 5000 : 10);
 
     while (pagesLoaded < maxPages && allItems.length < limit) {
       console.log(`[SocyBase] Page ${pagesLoaded + 1}: ${currentUrl}`);
