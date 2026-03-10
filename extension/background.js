@@ -159,64 +159,42 @@ async function fetchAndParseViaTab(url, taskType) {
 }
 
 // INJECTED into tab — single combined function that:
-// 1. Waits for modal, finds scrollable container
-// 2. Scrolls down to find "All comments" filter, clicks it
-// 3. Scrolls continuously to lazy-load all comments
+// 1. Scrolls down using scrollIntoView on last article (no need to find scroll container)
+// 2. Finds "All comments" filter, clicks it
+// 3. Keeps scrolling to lazy-load all comments
 // 4. Extracts all comments at the end
 // Must be fully self-contained (no external references).
 async function scrollAndExtractComments() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // ── Step 1: Find the scrollable container inside the modal ──
-  // Wait a moment for modal to fully render
-  await wait(1000);
-
-  const modal = document.querySelector('div[role="dialog"]');
-  let scroller = null;
-
-  if (modal) {
-    // The modal dialog div itself is NOT scrollable.
-    // The actual scrollable div is a child — find it by testing which one scrolls.
-    const candidates = modal.querySelectorAll("div");
-    for (const div of candidates) {
-      const style = getComputedStyle(div);
-      const oy = style.overflowY;
-      if ((oy === "auto" || oy === "scroll") && div.scrollHeight > div.clientHeight + 50) {
-        scroller = div;
-        break;
-      }
+  // Helper: scroll down by scrollIntoView on the last article element.
+  // This works regardless of which div is the actual scrollable container.
+  function scrollToBottom() {
+    const articles = document.querySelectorAll('div[role="article"]');
+    if (articles.length > 0) {
+      articles[articles.length - 1].scrollIntoView({ behavior: "instant", block: "end" });
+    } else {
+      // No articles yet, scroll the modal or page
+      const modal = document.querySelector('div[role="dialog"]');
+      if (modal) modal.scrollTop = modal.scrollHeight;
+      else document.documentElement.scrollTop = document.documentElement.scrollHeight;
     }
-    // Second attempt: find by testing actual scroll behavior
-    if (!scroller) {
-      for (const div of candidates) {
-        if (div.scrollHeight > div.clientHeight + 50) {
-          const before = div.scrollTop;
-          div.scrollTop = before + 10;
-          if (div.scrollTop !== before) {
-            div.scrollTop = before; // reset
-            scroller = div;
-            break;
-          }
-        }
-      }
-    }
-    if (!scroller) scroller = modal;
   }
-  if (!scroller) scroller = document.scrollingElement || document.documentElement;
 
-  console.log(`[SocyBase Tab] Scroller found: scrollH=${scroller.scrollHeight}, clientH=${scroller.clientHeight}, tag=${scroller.tagName}, id=${scroller.id || "none"}`);
+  await wait(1000);
+  console.log(`[SocyBase Tab] Starting comment scroll+extract on ${location.href}`);
 
-  // ── Step 2: Scroll down inside modal to find "All comments" filter button ──
+  // ── Step 1: Scroll down to find "All comments" filter button ──
   const filterKeywords = ["most relevant", "newest first", "all comment", "paling relevan", "terbaru"];
   let filterFound = false;
 
-  for (let i = 0; i < 20 && !filterFound; i++) {
+  for (let i = 0; i < 25 && !filterFound; i++) {
     for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
       const text = el.textContent.trim().toLowerCase();
       if (text.length < 50 && filterKeywords.some((kw) => text.includes(kw))) {
         el.scrollIntoView({ behavior: "instant", block: "center" });
         await wait(400);
-        console.log(`[SocyBase Tab] Clicking filter: "${el.textContent.trim()}"`);
+        console.log(`[SocyBase Tab] Found filter: "${el.textContent.trim()}", clicking...`);
         el.click();
         await wait(1500);
 
@@ -235,29 +213,29 @@ async function scrollAndExtractComments() {
       }
     }
     if (!filterFound) {
-      scroller.scrollTop += 500;
-      await wait(600);
+      // Scroll down step by step to find the filter button
+      scrollToBottom();
+      await wait(800);
     }
   }
   if (!filterFound) console.log("[SocyBase Tab] Filter not found, using default sort");
 
-  // ── Step 3: Keep scrolling down to lazy-load all comments ──
+  // ── Step 2: Keep scrolling down to lazy-load all comments ──
   let staleRounds = 0;
   let lastArticleCount = 0;
 
   for (let round = 0; round < 300; round++) {
-    const prev = scroller.scrollTop;
-    scroller.scrollTop = scroller.scrollHeight;
+    // Scroll the last article into view — triggers Facebook lazy-load
+    scrollToBottom();
     await wait(2000);
 
     const articleCount = document.querySelectorAll('div[role="article"]').length;
 
     if (round < 5 || round % 20 === 0) {
-      console.log(`[SocyBase Tab] Round ${round}: ${articleCount} articles, scroll=${scroller.scrollTop}, moved=${scroller.scrollTop - prev}`);
+      console.log(`[SocyBase Tab] Round ${round}: ${articleCount} articles`);
     }
 
-    if (articleCount === lastArticleCount && scroller.scrollTop === prev) {
-      // Neither new articles nor scroll movement
+    if (articleCount === lastArticleCount) {
       staleRounds++;
       if (staleRounds >= 10) {
         console.log(`[SocyBase Tab] Fully loaded: ${articleCount} articles after ${round} rounds`);
@@ -268,7 +246,7 @@ async function scrollAndExtractComments() {
     }
     lastArticleCount = articleCount;
 
-    // Click any "view more" / "view previous" buttons while scrolling
+    // Click any "view more" / "view previous" buttons
     for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
       const t = el.textContent.trim().toLowerCase();
       if (t.length > 80) continue;
