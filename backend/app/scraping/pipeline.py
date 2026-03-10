@@ -435,8 +435,10 @@ async def _execute_pipeline(job_id: str, celery_task):
                     logger.info(f"[Job {job_id}] Starting from user-selected cursor")
 
                 # Pagination loop (normal or continuing from cursor)
+                seen_cursors = set()  # Detect cursor cycling (API looping back)
+                MAX_COMMENT_PAGES = 500  # Safety limit: 500 * 25 = 12,500 comments max
                 if not resume_from_job_id or next_cursor:
-                    while True:
+                    while page_count < MAX_COMMENT_PAGES:
                         if not await rate_limiter.wait_for_slot(
                             "akng_api_global",
                             max_requests=settings_rate_limit(),
@@ -661,6 +663,22 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                         # Save cursor after each page
                         next_cursor = extracted.get("next_cursor")
+
+                        # Stop if page returned 0 comments (exhausted)
+                        if not extracted["comments"]:
+                            logger.info(f"[Job {job_id}] Empty page {page_count}, stopping pagination")
+                            next_cursor = None
+
+                        # Stop if cursor is cycling (API looping back to start)
+                        if next_cursor:
+                            if next_cursor in seen_cursors:
+                                logger.warning(f"[Job {job_id}] Duplicate cursor detected on page {page_count}, stopping pagination")
+                                await _append_log(db, job, "warn", "fetch_comments",
+                                    f"Cursor cycle detected on page {page_count}, stopping")
+                                next_cursor = None
+                            else:
+                                seen_cursors.add(next_cursor)
+
                         job.progress_pct = _calc_stage_progress("fetch_comments", pages_fetched=page_count)
                         await _save_pipeline_state(
                             db, job, "fetch_comments",
@@ -696,6 +714,11 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                         if not next_cursor:
                             break
+                    else:
+                        # while loop ended without break — hit MAX_COMMENT_PAGES
+                        logger.warning(f"[Job {job_id}] Hit max page limit ({MAX_COMMENT_PAGES}), stopping")
+                        await _append_log(db, job, "warn", "fetch_comments",
+                            f"Reached maximum page limit ({MAX_COMMENT_PAGES} pages)")
 
                 logger.info(f"[Job {job_id}] Fetched {len(all_comments)} total ({total_top_level} comments + {total_replies} replies) from {page_count} pages")
                 await _append_log(db, job, "info", "fetch_comments", f"Fetched {total_top_level} comments + {total_replies} replies = {len(all_comments)} total from {page_count} pages")
