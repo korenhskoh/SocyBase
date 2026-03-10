@@ -104,11 +104,15 @@ class FacebookGraphClient(AbstractSocialClient):
         # permalink.php?story_fbid=...
         story_match = re.search(r"story_fbid=(\d+)", url)
         if story_match:
-            result["post_id"] = story_match.group(1)
+            story_fbid = story_match.group(1)
             # Extract page ID from &id= parameter
             id_match = re.search(r"[?&]id=(\d+)", url)
             if id_match:
-                result["page_id"] = id_match.group(1)
+                page_id = id_match.group(1)
+                result["post_id"] = f"{page_id}_{story_fbid}"
+                result["page_id"] = page_id
+            else:
+                result["post_id"] = story_fbid
             return result
 
         # pfbid format in URL

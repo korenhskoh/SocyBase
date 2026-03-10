@@ -233,9 +233,9 @@ class FacebookProfileMapper(AbstractProfileMapper):
             from_data = comment.get("from", {})
             if from_data.get("id"):
                 comments_list.append({
-                    "user_id": from_data.get("id", ""),
-                    "user_name": from_data.get("name", ""),
-                    "comment_id": comment.get("id", ""),
+                    "user_id": str(from_data.get("id", "")),
+                    "user_name": str(from_data.get("name", "")),
+                    "comment_id": str(comment.get("id", "")),
                     "message": comment.get("message", ""),
                     "created_time": comment.get("created_time", ""),
                 })
@@ -247,9 +247,9 @@ class FacebookProfileMapper(AbstractProfileMapper):
                 reply_from = reply.get("from", {})
                 if reply_from.get("id"):
                     comments_list.append({
-                        "user_id": reply_from.get("id", ""),
-                        "user_name": reply_from.get("name", ""),
-                        "comment_id": reply.get("id", ""),
+                        "user_id": str(reply_from.get("id", "")),
+                        "user_name": str(reply_from.get("name", "")),
+                        "comment_id": str(reply.get("id", "")),
                         "message": reply.get("message", ""),
                         "created_time": reply.get("created_time", ""),
                     })

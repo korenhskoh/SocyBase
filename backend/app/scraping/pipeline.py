@@ -542,8 +542,33 @@ async def _execute_pipeline(job_id: str, celery_task):
                                 # First page failed — try alternative post IDs / endpoints
                                 fallback_response = None
 
+                                # Fallback 0: compound ID (page_id + post_id) when not already compound
+                                _page_id_from_parsed = parsed.get("page_id")
+                                if fallback_response is None and "_" not in post_id and _page_id_from_parsed and _page_id_from_parsed.isdigit():
+                                    compound_id = f"{_page_id_from_parsed}_{post_id}"
+                                    logger.info(f"[Job {job_id}] Trying compound post ID: {compound_id}")
+                                    try:
+                                        await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+                                        fallback_response = await client.get_post_comments(
+                                            compound_id, is_group=is_group, limit=25,
+                                        )
+                                        fb_inner = fallback_response
+                                        if "success" in fallback_response and isinstance(fallback_response.get("data"), dict):
+                                            fb_inner = fallback_response["data"]
+                                        if "error" in fb_inner and isinstance(fb_inner.get("error"), dict):
+                                            logger.warning(f"[Job {job_id}] Compound ID also failed")
+                                            fallback_response = None
+                                        else:
+                                            post_id = compound_id
+                                            logger.info(f"[Job {job_id}] Compound post ID worked, using {compound_id}")
+                                            await _append_log(db, job, "info", "fetch_comments",
+                                                f"Switched to compound post ID: {compound_id}")
+                                    except Exception as fb_err:
+                                        logger.warning(f"[Job {job_id}] Compound ID fallback failed: {fb_err}")
+                                        fallback_response = None
+
                                 # Fallback 1: short post ID (strip page prefix from compound ID)
-                                if "_" in post_id:
+                                if fallback_response is None and "_" in post_id:
                                     short_id = post_id.split("_", 1)[1]
                                     logger.info(f"[Job {job_id}] Trying short post ID: {short_id}")
                                     try:
