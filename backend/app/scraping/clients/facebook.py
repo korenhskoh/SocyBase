@@ -77,22 +77,16 @@ class FacebookGraphClient(AbstractSocialClient):
             return result
 
         # Video post - /{page}/videos/{id}
-        # Comments live on the parent POST object ({page_id}_{video_id}), not the video itself.
+        # Use the SHORT video ID as post_id — the AKNG nested field expansion
+        # API returns pagination cursors only for short IDs, not compound ones.
+        # page_id is stored separately for the fallback chain if needed.
         video_match = re.search(r"/videos/(\d+)", url)
         if video_match:
             video_id = video_match.group(1)
+            result["post_id"] = video_id
             page_match = re.search(r"facebook\.com/([^/]+)/videos/", url)
             if page_match:
-                page_id = _resolve_page_id(page_match.group(1), url)
-                result["page_id"] = page_id
-                if page_id.isdigit():
-                    result["post_id"] = f"{page_id}_{video_id}"
-                else:
-                    result["post_id"] = video_id
-                    result["needs_post_id_resolve"] = True
-            else:
-                result["post_id"] = video_id
-                result["needs_post_id_resolve"] = True
+                result["page_id"] = _resolve_page_id(page_match.group(1), url)
             return result
 
         # Reel post - /reel/{id} or /reels/{id}
