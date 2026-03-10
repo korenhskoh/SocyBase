@@ -83,9 +83,9 @@ async def _try_extension_comment_fallback(db, job, input_url: str) -> dict | Non
     await db.refresh(task)
     logger.info("[Job %s] Created browser scrape task %s, waiting for extension", job.id, task.id)
 
-    # Poll DB every 2s, timeout 90s
-    for _ in range(45):
-        await asyncio.sleep(2)
+    # Poll DB every 3s, timeout 10 minutes (for large threads with 1000+ comments)
+    for _ in range(200):
+        await asyncio.sleep(3)
         await db.refresh(task)
         if task.status in ("completed", "failed"):
             break
@@ -97,7 +97,7 @@ async def _try_extension_comment_fallback(db, job, input_url: str) -> dict | Non
     if task.status == "failed":
         logger.warning("[Job %s] Extension task failed: %s", job.id, task.error_message)
     else:
-        logger.warning("[Job %s] Extension task timed out (90s)", job.id)
+        logger.warning("[Job %s] Extension task timed out (10min)", job.id)
         task.status = "failed"
         task.error_message = "Timed out waiting for extension"
         await db.commit()
