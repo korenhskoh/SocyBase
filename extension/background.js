@@ -129,20 +129,21 @@ async function fetchAndParseViaTab(url, taskType) {
       chrome.tabs.onUpdated.addListener(listener);
     });
 
-    // Wait for dynamic content to render
-    await new Promise((r) => setTimeout(r, 4000));
+    // Wait for dynamic content to render (modal to appear)
+    await new Promise((r) => setTimeout(r, 2000));
 
-    // For comment scraping: switch to "All comments", scroll to load all, click "View more"
     if (taskType === "scrape_comments") {
-      const expandResults = await chrome.scripting.executeScript({
+      // Single injected function: scroll to "All comments", scroll to load all, extract
+      const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: expandAllComments,
+        func: scrollAndExtractComments,
       });
-      const r = expandResults?.[0]?.result || {};
-      console.log(`[SocyBase] Expanded comments: ${r.articles || 0} articles, ${r.clicks || 0} clicks`);
+      const result = results?.[0]?.result || { items: [], nextUrl: null };
+      console.log(`[SocyBase] Tab extraction: ${result.items.length} items, nextUrl=${result.nextUrl}`);
+      return result;
     }
 
-    // Execute extraction in the tab's DOM context
+    // Non-comment tasks: just extract
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: extractDataFromRenderedPage,
@@ -157,61 +158,75 @@ async function fetchAndParseViaTab(url, taskType) {
   }
 }
 
-// INJECTED into tab — expands all comments by switching to "All comments",
-// then scrolling + clicking "View more" until all comments are loaded.
-// Must be fully self-contained. Returns { articles, clicks, rounds }.
-async function expandAllComments() {
+// INJECTED into tab — single combined function that:
+// 1. Waits for modal, finds scrollable container
+// 2. Scrolls down to find "All comments" filter, clicks it
+// 3. Scrolls continuously to lazy-load all comments
+// 4. Extracts all comments at the end
+// Must be fully self-contained (no external references).
+async function scrollAndExtractComments() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // 1. Find the scrollable container — posts open in a modal dialog on desktop FB.
-  //    The dialog itself isn't scrollable; the scrollable element is a child div
-  //    (often has overflow-y: auto/scroll, or id containing "scroll").
+  // ── Step 1: Find the scrollable container inside the modal ──
+  // Wait a moment for modal to fully render
+  await wait(1000);
+
   const modal = document.querySelector('div[role="dialog"]');
-  let scrollTarget = null;
+  let scroller = null;
+
   if (modal) {
-    // Find the actual scrollable div inside the modal
-    // Look for the element with overflow-y scroll/auto and significant height
+    // The modal dialog div itself is NOT scrollable.
+    // The actual scrollable div is a child — find it by testing which one scrolls.
     const candidates = modal.querySelectorAll("div");
     for (const div of candidates) {
       const style = getComputedStyle(div);
-      if (
-        (style.overflowY === "auto" || style.overflowY === "scroll") &&
-        div.scrollHeight > div.clientHeight + 100
-      ) {
-        scrollTarget = div;
+      const oy = style.overflowY;
+      if ((oy === "auto" || oy === "scroll") && div.scrollHeight > div.clientHeight + 50) {
+        scroller = div;
         break;
       }
     }
-    // Fallback: the modal itself
-    if (!scrollTarget) scrollTarget = modal;
+    // Second attempt: find by testing actual scroll behavior
+    if (!scroller) {
+      for (const div of candidates) {
+        if (div.scrollHeight > div.clientHeight + 50) {
+          const before = div.scrollTop;
+          div.scrollTop = before + 10;
+          if (div.scrollTop !== before) {
+            div.scrollTop = before; // reset
+            scroller = div;
+            break;
+          }
+        }
+      }
+    }
+    if (!scroller) scroller = modal;
   }
-  if (!scrollTarget) scrollTarget = document.scrollingElement || document.documentElement;
-  console.log(`[SocyBase Tab] Scroll target: ${modal ? "modal" : "page"}, scrollHeight=${scrollTarget.scrollHeight}, clientHeight=${scrollTarget.clientHeight}`);
+  if (!scroller) scroller = document.scrollingElement || document.documentElement;
 
-  // 2. Scroll down to find the comment filter button, then switch to "All comments"
-  //    The filter button is below the post content/video, need to scroll to it first
+  console.log(`[SocyBase Tab] Scroller found: scrollH=${scroller.scrollHeight}, clientH=${scroller.clientHeight}, tag=${scroller.tagName}, id=${scroller.id || "none"}`);
+
+  // ── Step 2: Scroll down inside modal to find "All comments" filter button ──
   const filterKeywords = ["most relevant", "newest first", "all comment", "paling relevan", "terbaru"];
   let filterFound = false;
 
-  for (let scroll = 0; scroll < 15 && !filterFound; scroll++) {
+  for (let i = 0; i < 20 && !filterFound; i++) {
     for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
       const text = el.textContent.trim().toLowerCase();
       if (text.length < 50 && filterKeywords.some((kw) => text.includes(kw))) {
-        // Scroll it into view first
         el.scrollIntoView({ behavior: "instant", block: "center" });
-        await wait(500);
-
-        console.log(`[SocyBase Tab] Clicking comment filter: "${el.textContent.trim()}"`);
+        await wait(400);
+        console.log(`[SocyBase Tab] Clicking filter: "${el.textContent.trim()}"`);
         el.click();
         await wait(1500);
 
-        // Look for "All comments" option in the dropdown menu
-        for (const opt of document.querySelectorAll('div[role="menuitem"], div[role="option"], div[role="radio"]')) {
-          const optText = opt.textContent.trim().toLowerCase();
-          if (optText.includes("all comment") || optText.includes("semua komentar")) {
+        // Select "All comments" from dropdown
+        for (const opt of document.querySelectorAll('div[role="menuitem"], div[role="option"]')) {
+          const t = opt.textContent.trim().toLowerCase();
+          if (t.includes("all comment") || t.includes("semua komentar")) {
             console.log(`[SocyBase Tab] Selecting: "${opt.textContent.trim()}"`);
             opt.click();
-            await wait(3000); // Wait for comments to reload
+            await wait(3000);
             break;
           }
         }
@@ -219,57 +234,33 @@ async function expandAllComments() {
         break;
       }
     }
-
     if (!filterFound) {
-      // Scroll down to find the filter button (it's below the post content)
-      scrollTarget.scrollTop += 600;
-      await wait(800);
+      scroller.scrollTop += 500;
+      await wait(600);
     }
   }
+  if (!filterFound) console.log("[SocyBase Tab] Filter not found, using default sort");
 
-  if (!filterFound) {
-    console.log("[SocyBase Tab] Comment filter button not found, proceeding with default");
-  }
-
-  // 3. Keep scrolling down to lazy-load all comments.
-  //    Facebook loads more comments automatically as you scroll — gray placeholder blocks
-  //    appear at the bottom and get replaced with real comments.
-  //    Also click any "View more" buttons if they appear, but scrolling is the main driver.
-
+  // ── Step 3: Keep scrolling down to lazy-load all comments ──
   let staleRounds = 0;
   let lastArticleCount = 0;
-  const maxRounds = 200; // Up to ~400s for very large threads (1600+ comments)
 
-  for (let round = 0; round < maxRounds; round++) {
-    // Scroll to bottom of the container to trigger lazy-loading
-    const prevScroll = scrollTarget.scrollTop;
-    scrollTarget.scrollTop = scrollTarget.scrollHeight;
-    await wait(1500);
+  for (let round = 0; round < 300; round++) {
+    const prev = scroller.scrollTop;
+    scroller.scrollTop = scroller.scrollHeight;
+    await wait(2000);
 
-    if (round < 3 || round % 20 === 0) {
-      console.log(`[SocyBase Tab] Scroll: top=${scrollTarget.scrollTop}, height=${scrollTarget.scrollHeight}, moved=${scrollTarget.scrollTop - prevScroll}`);
-    }
-
-    // Also click any "view more" buttons if present (some threads use them)
-    for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
-      const text = el.textContent.trim().toLowerCase();
-      if (text.length > 80) continue;
-      if (
-        text.includes("view more comment") || text.includes("view previous") ||
-        text.includes("see more comment") || text.includes("more replies") ||
-        text.includes("view all") || text.includes("lihat komentar")
-      ) {
-        el.click();
-        await wait(500);
-      }
-    }
-
-    // Check how many comment articles we have now
     const articleCount = document.querySelectorAll('div[role="article"]').length;
-    if (articleCount === lastArticleCount) {
+
+    if (round < 5 || round % 20 === 0) {
+      console.log(`[SocyBase Tab] Round ${round}: ${articleCount} articles, scroll=${scroller.scrollTop}, moved=${scroller.scrollTop - prev}`);
+    }
+
+    if (articleCount === lastArticleCount && scroller.scrollTop === prev) {
+      // Neither new articles nor scroll movement
       staleRounds++;
-      if (staleRounds >= 8) {
-        console.log(`[SocyBase Tab] No new comments for 8 rounds, stopping`);
+      if (staleRounds >= 10) {
+        console.log(`[SocyBase Tab] Fully loaded: ${articleCount} articles after ${round} rounds`);
         break;
       }
     } else {
@@ -277,14 +268,125 @@ async function expandAllComments() {
     }
     lastArticleCount = articleCount;
 
-    if (round % 10 === 0) {
-      console.log(`[SocyBase Tab] Round ${round}: ${articleCount} articles loaded`);
+    // Click any "view more" / "view previous" buttons while scrolling
+    for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
+      const t = el.textContent.trim().toLowerCase();
+      if (t.length > 80) continue;
+      if (t.includes("view more") || t.includes("view previous") || t.includes("more replies") || t.includes("lihat komentar")) {
+        el.click();
+      }
     }
   }
 
-  const finalCount = document.querySelectorAll('div[role="article"]').length;
-  console.log(`[SocyBase Tab] Done: ${finalCount} articles loaded, ${staleRounds >= 8 ? "stale-stop" : "max-rounds"}`);
-  return { articles: finalCount, clicks: 0 };
+  // ── Step 4: Extract all comments ──
+  function extractUserId(href) {
+    if (!href) return "";
+    let m = href.match(/profile\.php\?id=(\d+)/);
+    if (m) return m[1];
+    m = href.match(/facebook\.com\/(\d+)/);
+    if (m) return m[1];
+    m = href.match(/^\/(\d+)/);
+    if (m) return m[1];
+    m = href.match(/facebook\.com\/([^/?#]+)/);
+    if (m && !["pages","groups","photo","story","watch","reel","share","sharer","login","help"].includes(m[1])) return m[1];
+    m = href.match(/^\/([^/?#]+)/);
+    if (m && !["story.php","photo.php","permalink.php","groups","pages"].includes(m[1])) return m[1];
+    return "";
+  }
+
+  function hashCode(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;
+    return hash;
+  }
+
+  const allArticles = Array.from(document.querySelectorAll('div[role="article"]'));
+  console.log(`[SocyBase Tab] Extracting from ${allArticles.length} articles`);
+
+  // Skip first article (the main post), keep all comment articles
+  const commentArts = allArticles.length > 1 ? allArticles.slice(1) : [];
+
+  const items = [];
+  const seenIds = new Set();
+  let noName = 0, noId = 0, noMsg = 0, dupes = 0;
+
+  for (const div of commentArts) {
+    try {
+      let name = "";
+      let href = "";
+
+      // Find name link: aria-hidden="false" with role="link" (skip avatar which is aria-hidden="true")
+      for (const link of div.querySelectorAll('a[role="link"]')) {
+        if (link.getAttribute("aria-hidden") === "true") continue;
+        if (link.getAttribute("tabindex") === "-1") continue;
+        const h = link.getAttribute("href") || "";
+        const t = link.textContent.trim();
+        if (
+          t && t.length > 1 && t.length < 80 &&
+          (h.includes("profile.php") || h.includes("facebook.com/")) &&
+          !h.includes("/photo") && !h.includes("/story")
+        ) {
+          name = t;
+          href = h;
+          break;
+        }
+      }
+
+      // Fallback: parse from aria-label "Comment by {name} {time} ago"
+      if (!name) {
+        const label = div.getAttribute("aria-label") || "";
+        const m = label.match(/^Comment by (.+?)\s+\d+\s*(h|m|d|w|s|hour|min|day|week|month|year)/i);
+        if (m) {
+          name = m[1].trim();
+          for (const link of div.querySelectorAll('a[role="link"]')) {
+            const h = link.getAttribute("href") || "";
+            if ((h.includes("profile.php") || h.includes("facebook.com/")) && !h.includes("/photo")) {
+              href = h;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!name || name.length < 2) { noName++; continue; }
+
+      const userId = extractUserId(href);
+      if (!userId) { noId++; continue; }
+
+      // Extract comment text
+      let message = "";
+      // Primary: div with text-align:start is the actual comment
+      const textEl = div.querySelector('div[dir="auto"][style*="text-align:start"]');
+      if (textEl) message = textEl.textContent.trim();
+      // Fallback: dir="auto" elements that aren't the name or UI text
+      if (!message) {
+        const nameLow = name.toLowerCase();
+        for (const el of div.querySelectorAll('div[dir="auto"], span[dir="auto"]')) {
+          const t = el.textContent.trim();
+          if (!t || t.toLowerCase() === nameLow) continue;
+          if (/^(Like|Reply|Haha|Love|Wow|Sad|Angry|Share|Hide|Report|\d+\s*(h|m|d|w|hr|min|s)|Most relevant|Newest|All comments)/i.test(t)) continue;
+          if (t.length >= 1) { message = t; break; }
+        }
+      }
+
+      if (!message) { noMsg++; continue; }
+      message = message.slice(0, 1000);
+
+      const cid = `ext_${userId}_${(hashCode(message) & 0xffffff).toString(16).padStart(6, "0")}`;
+      if (seenIds.has(cid)) { dupes++; continue; }
+      seenIds.add(cid);
+
+      items.push({
+        from: { id: String(userId), name },
+        id: cid,
+        message,
+        created_time: "",
+      });
+    } catch { continue; }
+  }
+
+  console.log(`[SocyBase Tab] Result: ${items.length} comments extracted (${noName} noName, ${noId} noId, ${noMsg} noMsg, ${dupes} dupes)`);
+  return { items, nextUrl: null };
 }
 
 // This function is INJECTED into the Facebook tab — must be fully self-contained.
