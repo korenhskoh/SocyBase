@@ -168,28 +168,47 @@ async function expandAllComments() {
   const scrollTarget = modal || document.scrollingElement || document.documentElement;
   console.log(`[SocyBase Tab] Scroll target: ${modal ? "modal dialog" : "page body"}`);
 
-  // 2. Switch comment filter to "All comments" (instead of "Most relevant")
-  //    The filter is a small dropdown near the comments section
+  // 2. Scroll down to find the comment filter button, then switch to "All comments"
+  //    The filter button is below the post content/video, need to scroll to it first
   const filterKeywords = ["most relevant", "newest first", "all comment", "paling relevan", "terbaru"];
-  for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
-    const text = el.textContent.trim().toLowerCase();
-    if (text.length < 50 && filterKeywords.some((kw) => text.includes(kw))) {
-      console.log(`[SocyBase Tab] Clicking comment filter: "${el.textContent.trim()}"`);
-      el.click();
-      await wait(1500);
+  let filterFound = false;
 
-      // Look for "All comments" option in the dropdown menu
-      for (const opt of document.querySelectorAll('div[role="menuitem"], div[role="option"], div[role="radio"]')) {
-        const optText = opt.textContent.trim().toLowerCase();
-        if (optText.includes("all comment") || optText.includes("semua komentar")) {
-          console.log(`[SocyBase Tab] Selecting: "${opt.textContent.trim()}"`);
-          opt.click();
-          await wait(3000); // Wait for comments to reload
-          break;
+  for (let scroll = 0; scroll < 15 && !filterFound; scroll++) {
+    for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
+      const text = el.textContent.trim().toLowerCase();
+      if (text.length < 50 && filterKeywords.some((kw) => text.includes(kw))) {
+        // Scroll it into view first
+        el.scrollIntoView({ behavior: "instant", block: "center" });
+        await wait(500);
+
+        console.log(`[SocyBase Tab] Clicking comment filter: "${el.textContent.trim()}"`);
+        el.click();
+        await wait(1500);
+
+        // Look for "All comments" option in the dropdown menu
+        for (const opt of document.querySelectorAll('div[role="menuitem"], div[role="option"], div[role="radio"]')) {
+          const optText = opt.textContent.trim().toLowerCase();
+          if (optText.includes("all comment") || optText.includes("semua komentar")) {
+            console.log(`[SocyBase Tab] Selecting: "${opt.textContent.trim()}"`);
+            opt.click();
+            await wait(3000); // Wait for comments to reload
+            break;
+          }
         }
+        filterFound = true;
+        break;
       }
-      break;
     }
+
+    if (!filterFound) {
+      // Scroll down to find the filter button (it's below the post content)
+      scrollTarget.scrollTop += 600;
+      await wait(800);
+    }
+  }
+
+  if (!filterFound) {
+    console.log("[SocyBase Tab] Comment filter button not found, proceeding with default");
   }
 
   // 3. Scroll down + click "View more comments" buttons in a loop
