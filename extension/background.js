@@ -308,29 +308,63 @@ function extractDataFromRenderedPage(taskType) {
       if (!commentDivs.length) commentDivs = document.querySelectorAll("div.dw > div");
       if (!commentDivs.length) commentDivs = document.querySelectorAll("#root div > div > div");
     } else {
-      // Desktop Facebook — comments are in role="article" elements
-      // The first article is typically the main post, the rest are comments
-      const allArticles = document.querySelectorAll('div[role="article"]');
+      // Desktop Facebook — comments are in role="article" elements.
+      // IMPORTANT: articles can be nested (replies inside parent comments),
+      // so we only take top-level comment articles (skip the post article and nested ones).
+      const allArticles = Array.from(document.querySelectorAll('div[role="article"]'));
       console.log(`[SocyBase Tab] Found ${allArticles.length} article elements`);
+
+      // The first article is the main post; the rest are comments (including nested replies).
+      // Filter out nested articles — only keep those whose parent article is the post (first one).
       if (allArticles.length > 1) {
-        commentDivs = Array.from(allArticles).slice(1);
+        for (let i = 1; i < allArticles.length; i++) {
+          const art = allArticles[i];
+          // Check if this article is nested inside another comment article
+          const parentArticle = art.parentElement?.closest('div[role="article"]');
+          if (!parentArticle || parentArticle === allArticles[0]) {
+            // Top-level comment (parent is the post or no parent article)
+            commentDivs.push(art);
+          }
+          // else: it's a nested reply — still include it for commenter extraction
+          commentDivs.push(art);
+        }
+        // Deduplicate (since we push top-level and all)
+        commentDivs = [...new Set(commentDivs)];
       }
     }
 
     console.log(`[SocyBase Tab] Processing ${commentDivs.length} comment candidates`);
 
+    let dbgNoLink = 0, dbgNoName = 0, dbgNoMsg = 0, dbgDupe = 0;
+
     for (const div of commentDivs) {
       try {
-        // Find profile link
-        let profileLink = div.querySelector('a[href*="profile.php"], a[href*="fref="]');
+        // Find the FIRST profile link — the commenter's name link
+        // On desktop FB, the name link is typically the first <a> with role="link" in the comment
+        let profileLink = null;
+
+        // Strategy 1: Look for the name link — usually the first <a> with a short text and profile href
+        for (const link of div.querySelectorAll('a[role="link"]')) {
+          const href = link.getAttribute("href") || "";
+          const text = link.textContent.trim();
+          if (
+            text && text.length > 1 && text.length < 80 &&
+            (href.includes("profile.php") || href.includes("facebook.com/")) &&
+            !href.includes("/photo") && !href.includes("/story") &&
+            !href.includes("comment_id") // Skip "time ago" links that also have profile hrefs
+          ) {
+            profileLink = link;
+            break;
+          }
+        }
+
+        // Strategy 2: Fallback to any <a> with profile-like href
         if (!profileLink) {
           for (const link of div.querySelectorAll("a")) {
             const href = link.getAttribute("href") || "";
             const text = link.textContent.trim();
             if (
-              text &&
-              text.length > 1 &&
-              text.length < 60 &&
+              text && text.length > 1 && text.length < 60 &&
               (href.includes("profile.php") ||
                 href.includes("facebook.com/") ||
                 (href.startsWith("/") && !href.startsWith("/story") && !href.startsWith("/photo")))
@@ -340,42 +374,49 @@ function extractDataFromRenderedPage(taskType) {
             }
           }
         }
-        if (!profileLink) continue;
+
+        if (!profileLink) { dbgNoLink++; continue; }
 
         const name = profileLink.textContent.trim();
         const href = profileLink.getAttribute("href") || "";
         const userId = extractUserIdFromHref(href);
 
-        if (!name || name.length < 2) continue;
+        if (!name || name.length < 2) { dbgNoName++; continue; }
 
-        // Extract comment text
+        // Extract comment text — get the text content div AFTER the name
         let message = "";
         if (isMbasic) {
           message = div.textContent.trim();
           if (message.startsWith(name)) message = message.slice(name.length).trim();
           message = message.split(/\n\s*(?:Like|Reply|Comment|Suka|Balas|·)/)[0].trim();
         } else {
-          // Desktop: look for dir="auto" spans which contain comment text
-          const textEls = div.querySelectorAll('[dir="auto"] > span, [dir="auto"]');
+          // Desktop: the comment text is in div[dir="auto"] elements inside the article.
+          // Get ALL dir="auto" text, then strip out the commenter name and UI elements.
+          const textEls = div.querySelectorAll('div[dir="auto"], span[dir="auto"]');
           const texts = [];
+          const nameLower = name.toLowerCase();
           for (const el of textEls) {
             const t = el.textContent.trim();
-            if (t && t !== name && t.length > 1) texts.push(t);
+            // Skip if it's the commenter name, a UI label, or too short
+            if (!t || t.toLowerCase() === nameLower) continue;
+            // Skip known UI text
+            if (/^(Like|Reply|Haha|Love|Wow|Sad|Angry|Share|Hide|Report|\d+\s*(h|m|d|w|hr|min|s)|Most relevant|Newest|All comments)/i.test(t)) continue;
+            if (t.length >= 1) texts.push(t);
           }
-          message = texts.join(" ").trim();
+          message = texts[0] || ""; // Take the first real text block as the comment
           if (!message) {
-            // Fallback: get full text and strip known UI elements
+            // Fallback: strip full text
             message = div.textContent.trim();
             if (message.startsWith(name)) message = message.slice(name.length).trim();
-            message = message.split(/\n\s*(?:Like|Reply|Haha|Love|Wow|Sad|Angry|·|\d+ [a-z])/i)[0].trim();
+            message = message.split(/\n\s*(?:Like|Reply|Haha|Love|Wow|Sad|Angry|·|\d+\s*[hmdw])/i)[0].trim();
           }
         }
 
-        if (!message || message.length < 1) continue;
+        if (!message || message.length < 1) { dbgNoMsg++; continue; }
         message = message.slice(0, 1000);
 
         const commentId = `ext_${userId}_${(hashCode(message) & 0xffffff).toString(16).padStart(6, "0")}`;
-        if (seenIds.has(commentId)) continue;
+        if (seenIds.has(commentId)) { dbgDupe++; continue; }
         seenIds.add(commentId);
 
         items.push({
@@ -388,6 +429,7 @@ function extractDataFromRenderedPage(taskType) {
         continue;
       }
     }
+    console.log(`[SocyBase Tab] Extraction stats: ${items.length} extracted, ${dbgNoLink} no-link, ${dbgNoName} no-name, ${dbgNoMsg} no-msg, ${dbgDupe} dupes (from ${commentDivs.length} candidates)`);
   } else {
     // Feed parsing
     let postElements = document.querySelectorAll("article");
