@@ -163,10 +163,30 @@ async function fetchAndParseViaTab(url, taskType) {
 async function expandAllComments() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // 1. Find the scrollable container — posts open in a modal dialog on desktop FB
+  // 1. Find the scrollable container — posts open in a modal dialog on desktop FB.
+  //    The dialog itself isn't scrollable; the scrollable element is a child div
+  //    (often has overflow-y: auto/scroll, or id containing "scroll").
   const modal = document.querySelector('div[role="dialog"]');
-  const scrollTarget = modal || document.scrollingElement || document.documentElement;
-  console.log(`[SocyBase Tab] Scroll target: ${modal ? "modal dialog" : "page body"}`);
+  let scrollTarget = null;
+  if (modal) {
+    // Find the actual scrollable div inside the modal
+    // Look for the element with overflow-y scroll/auto and significant height
+    const candidates = modal.querySelectorAll("div");
+    for (const div of candidates) {
+      const style = getComputedStyle(div);
+      if (
+        (style.overflowY === "auto" || style.overflowY === "scroll") &&
+        div.scrollHeight > div.clientHeight + 100
+      ) {
+        scrollTarget = div;
+        break;
+      }
+    }
+    // Fallback: the modal itself
+    if (!scrollTarget) scrollTarget = modal;
+  }
+  if (!scrollTarget) scrollTarget = document.scrollingElement || document.documentElement;
+  console.log(`[SocyBase Tab] Scroll target: ${modal ? "modal" : "page"}, scrollHeight=${scrollTarget.scrollHeight}, clientHeight=${scrollTarget.clientHeight}`);
 
   // 2. Scroll down to find the comment filter button, then switch to "All comments"
   //    The filter button is below the post content/video, need to scroll to it first
@@ -222,8 +242,13 @@ async function expandAllComments() {
 
   for (let round = 0; round < maxRounds; round++) {
     // Scroll to bottom of the container to trigger lazy-loading
+    const prevScroll = scrollTarget.scrollTop;
     scrollTarget.scrollTop = scrollTarget.scrollHeight;
     await wait(1500);
+
+    if (round < 3 || round % 20 === 0) {
+      console.log(`[SocyBase Tab] Scroll: top=${scrollTarget.scrollTop}, height=${scrollTarget.scrollHeight}, moved=${scrollTarget.scrollTop - prevScroll}`);
+    }
 
     // Also click any "view more" buttons if present (some threads use them)
     for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
