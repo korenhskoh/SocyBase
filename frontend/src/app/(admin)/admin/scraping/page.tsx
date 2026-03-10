@@ -47,7 +47,7 @@ interface FeatureFlags {
 
 const FLAG_LABELS: Record<string, string> = {
   dedup_save_credits: "Deduplicate Users (Save Credits)",
-  playwright_scraping: "Playwright Browser Fallback",
+  playwright_scraping: "Browser Operator (Chrome Extension)",
 };
 
 export default function AdminScrapingPage() {
