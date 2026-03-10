@@ -374,50 +374,58 @@ async function scrapeCommentsWithCDP(tabId) {
 
   const allItems = new Map(); // cid → item, deduplicates across rounds
   let staleRounds = 0;
-  let lastItemCount = 0;
+  let lastArticleCount = 0;
 
-  for (let round = 0; round < 300; round++) {
+  for (let round = 0; round < 500; round++) {
     // Scroll down using real mouse wheel event at center of viewport
-    await cdpScroll(tabId, scrollX, scrollY, 800);
-    await wait(1500);
+    await cdpScroll(tabId, scrollX, scrollY, 1000);
+    await wait(800);
 
-    // Click any "view more" buttons
-    await cdpEval(tabId, `
-      (function() {
-        for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
-          const t = el.textContent.trim().toLowerCase();
-          if (t.length > 80) continue;
-          if (t.includes("view more") || t.includes("view previous") || t.includes("more replies") || t.includes("lihat komentar")) {
-            el.click();
-          }
-        }
-      })()
-    `);
+    // Quick article count check (fast — no extraction)
+    const articleCount = await cdpEval(tabId, `document.querySelectorAll('div[role="article"]').length`);
 
-    // Extract current comments
-    const result = await cdpEval(tabId, extractJS);
-    if (result && result.items) {
-      for (const item of result.items) {
-        allItems.set(item.id, item);
-      }
-    }
-
-    const currentCount = allItems.size;
-
-    if (round < 5 || round % 10 === 0) {
-      console.log(`[SocyBase CDP] Round ${round}: ${result?.count || 0} articles, ${currentCount} unique comments collected`);
-    }
-
-    if (currentCount === lastItemCount) {
+    if (articleCount === lastArticleCount) {
       staleRounds++;
-      if (staleRounds >= 10) {
-        console.log(`[SocyBase CDP] Done: ${currentCount} comments after ${round} rounds (10 stale)`);
-        break;
-      }
     } else {
       staleRounds = 0;
+      lastArticleCount = articleCount;
     }
-    lastItemCount = currentCount;
+
+    // Extract every 5 rounds OR when stale (about to finish)
+    if (round % 5 === 0 || staleRounds >= 3) {
+      const result = await cdpEval(tabId, extractJS);
+      if (result && result.items) {
+        for (const item of result.items) allItems.set(item.id, item);
+      }
+
+      // Also click "view more" buttons during extraction rounds
+      await cdpEval(tabId, `
+        (function() {
+          for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
+            const t = el.textContent.trim().toLowerCase();
+            if (t.length > 80) continue;
+            if (t.includes("view more") || t.includes("view previous") || t.includes("more replies") || t.includes("lihat komentar")) {
+              el.click();
+            }
+          }
+        })()
+      `);
+
+      if (round < 5 || round % 10 === 0) {
+        console.log(`[SocyBase CDP] Round ${round}: ${articleCount} articles, ${allItems.size} comments collected`);
+      }
+    }
+
+    // Stop after 5 stale rounds (5s of no new content)
+    if (staleRounds >= 5) {
+      // Final extraction to catch anything left
+      const result = await cdpEval(tabId, extractJS);
+      if (result && result.items) {
+        for (const item of result.items) allItems.set(item.id, item);
+      }
+      console.log(`[SocyBase CDP] Done: ${allItems.size} comments after ${round} rounds`);
+      break;
+    }
   }
 
   const items = Array.from(allItems.values());
