@@ -109,7 +109,7 @@ async function fetchFacebookPage(url) {
 async function fetchAndParseViaTab(url, taskType) {
   console.log(`[SocyBase] Tab fallback: opening ${url}`);
 
-  const tab = await chrome.tabs.create({ url, active: false });
+  const tab = await chrome.tabs.create({ url, active: true });
 
   try {
     // Wait for page to finish loading
