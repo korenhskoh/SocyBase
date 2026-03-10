@@ -132,13 +132,14 @@ async function fetchAndParseViaTab(url, taskType) {
     // Wait for dynamic content to render
     await new Promise((r) => setTimeout(r, 4000));
 
-    // For comment scraping, click "View more comments" to load all comments
+    // For comment scraping: switch to "All comments", scroll to load all, click "View more"
     if (taskType === "scrape_comments") {
-      const clickResults = await chrome.scripting.executeScript({
+      const expandResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: clickViewMoreComments,
+        func: expandAllComments,
       });
-      console.log(`[SocyBase] View-more clicks: ${clickResults?.[0]?.result || 0}`);
+      const r = expandResults?.[0]?.result || {};
+      console.log(`[SocyBase] Expanded comments: ${r.articles || 0} articles, ${r.clicks || 0} clicks`);
     }
 
     // Execute extraction in the tab's DOM context
@@ -156,42 +157,91 @@ async function fetchAndParseViaTab(url, taskType) {
   }
 }
 
-// INJECTED into tab — clicks "View more comments" buttons to expand all comments.
-// Must be fully self-contained. Returns the number of clicks performed.
-async function clickViewMoreComments() {
-  const keywords = [
-    "view more comment", "view previous comment", "view all comment",
+// INJECTED into tab — expands all comments by switching to "All comments",
+// then scrolling + clicking "View more" until all comments are loaded.
+// Must be fully self-contained. Returns { articles, clicks, rounds }.
+async function expandAllComments() {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // 1. Find the scrollable container — posts open in a modal dialog on desktop FB
+  const modal = document.querySelector('div[role="dialog"]');
+  const scrollTarget = modal || document.scrollingElement || document.documentElement;
+  console.log(`[SocyBase Tab] Scroll target: ${modal ? "modal dialog" : "page body"}`);
+
+  // 2. Switch comment filter to "All comments" (instead of "Most relevant")
+  //    The filter is a small dropdown near the comments section
+  const filterKeywords = ["most relevant", "newest first", "all comment", "paling relevan", "terbaru"];
+  for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
+    const text = el.textContent.trim().toLowerCase();
+    if (text.length < 50 && filterKeywords.some((kw) => text.includes(kw))) {
+      console.log(`[SocyBase Tab] Clicking comment filter: "${el.textContent.trim()}"`);
+      el.click();
+      await wait(1500);
+
+      // Look for "All comments" option in the dropdown menu
+      for (const opt of document.querySelectorAll('div[role="menuitem"], div[role="option"], div[role="radio"]')) {
+        const optText = opt.textContent.trim().toLowerCase();
+        if (optText.includes("all comment") || optText.includes("semua komentar")) {
+          console.log(`[SocyBase Tab] Selecting: "${opt.textContent.trim()}"`);
+          opt.click();
+          await wait(3000); // Wait for comments to reload
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  // 3. Scroll down + click "View more comments" buttons in a loop
+  const moreKeywords = [
+    "view more comment", "view previous comment", "view all",
     "see more comment", "see previous comment",
-    "lihat komentar lagi", "lihat komentar sebelumnya", "lihat semua komentar",
+    "lihat komentar lagi", "lihat komentar sebelumnya", "lihat semua",
     "more comments", "previous comments",
+    "write a comment", // stop marker — we've reached the end
   ];
 
   let totalClicks = 0;
-  const maxRounds = 15;
+  let staleRounds = 0;
+  let lastArticleCount = 0;
+  const maxRounds = 100; // Up to ~200s for very large threads
 
   for (let round = 0; round < maxRounds; round++) {
-    let clicked = false;
-
-    // Find and click all "view more comments" style buttons/links
-    for (const el of document.querySelectorAll('div[role="button"], span[role="button"], a')) {
+    // Click any "view more comments" / "view previous" buttons
+    for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
       const text = el.textContent.trim().toLowerCase();
       if (text.length > 80) continue;
-      if (keywords.some((kw) => text.includes(kw))) {
+      if (moreKeywords.some((kw) => text.includes(kw)) && !text.includes("write")) {
         el.click();
-        clicked = true;
         totalClicks++;
-        console.log(`[SocyBase Tab] Clicked: "${el.textContent.trim()}"`);
       }
     }
 
-    if (!clicked) break;
+    // Scroll down within the container
+    scrollTarget.scrollTop = scrollTarget.scrollHeight;
+    await wait(2000);
 
-    // Wait for new comments to load
-    await new Promise((r) => setTimeout(r, 2000));
+    // Check how many comment articles we have now
+    const articleCount = document.querySelectorAll('div[role="article"]').length;
+    if (articleCount === lastArticleCount) {
+      staleRounds++;
+      if (staleRounds >= 5) {
+        console.log(`[SocyBase Tab] No new comments for 5 rounds, stopping`);
+        break;
+      }
+    } else {
+      staleRounds = 0;
+    }
+    lastArticleCount = articleCount;
+
+    if (round % 10 === 0) {
+      console.log(`[SocyBase Tab] Round ${round}: ${articleCount} articles, ${totalClicks} clicks`);
+    }
   }
 
-  console.log(`[SocyBase Tab] View-more-comments: ${totalClicks} clicks in ${Math.min(totalClicks ? totalClicks : 1, maxRounds)} rounds`);
-  return totalClicks;
+  const finalCount = document.querySelectorAll('div[role="article"]').length;
+  console.log(`[SocyBase Tab] Done: ${finalCount} articles, ${totalClicks} clicks, ${staleRounds >= 5 ? "stale-stop" : "max-rounds"}`);
+  return { articles: finalCount, clicks: totalClicks };
 }
 
 // This function is INJECTED into the Facebook tab — must be fully self-contained.
