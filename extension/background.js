@@ -211,41 +211,40 @@ async function expandAllComments() {
     console.log("[SocyBase Tab] Comment filter button not found, proceeding with default");
   }
 
-  // 3. Scroll down + click "View more comments" buttons in a loop
-  const moreKeywords = [
-    "view more comment", "view previous comment", "view all",
-    "see more comment", "see previous comment",
-    "lihat komentar lagi", "lihat komentar sebelumnya", "lihat semua",
-    "more comments", "previous comments",
-    "write a comment", // stop marker — we've reached the end
-  ];
+  // 3. Keep scrolling down to lazy-load all comments.
+  //    Facebook loads more comments automatically as you scroll — gray placeholder blocks
+  //    appear at the bottom and get replaced with real comments.
+  //    Also click any "View more" buttons if they appear, but scrolling is the main driver.
 
-  let totalClicks = 0;
   let staleRounds = 0;
   let lastArticleCount = 0;
-  const maxRounds = 100; // Up to ~200s for very large threads
+  const maxRounds = 200; // Up to ~400s for very large threads (1600+ comments)
 
   for (let round = 0; round < maxRounds; round++) {
-    // Click any "view more comments" / "view previous" buttons
+    // Scroll to bottom of the container to trigger lazy-loading
+    scrollTarget.scrollTop = scrollTarget.scrollHeight;
+    await wait(1500);
+
+    // Also click any "view more" buttons if present (some threads use them)
     for (const el of document.querySelectorAll('div[role="button"], span[role="button"]')) {
       const text = el.textContent.trim().toLowerCase();
       if (text.length > 80) continue;
-      if (moreKeywords.some((kw) => text.includes(kw)) && !text.includes("write")) {
+      if (
+        text.includes("view more comment") || text.includes("view previous") ||
+        text.includes("see more comment") || text.includes("more replies") ||
+        text.includes("view all") || text.includes("lihat komentar")
+      ) {
         el.click();
-        totalClicks++;
+        await wait(500);
       }
     }
-
-    // Scroll down within the container
-    scrollTarget.scrollTop = scrollTarget.scrollHeight;
-    await wait(2000);
 
     // Check how many comment articles we have now
     const articleCount = document.querySelectorAll('div[role="article"]').length;
     if (articleCount === lastArticleCount) {
       staleRounds++;
-      if (staleRounds >= 5) {
-        console.log(`[SocyBase Tab] No new comments for 5 rounds, stopping`);
+      if (staleRounds >= 8) {
+        console.log(`[SocyBase Tab] No new comments for 8 rounds, stopping`);
         break;
       }
     } else {
@@ -254,13 +253,13 @@ async function expandAllComments() {
     lastArticleCount = articleCount;
 
     if (round % 10 === 0) {
-      console.log(`[SocyBase Tab] Round ${round}: ${articleCount} articles, ${totalClicks} clicks`);
+      console.log(`[SocyBase Tab] Round ${round}: ${articleCount} articles loaded`);
     }
   }
 
   const finalCount = document.querySelectorAll('div[role="article"]').length;
-  console.log(`[SocyBase Tab] Done: ${finalCount} articles, ${totalClicks} clicks, ${staleRounds >= 5 ? "stale-stop" : "max-rounds"}`);
-  return { articles: finalCount, clicks: totalClicks };
+  console.log(`[SocyBase Tab] Done: ${finalCount} articles loaded, ${staleRounds >= 8 ? "stale-stop" : "max-rounds"}`);
+  return { articles: finalCount, clicks: 0 };
 }
 
 // This function is INJECTED into the Facebook tab — must be fully self-contained.
