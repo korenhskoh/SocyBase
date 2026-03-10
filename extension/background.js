@@ -134,10 +134,11 @@ async function fetchAndParseViaTab(url, taskType) {
 
     // For comment scraping, click "View more comments" to load all comments
     if (taskType === "scrape_comments") {
-      await chrome.scripting.executeScript({
+      const clickResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: clickViewMoreComments,
       });
+      console.log(`[SocyBase] View-more clicks: ${clickResults?.[0]?.result || 0}`);
     }
 
     // Execute extraction in the tab's DOM context
@@ -394,19 +395,19 @@ function extractDataFromRenderedPage(taskType) {
     }
   }
 
-  // Find next page URL (mbasic pagination)
+  // Find next page URL (pagination)
   let nextUrl = null;
-  const keywords =
+  const paginationKeywords =
     taskType === "scrape_comments"
       ? ["more comment", "previous comment", "view more", "see more", "komen lagi", "lihat lagi"]
       : ["see more post", "show more", "more stories", "older post", "lagi cerita", "lihat lagi"];
 
   for (const link of document.querySelectorAll("a")) {
     const text = link.textContent.trim().toLowerCase();
-    if (keywords.some((kw) => text.includes(kw))) {
+    if (paginationKeywords.some((kw) => text.includes(kw))) {
       const href = link.getAttribute("href");
       if (href) {
-        nextUrl = href.startsWith("http") ? href : `https://mbasic.facebook.com${href}`;
+        nextUrl = href.startsWith("http") ? href : `https://www.facebook.com${href}`;
         break;
       }
     }

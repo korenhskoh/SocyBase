@@ -58,25 +58,24 @@ async def _try_extension_comment_fallback(db, job, input_url: str) -> dict | Non
     if ff and not ff.value.get("enabled", True):
         return None
 
-    # Build mbasic URL
+    # Build desktop Facebook URL (extension opens real browser tabs)
     import re
-    mbasic_url = input_url
-    if not mbasic_url.startswith("http"):
-        mbasic_url = f"https://mbasic.facebook.com/{mbasic_url}"
+    desktop_url = input_url
+    if not desktop_url.startswith("http"):
+        desktop_url = f"https://www.facebook.com/{desktop_url}"
     else:
-        mbasic_url = re.sub(
+        desktop_url = re.sub(
             r"https?://(www\.|m\.|web\.|mbasic\.)?facebook\.com",
-            "https://mbasic.facebook.com",
-            mbasic_url,
+            "https://www.facebook.com",
+            desktop_url,
         )
-        mbasic_url = mbasic_url.replace("/permalink.php?", "/story.php?")
 
     # Create task
     task = BrowserScrapeTask(
         tenant_id=job.tenant_id,
         job_id=job.id,
         task_type="scrape_comments",
-        target_url=mbasic_url,
+        target_url=desktop_url,
         limit=100,
     )
     db.add(task)
@@ -603,7 +602,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                                     _pw_post_url = job.input_value
                                     if "_" in post_id:
                                         _page_id, _post_id = post_id.split("_", 1)
-                                        _pw_post_url = f"https://mbasic.facebook.com/story.php?story_fbid={_post_id}&id={_page_id}"
+                                        _pw_post_url = f"https://www.facebook.com/permalink.php?story_fbid={_post_id}&id={_page_id}"
                                     elif post_id and not post_id.startswith("http"):
                                         _pw_post_url = f"https://www.facebook.com/{post_id}"
                                     pw_response = await _try_extension_comment_fallback(
