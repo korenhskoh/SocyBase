@@ -27,6 +27,18 @@ class FacebookGraphClient(AbstractSocialClient):
     async def close(self):
         await self.client.aclose()
 
+    @staticmethod
+    def _split_compound_id(result: dict) -> None:
+        """If post_id is a compound 'pageId_postId' numeric ID, extract the short post ID."""
+        post_id = result.get("post_id", "")
+        parts = post_id.split("_")
+        if len(parts) == 2 and all(p.isdigit() for p in parts):
+            result["page_id"] = result.get("page_id") or parts[0]
+            result["post_id"] = parts[1]
+        elif len(parts) == 3 and all(p.isdigit() for p in parts):
+            result["page_id"] = result.get("page_id") or parts[0]
+            result["post_id"] = parts[1]
+
     def parse_post_url(self, url: str) -> dict:
         """
         Parse Facebook post URL to extract post_id and determine type.
@@ -74,6 +86,8 @@ class FacebookGraphClient(AbstractSocialClient):
             page_match = re.search(r"facebook\.com/([^/]+)/posts/", url)
             if page_match:
                 result["page_id"] = _resolve_page_id(page_match.group(1), url)
+            # Split compound IDs (e.g. /posts/100064690598698_1422784869309977)
+            self._split_compound_id(result)
             return result
 
         # Video post - /{page}/videos/{id}
@@ -139,6 +153,8 @@ class FacebookGraphClient(AbstractSocialClient):
             result["post_id"] = reel_match.group(1)
             return result
 
+        # Final catch-all: if post_id is still a compound numeric ID, extract short ID
+        self._split_compound_id(result)
         return result
 
     async def get_post_comments(

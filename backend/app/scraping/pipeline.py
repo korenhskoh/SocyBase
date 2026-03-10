@@ -672,11 +672,12 @@ async def _execute_pipeline(job_id: str, celery_task):
                         total_replies += extracted.get("reply_count", 0)
                         page_count += 1
 
-                        # Store comments in DB
+                        # Store comments in DB — always use the short post ID
+                        _store_post_id = post_id.split("_", 1)[1] if "_" in post_id and all(p.isdigit() for p in post_id.split("_", 1)) else post_id
                         for c in extracted["comments"]:
                             comment = ExtractedComment(
                                 job_id=job.id,
-                                post_id=post_id,
+                                post_id=_store_post_id,
                                 comment_id=c["comment_id"],
                                 commenter_user_id=c["user_id"],
                                 commenter_name=c["user_name"],
