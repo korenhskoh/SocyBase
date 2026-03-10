@@ -262,6 +262,7 @@ export const adminApi = {
     bank_account_number?: string;
     bank_duitnow_id?: string;
     bank_swift_code?: string;
+    bank_qr_url?: string;
     stripe_enabled?: boolean;
     bank_transfer_enabled?: boolean;
     payment_model?: string;

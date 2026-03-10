@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
-import { adminApi } from "@/lib/api-client";
+import { adminApi, uploadsApi } from "@/lib/api-client";
 
 const PAYMENT_MODELS = [
   { value: "one_time", label: "One-time Packages", desc: "Users buy credit packs once" },
@@ -38,6 +38,8 @@ export default function AdminSettingsPage() {
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankDuitnowId, setBankDuitnowId] = useState("");
   const [bankSwiftCode, setBankSwiftCode] = useState("");
+  const [bankQrUrl, setBankQrUrl] = useState("");
+  const [bankQrUploading, setBankQrUploading] = useState(false);
 
   // WhatsApp settings
   const [waEnabled, setWaEnabled] = useState(true);
@@ -104,6 +106,7 @@ export default function AdminSettingsPage() {
           if (d.bank_account_number) setBankAccountNumber(d.bank_account_number);
           if (d.bank_duitnow_id) setBankDuitnowId(d.bank_duitnow_id);
           if (d.bank_swift_code) setBankSwiftCode(d.bank_swift_code);
+          if (d.bank_qr_url) setBankQrUrl(d.bank_qr_url);
         }).catch(() => {}),
         adminApi.getWhatsappSettings().then((r) => {
           const d = r.data;
@@ -151,6 +154,7 @@ export default function AdminSettingsPage() {
         bank_account_number: bankAccountNumber || undefined,
         bank_duitnow_id: bankDuitnowId || undefined,
         bank_swift_code: bankSwiftCode || undefined,
+        bank_qr_url: bankQrUrl || undefined,
       });
       setMessage("Payment settings saved successfully!");
     } catch {
@@ -509,6 +513,51 @@ export default function AdminSettingsPage() {
                     placeholder="e.g. MABORUMYKL"
                     className="input-glass text-sm"
                   />
+                </div>
+
+                {/* QR Code Upload */}
+                <div>
+                  <label className="block text-xs text-white/60 mb-1">Payment QR Code (optional)</label>
+                  <p className="text-xs text-white/30 mb-2">Upload a DuitNow or bank transfer QR code image. Users will see this when choosing bank transfer.</p>
+                  <div className="flex items-start gap-4">
+                    {bankQrUrl && (
+                      <div className="relative shrink-0">
+                        <img src={bankQrUrl} alt="Payment QR" className="w-24 h-24 rounded-lg border border-white/10 object-contain bg-white" />
+                        <button
+                          type="button"
+                          onClick={() => setBankQrUrl("")}
+                          className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center hover:bg-red-400"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    )}
+                    <label className={`flex-1 flex items-center justify-center rounded-lg border-2 border-dashed border-white/10 hover:border-primary-500/30 p-4 cursor-pointer transition ${bankQrUploading ? "opacity-50 pointer-events-none" : ""}`}>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setBankQrUploading(true);
+                          try {
+                            const res = await uploadsApi.uploadProof(file);
+                            setBankQrUrl(res.data.proof_url);
+                          } catch {
+                            alert("Failed to upload QR image");
+                          } finally {
+                            setBankQrUploading(false);
+                            e.target.value = "";
+                          }
+                        }}
+                      />
+                      <div className="text-center">
+                        <p className="text-sm text-white/40">{bankQrUploading ? "Uploading..." : bankQrUrl ? "Replace QR image" : "Click to upload QR image"}</p>
+                        <p className="text-xs text-white/20 mt-1">JPG, PNG, WebP</p>
+                      </div>
+                    </label>
+                  </div>
                 </div>
               </div>
             )}

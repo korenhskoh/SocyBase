@@ -74,6 +74,7 @@ async def get_payment_info(
             "bank_account_name": "",
             "bank_account_number": "",
             "bank_duitnow_id": "",
+            "bank_qr_url": "",
         }
 
     data = setting.value or {}
@@ -84,6 +85,7 @@ async def get_payment_info(
         "bank_account_name": data.get("bank_account_name", ""),
         "bank_account_number": data.get("bank_account_number", ""),
         "bank_duitnow_id": data.get("bank_duitnow_id", ""),
+        "bank_qr_url": data.get("bank_qr_url", ""),
         "payment_model": data.get("payment_model", "one_time"),
     }
 

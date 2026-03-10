@@ -986,6 +986,7 @@ class PaymentSettingsUpdate(BaseModel):
     bank_account_number: str | None = None
     bank_duitnow_id: str | None = None
     bank_swift_code: str | None = None
+    bank_qr_url: str | None = None
     stripe_enabled: bool = True
     bank_transfer_enabled: bool = True
     payment_model: str = "one_time"  # one_time, subscription, both

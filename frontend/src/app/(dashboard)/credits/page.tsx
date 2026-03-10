@@ -37,6 +37,7 @@ export default function CreditsPage() {
     bank_account_name: string;
     bank_account_number: string;
     bank_duitnow_id: string;
+    bank_qr_url: string;
     payment_model: string;
   } | null>(null);
 
@@ -59,6 +60,24 @@ export default function CreditsPage() {
   const oneTimePackages = visiblePackages.filter((p) => p.billing_interval === "one_time");
   const subscriptionPackages = visiblePackages.filter((p) => p.billing_interval !== "one_time");
   const showBothSections = paymentModel === "both" && oneTimePackages.length > 0 && subscriptionPackages.length > 0;
+
+  // Find best value package (lowest cost per credit)
+  const bestValueId = (() => {
+    if (visiblePackages.length < 2) return null;
+    let best: CreditPackage | null = null;
+    let bestCost = Infinity;
+    for (const pkg of visiblePackages) {
+      const total = pkg.credits + pkg.bonus_credits;
+      if (total > 0) {
+        const cost = pkg.price_cents / total;
+        if (cost < bestCost) {
+          bestCost = cost;
+          best = pkg;
+        }
+      }
+    }
+    return best?.id ?? null;
+  })();
 
   const handlePurchase = async () => {
     if (!selectedPkg) return;
@@ -130,62 +149,80 @@ export default function CreditsPage() {
     "from-cyan-500 to-teal-600",
   ];
 
-  const renderPackageCard = (pkg: CreditPackage, i: number) => (
-    <button
-      key={pkg.id}
-      onClick={() => setSelectedPkg(pkg.id)}
-      className={`glass-card p-6 text-left transition-all hover:scale-[1.02] ${
-        selectedPkg === pkg.id
-          ? "border-primary-500 shadow-[0_0_20px_rgba(59,130,246,0.2)]"
-          : ""
-      }`}
-    >
-      <div className={`h-2 w-12 rounded-full bg-gradient-to-r ${packageColors[i % packageColors.length]} mb-4`} />
-      <h3 className="text-lg font-bold text-white">{pkg.name}</h3>
-      <p className="text-3xl font-bold text-white mt-2">
-        {formatPrice(pkg.price_cents, pkg.currency)}
-        {pkg.billing_interval !== "one_time" && (
-          <span className="text-sm font-normal text-white/40">
-            /{pkg.billing_interval === "monthly" ? "mo" : "yr"}
+  const renderPackageCard = (pkg: CreditPackage, i: number) => {
+    const isBestValue = pkg.id === bestValueId;
+    return (
+      <button
+        key={pkg.id}
+        onClick={() => setSelectedPkg(pkg.id)}
+        className={`relative glass-card p-6 text-left transition-all hover:scale-[1.02] ${
+          selectedPkg === pkg.id
+            ? "border-primary-500 shadow-[0_0_20px_rgba(59,130,246,0.2)]"
+            : ""
+        } ${isBestValue ? "ring-1 ring-emerald-500/30" : ""}`}
+      >
+        {isBestValue && (
+          <span className="absolute -top-2.5 right-3 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500 text-white">
+            Best Value
           </span>
         )}
-      </p>
-      <div className="mt-3 space-y-1">
-        <p className="text-sm text-white/60">
-          {formatCredits(pkg.credits)} credits{pkg.billing_interval !== "one_time" ? `/${pkg.billing_interval === "monthly" ? "month" : "year"}` : ""}
+        <div className={`h-2 w-12 rounded-full bg-gradient-to-r ${packageColors[i % packageColors.length]} mb-4`} />
+        <h3 className="text-lg font-bold text-white">{pkg.name}</h3>
+        <p className="text-3xl font-bold text-white mt-2">
+          {formatPrice(pkg.price_cents, pkg.currency)}
+          {pkg.billing_interval !== "one_time" && (
+            <span className="text-sm font-normal text-white/40">
+              /{pkg.billing_interval === "monthly" ? "mo" : "yr"}
+            </span>
+          )}
         </p>
-        {pkg.bonus_credits > 0 && (
-          <p className="text-sm text-emerald-400">
-            +{formatCredits(pkg.bonus_credits)} bonus!
+        <div className="mt-3 space-y-1">
+          <p className="text-sm text-white/60">
+            {formatCredits(pkg.credits)} credits{pkg.billing_interval !== "one_time" ? `/${pkg.billing_interval === "monthly" ? "month" : "year"}` : ""}
           </p>
-        )}
-      </div>
-      <p className="text-xs text-white/30 mt-2">
-        ~{formatPrice(Math.round(pkg.price_cents / (pkg.credits + pkg.bonus_credits)), pkg.currency)}/credit
-      </p>
-    </button>
-  );
+          {pkg.bonus_credits > 0 && (
+            <p className="text-sm text-emerald-400">
+              +{formatCredits(pkg.bonus_credits)} bonus!
+            </p>
+          )}
+        </div>
+        <p className="text-xs text-white/30 mt-2">
+          ~{formatPrice(Math.round(pkg.price_cents / (pkg.credits + pkg.bonus_credits)), pkg.currency)}/credit
+        </p>
+      </button>
+    );
+  };
 
   return (
     <div className="space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-2xl md:text-3xl font-bold text-white">Credits</h1>
-        <p className="text-white/50 mt-1">Purchase credits to run <strong>AI-Scraping</strong> jobs</p>
+        <h1 className="text-2xl md:text-3xl font-bold text-white">Credit Purchase</h1>
+        <p className="text-white/50 mt-1">Top up your credits to run AI-Scraping and Post Discovery jobs</p>
       </div>
 
-      {/* Current Balance */}
+      {/* Current Balance Card */}
       <div className="glass-card p-5 md:p-8">
         <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-sm text-white/50">Current Balance</p>
             <p className="text-3xl md:text-4xl font-bold gradient-text mt-1">
               {balance ? formatCredits(balance.balance) : "---"}
             </p>
-            <p className="text-xs text-white/30 mt-2">
-              Lifetime: {balance ? formatCredits(balance.lifetime_purchased) : "0"} purchased,{" "}
-              {balance ? formatCredits(balance.lifetime_used) : "0"} used
-            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3">
+              <div className="flex items-center gap-1.5">
+                <div className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="text-xs text-white/40">
+                  {balance ? formatCredits(balance.lifetime_purchased) : "0"} purchased
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="h-2 w-2 rounded-full bg-amber-400" />
+                <span className="text-xs text-white/40">
+                  {balance ? formatCredits(balance.lifetime_used) : "0"} used
+                </span>
+              </div>
+            </div>
           </div>
           <div className="hidden sm:flex h-20 w-20 rounded-2xl bg-gradient-to-br from-primary-500/20 to-accent-purple/20 items-center justify-center shrink-0">
             <svg className="h-10 w-10 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -193,6 +230,25 @@ export default function CreditsPage() {
             </svg>
           </div>
         </div>
+      </div>
+
+      {/* How It Works */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {[
+          { step: "1", title: "Choose a package", desc: "Select the credit package that fits your needs" },
+          { step: "2", title: "Complete payment", desc: "Pay via card or bank transfer" },
+          { step: "3", title: "Credits added instantly", desc: "Start running AI-Scraping jobs right away" },
+        ].map((item) => (
+          <div key={item.step} className="flex items-start gap-3 rounded-xl bg-white/[0.02] border border-white/5 p-4">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-500/15 text-xs font-bold text-primary-400">
+              {item.step}
+            </span>
+            <div>
+              <p className="text-sm font-medium text-white">{item.title}</p>
+              <p className="text-xs text-white/40 mt-0.5">{item.desc}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Active Subscription */}
@@ -234,14 +290,16 @@ export default function CreditsPage() {
         <>
           {/* One-time packages */}
           <div>
-            <h2 className="text-xl font-semibold text-white mb-4">One-time Packages</h2>
+            <h2 className="text-xl font-semibold text-white mb-1">One-time Packages</h2>
+            <p className="text-sm text-white/40 mb-4">Purchase credits once, use them anytime</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {oneTimePackages.map((pkg, i) => renderPackageCard(pkg, i))}
             </div>
           </div>
           {/* Subscription packages */}
           <div>
-            <h2 className="text-xl font-semibold text-white mb-4">Subscription Plans</h2>
+            <h2 className="text-xl font-semibold text-white mb-1">Subscription Plans</h2>
+            <p className="text-sm text-white/40 mb-4">Credits added automatically each billing cycle</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {subscriptionPackages.map((pkg, i) => renderPackageCard(pkg, i))}
             </div>
@@ -249,9 +307,14 @@ export default function CreditsPage() {
         </>
       ) : (
         <div>
-          <h2 className="text-xl font-semibold text-white mb-4">
+          <h2 className="text-xl font-semibold text-white mb-1">
             {paymentModel === "subscription" ? "Subscription Plans" : "Choose a Package"}
           </h2>
+          <p className="text-sm text-white/40 mb-4">
+            {paymentModel === "subscription"
+              ? "Credits added automatically each billing cycle"
+              : "Select a package below, then proceed to payment"}
+          </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {visiblePackages.map((pkg, i) => renderPackageCard(pkg, i))}
           </div>
@@ -314,7 +377,7 @@ export default function CreditsPage() {
       {/* Bank Transfer Modal */}
       {showBankModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="glass-card max-w-md w-full mx-4 p-6 space-y-5">
+          <div className="glass-card max-w-md w-full mx-4 p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-bold text-white">
                 Bank Transfer
@@ -326,6 +389,20 @@ export default function CreditsPage() {
                 &times;
               </button>
             </div>
+
+            {/* QR Code */}
+            {paymentInfo?.bank_qr_url && (
+              <div className="flex flex-col items-center gap-2">
+                <p className="text-sm text-white/50">Scan to pay via DuitNow</p>
+                <div className="rounded-xl bg-white p-3">
+                  <img
+                    src={paymentInfo.bank_qr_url}
+                    alt="DuitNow QR Code"
+                    className="w-48 h-48 object-contain"
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Bank Details */}
             <div className="rounded-lg bg-white/5 border border-white/10 p-4 space-y-2">
@@ -341,7 +418,7 @@ export default function CreditsPage() {
                 <p className="text-white/60 text-sm">DuitNow ID: {paymentInfo.bank_duitnow_id}</p>
               )}
               <div className="mt-2 pt-2 border-t border-white/10">
-                <p className="text-sm text-white/40">Amount</p>
+                <p className="text-sm text-white/40">Amount to transfer</p>
                 <p className="text-lg font-bold text-white">
                   {selectedPackage
                     ? formatPrice(
@@ -350,7 +427,19 @@ export default function CreditsPage() {
                       )
                     : "---"}
                 </p>
+                {selectedPackage && (
+                  <p className="text-xs text-emerald-400 mt-0.5">
+                    {formatCredits(selectedPackage.credits + selectedPackage.bonus_credits)} credits
+                  </p>
+                )}
               </div>
+            </div>
+
+            {/* Instructions */}
+            <div className="rounded-lg bg-amber-500/5 border border-amber-500/15 p-3">
+              <p className="text-xs text-amber-300/80">
+                After transferring, fill in your reference number and upload the payment screenshot below. Credits will be added once an admin approves your payment.
+              </p>
             </div>
 
             {/* Reference Number */}
