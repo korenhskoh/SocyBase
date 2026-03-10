@@ -3,7 +3,7 @@
   "name": "SocyBase Browser Operator",
   "version": "1.0.0",
   "description": "Lend a tab to SocyBase for AI-Scraping tasks on restricted Facebook pages",
-  "permissions": ["storage", "alarms", "cookies", "offscreen"],
+  "permissions": ["storage", "alarms", "cookies", "offscreen", "scripting"],
   "host_permissions": [
     "https://mbasic.facebook.com/*",
     "https://*.facebook.com/*"

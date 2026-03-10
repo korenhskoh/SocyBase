@@ -28,10 +28,29 @@ function parseCommentsFromHTML(html) {
   const comments = [];
   const seenIds = new Set();
 
-  let commentDivs = doc.querySelectorAll('[id^="ufi"] > div > div');
-  if (!commentDivs.length) commentDivs = doc.querySelectorAll('div[data-sigil="comment"]');
-  if (!commentDivs.length) commentDivs = doc.querySelectorAll("div.dw > div");
-  if (!commentDivs.length) commentDivs = doc.querySelectorAll("#root div > div > div");
+  // Debug: log page title and key structural info
+  const title = doc.querySelector("title")?.textContent || "(no title)";
+  const bodyText = doc.body?.textContent?.slice(0, 300) || "(no body)";
+  const allLinks = doc.querySelectorAll("a[href*='profile.php']");
+  console.log(`[SocyBase Parse] Title: ${title}`);
+  console.log(`[SocyBase Parse] Body preview: ${bodyText.replace(/\s+/g, " ").slice(0, 200)}`);
+  console.log(`[SocyBase Parse] Profile links found: ${allLinks.length}`);
+
+  // Debug: try each selector and log counts
+  const s1 = doc.querySelectorAll('[id^="ufi"] > div > div');
+  const s2 = doc.querySelectorAll('div[data-sigil="comment"]');
+  const s3 = doc.querySelectorAll("div.dw > div");
+  const s4 = doc.querySelectorAll("#root div > div > div");
+  const s5 = doc.querySelectorAll("div[id^='comment_']");
+  const s6 = doc.querySelectorAll("div.ec > div");
+  console.log(`[SocyBase Parse] Selectors: ufi=${s1.length} sigil=${s2.length} dw=${s3.length} root=${s4.length} comment_id=${s5.length} ec=${s6.length}`);
+
+  let commentDivs = s1;
+  if (!commentDivs.length) commentDivs = s2;
+  if (!commentDivs.length) commentDivs = s5;
+  if (!commentDivs.length) commentDivs = s6;
+  if (!commentDivs.length) commentDivs = s3;
+  if (!commentDivs.length) commentDivs = s4;
 
   for (const div of commentDivs) {
     try {
