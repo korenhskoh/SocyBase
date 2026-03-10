@@ -31,16 +31,21 @@ class FacebookGraphClient(AbstractSocialClient):
         """
         Parse Facebook post URL to extract post_id and determine type.
 
+        Always returns the SHORT post/video/reel ID as post_id — the AKNG
+        nested field expansion API returns pagination cursors only for short
+        IDs.  page_id is stored separately for the fallback chain.
+
         Supported URL formats:
         - https://facebook.com/{page}/posts/{id}
         - https://facebook.com/{page}/posts/pfbid...
-        - https://www.facebook.com/permalink.php?story_fbid={id}&id={page_id}
         - https://facebook.com/groups/{group_id}/posts/{post_id}
         - https://facebook.com/photo.php?fbid={id}
         - https://www.facebook.com/{page}/videos/{id}
         - https://www.facebook.com/reel/{id}
         - https://www.facebook.com/watch/?v={id}
-        - Direct post ID (pfbid...)
+        - https://fb.watch/{shortcode}
+        - https://www.facebook.com/permalink.php?story_fbid={id}&id={page_id}
+        - Direct post ID (pfbid... or numeric)
         """
         result = {"post_id": url, "is_group": False, "group_id": None, "page_id": None, "original_url": url}
 
@@ -120,17 +125,10 @@ class FacebookGraphClient(AbstractSocialClient):
             result["post_id"] = photo_match.group(1)
             return result
 
-        # watch/?v=... — video ID, comments may live on parent post
+        # watch/?v=... — short video ID works directly with AKNG
         watch_match = re.search(r"[?&]v=(\d+)", url)
         if watch_match:
             result["post_id"] = watch_match.group(1)
-            result["needs_post_id_resolve"] = True
-            return result
-
-        # reel/{id}
-        reel_match = re.search(r"/reel/(\d+)", url)
-        if reel_match:
-            result["post_id"] = reel_match.group(1)
             return result
 
         return result

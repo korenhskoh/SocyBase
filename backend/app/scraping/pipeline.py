@@ -365,32 +365,6 @@ async def _execute_pipeline(job_id: str, celery_task):
                         logger.warning(f"[Job {job_id}] Failed to fetch author profile: {author_err}")
                         await _append_log(db, job, "warn", "fetch_author", f"Failed to fetch author: {author_err}")
 
-                # ── STAGE 1.6: Resolve video/reel to parent post ID ────
-                # Video/reel object IDs don't have comments — comments live on
-                # the parent POST ({page_id}_{video_id}).  When page_id was a
-                # username the parser flags needs_post_id_resolve; now that we
-                # may have the numeric ID from the author-profile fetch, build
-                # the compound post ID.
-                if parsed.get("needs_post_id_resolve"):
-                    numeric_page_id = None
-                    # Try to get numeric ID from author profile
-                    if page_id:
-                        try:
-                            obj = await client.get_object_details(page_id, fields="id")
-                            numeric_page_id = obj.get("id")
-                        except Exception:
-                            pass
-                    if numeric_page_id:
-                        old_post_id = post_id
-                        post_id = f"{numeric_page_id}_{old_post_id}"
-                        logger.info(f"[Job {job_id}] Resolved video/reel ID → post ID: {post_id}")
-                        await _append_log(db, job, "info", "resolve_post_id",
-                            f"Resolved video ID {old_post_id} → post {post_id}")
-                    else:
-                        logger.warning(f"[Job {job_id}] Could not resolve page ID for video, trying raw ID {post_id}")
-                        await _append_log(db, job, "warn", "resolve_post_id",
-                            f"Could not resolve page ID, using raw video ID {post_id}")
-
                 # ── STAGE 2: Fetch comments (paginated) ─────────
                 # Check status before starting stage
                 current_status = await _check_job_status(db, job.id)
