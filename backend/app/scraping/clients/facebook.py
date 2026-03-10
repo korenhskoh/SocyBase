@@ -102,17 +102,16 @@ class FacebookGraphClient(AbstractSocialClient):
             return result
 
         # permalink.php?story_fbid=...
+        # Use the SHORT story_fbid as post_id — the AKNG nested field expansion
+        # API returns pagination cursors only for short IDs, not compound ones.
+        # page_id is stored separately for the fallback chain if needed.
         story_match = re.search(r"story_fbid=(\d+)", url)
         if story_match:
             story_fbid = story_match.group(1)
-            # Extract page ID from &id= parameter
+            result["post_id"] = story_fbid
             id_match = re.search(r"[?&]id=(\d+)", url)
             if id_match:
-                page_id = id_match.group(1)
-                result["post_id"] = f"{page_id}_{story_fbid}"
-                result["page_id"] = page_id
-            else:
-                result["post_id"] = story_fbid
+                result["page_id"] = id_match.group(1)
             return result
 
         # pfbid format in URL
