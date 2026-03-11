@@ -13,6 +13,8 @@ Mirrors the webapp flow:
 
 import logging
 import re
+import time
+from collections import defaultdict
 
 from telegram import (
     Update,
@@ -44,6 +46,27 @@ from app.services import traffic_bot_service as tb_svc
 from app.utils.security import decode_token
 
 logger = logging.getLogger(__name__)
+
+# ═══════════════════════════════════════════════════════════════════════
+# ── RATE LIMITING ────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+
+_rate_limits: dict[str, list[float]] = defaultdict(list)
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_MAX = 10  # max commands per window
+
+
+def _is_rate_limited(chat_id: str) -> bool:
+    """Check if a chat_id has exceeded the rate limit. Returns True if limited."""
+    now = time.time()
+    timestamps = _rate_limits[chat_id]
+    # Prune old entries
+    _rate_limits[chat_id] = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
+    if len(_rate_limits[chat_id]) >= RATE_LIMIT_MAX:
+        return True
+    _rate_limits[chat_id].append(now)
+    return False
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # ── LANGUAGE / i18n ──────────────────────────────────────────────────
@@ -147,6 +170,10 @@ T: dict[str, dict[str, str]] = {
     "session_expired_tborder": {
         "en": "Session expired. Use /tborder to start over.",
         "zh": "会话已过期。请使用 /tborder 重新开始。",
+    },
+    "rate_limited": {
+        "en": "\u23F3 Too many requests. Please wait a moment and try again.",
+        "zh": "\u23F3 请求过于频繁，请稍后再试。",
     },
     "op_cancelled": {
         "en": "\u274C Operation cancelled.",
@@ -1271,28 +1298,34 @@ async def unlink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /jobs ────────────────────────────────────────────────────────────────
 
+JOBS_PAGE_SIZE = 5
 
-async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """List recent scraping jobs."""
-    lang = _lang(context)
-    user = await _require_user(update, context)
-    if not user:
-        return
 
+async def _build_jobs_page(user_id, lang: str, page: int = 0):
+    """Build jobs list text + buttons for a given page. Returns (text, markup, has_jobs)."""
     async with async_session() as db:
+        # Get total count
+        total = (await db.execute(
+            select(func.count(ScrapingJob.id)).where(ScrapingJob.user_id == user_id)
+        )).scalar() or 0
+
         result = await db.execute(
             select(ScrapingJob)
-            .where(ScrapingJob.user_id == user.id)
+            .where(ScrapingJob.user_id == user_id)
             .order_by(ScrapingJob.created_at.desc())
-            .limit(5)
+            .offset(page * JOBS_PAGE_SIZE)
+            .limit(JOBS_PAGE_SIZE)
         )
         jobs = result.scalars().all()
 
     if not jobs:
-        await update.message.reply_text(_t(lang, "jobs_empty"))
-        return
+        return None, None, False
 
+    total_pages = max(1, (total + JOBS_PAGE_SIZE - 1) // JOBS_PAGE_SIZE)
     lines = [_t(lang, "jobs_header")]
+    if total_pages > 1:
+        lines[0] += f" ({page + 1}/{total_pages})"
+
     buttons = []
     for job in jobs:
         icon = STATUS_ICONS.get(job.status, "\u26AA")
@@ -1310,15 +1343,35 @@ async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ])
 
+    # Pagination buttons
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("\u25C0 Prev", callback_data=f"jobs:page:{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next \u25B6", callback_data=f"jobs:page:{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
     buttons.append([
         InlineKeyboardButton(_t(lang, "btn_new_job"), callback_data="newjob:start"),
     ])
 
-    await update.message.reply_text(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
+    return "\n".join(lines), InlineKeyboardMarkup(buttons), True
+
+
+async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List recent scraping jobs."""
+    lang = _lang(context)
+    user = await _require_user(update, context)
+    if not user:
+        return
+
+    text, markup, has_jobs = await _build_jobs_page(user.id, lang, page=0)
+    if not has_jobs:
+        await update.message.reply_text(_t(lang, "jobs_empty"))
+        return
+
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
 
 
 # ── /credits ─────────────────────────────────────────────────────────────
@@ -1547,6 +1600,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     lang = _lang(context)
 
+    # Rate limit check
+    chat_id = str(query.from_user.id)
+    if _is_rate_limited(chat_id):
+        await query.edit_message_text(
+            _t(lang, "rate_limited"),
+            parse_mode="HTML",
+        )
+        return
+
     # ── Language selection ────────────────────────────────────────
     if data.startswith("lang:"):
         new_lang = data.split(":", 1)[1]
@@ -1596,51 +1658,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_job_action_buttons(job, lang),
         )
 
-    # ── Back to jobs list ────────────────────────────────────────
-    elif data == "back:jobs":
+    # ── Back to jobs list / pagination ──────────────────────────
+    elif data == "back:jobs" or data.startswith("jobs:page:"):
         user = await _get_user_by_chat_id(str(query.from_user.id))
         if not user:
             return
 
-        async with async_session() as db:
-            result = await db.execute(
-                select(ScrapingJob)
-                .where(ScrapingJob.user_id == user.id)
-                .order_by(ScrapingJob.created_at.desc())
-                .limit(5)
-            )
-            jobs = result.scalars().all()
+        page = 0
+        if data.startswith("jobs:page:"):
+            try:
+                page = int(data.split(":")[2])
+            except (IndexError, ValueError):
+                page = 0
 
-        if not jobs:
+        text, markup, has_jobs = await _build_jobs_page(user.id, lang, page=page)
+        if not has_jobs:
             await query.edit_message_text(_t(lang, "jobs_empty_short"))
             return
 
-        lines = [_t(lang, "jobs_header")]
-        buttons = []
-        for job in jobs:
-            icon = STATUS_ICONS.get(job.status, "\u26AA")
-            short_id = str(job.id)[:8]
-            pct = float(job.progress_pct or 0)
-            jtype = "Discovery" if job.job_type == "post_discovery" else "Comments"
-            lines.append(
-                f"{icon} <code>{short_id}</code> {jtype} \u2014 {job.status} "
-                f"({job.processed_items or 0}/{job.total_items or '?'} \u00B7 {pct:.0f}%)"
-            )
-            buttons.append([
-                InlineKeyboardButton(
-                    f"{icon} {short_id}... \u2014 {jtype}",
-                    callback_data=f"job:{job.id}",
-                )
-            ])
-        buttons.append([
-            InlineKeyboardButton(_t(lang, "btn_new_job"), callback_data="newjob:start"),
-        ])
-
-        await query.edit_message_text(
-            "\n".join(lines),
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(buttons),
-        )
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
     # ── Job actions (pause, cancel, resume) ──────────────────────
     elif data.startswith("action:"):
@@ -2362,6 +2398,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text messages — keyboard buttons and text input during flows."""
     text = (update.message.text or "").strip()
     lang = _lang(context)
+
+    # Rate limit check
+    chat_id = str(update.effective_user.id)
+    if _is_rate_limited(chat_id):
+        await update.message.reply_text(_t(lang, "rate_limited"), parse_mode="HTML")
+        return
 
     # ── Handle persistent keyboard button presses (both EN/ZH) ──
     cmd = _KB_COMMANDS.get(text)

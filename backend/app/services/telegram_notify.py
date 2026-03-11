@@ -172,6 +172,84 @@ async def send_admin_error_alert(
         logger.warning(f"Failed to send admin error alert: {e}")
 
 
+async def send_credit_warning_notification(
+    chat_id: str, balance_after: int, credits_used: int, job=None,
+    bot_token: str | None = None,
+) -> None:
+    """Send a Telegram warning when credit balance drops below threshold."""
+    token = bot_token or await get_telegram_bot_token()
+    if not token:
+        return
+
+    if balance_after == 0:
+        icon = "\U0001F6A8"
+        title = "Credits Depleted!"
+        body = "Your credit balance has reached <b>0</b>. New scraping jobs will fail until you top up."
+    elif balance_after < 50:
+        icon = "\u26A0\uFE0F"
+        title = "Low Credit Balance"
+        body = f"Your balance is now <b>{balance_after:,}</b> credits. Consider topping up to avoid job interruptions."
+    else:
+        return  # No warning needed
+
+    job_line = ""
+    if job:
+        short_id = str(job.id)[:8]
+        job_line = f"\n<b>After job:</b> <code>{short_id}...</code> (used {credits_used:,} credits)"
+
+    text = f"{icon} <b>{title}</b>\n{job_line}\n\n{body}"
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(url, json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+            })
+    except Exception as e:
+        logger.warning(f"Failed to send credit warning to {chat_id}: {e}")
+
+
+async def send_job_started_notification(
+    chat_id: str, job, bot_token: str | None = None
+) -> None:
+    """Send a Telegram message when a scraping job starts running."""
+    token = bot_token or await get_telegram_bot_token()
+    if not token:
+        return
+
+    short_id = str(job.id)[:8]
+    jtype = "Discovery" if getattr(job, "job_type", None) == "post_discovery" else "Comments"
+    input_val = getattr(job, "input_value", "N/A") or "N/A"
+    if len(input_val) > 60:
+        input_val = input_val[:57] + "..."
+
+    text = (
+        f"\U0001F680 <b>Job Started</b>\n\n"
+        f"<b>Job:</b> <code>{short_id}...</code> ({jtype})\n"
+        f"<b>Input:</b> {input_val}\n\n"
+        f"You'll be notified when it completes."
+    )
+    reply_markup = {
+        "inline_keyboard": [
+            [{"text": "\U0001F4CA View Details", "callback_data": f"job:{job.id}"}],
+        ]
+    }
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(url, json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "reply_markup": json.dumps(reply_markup),
+            })
+    except Exception as e:
+        logger.warning(f"Failed to send job started notification to {chat_id}: {e}")
+
+
 async def send_tb_order_notification(
     chat_id: str, order, service_name: str, bot_token: str | None = None
 ) -> None:

@@ -290,6 +290,25 @@ async def _execute_pipeline(job_id: str, celery_task):
             # Publish initial "running" state to SSE subscribers
             publish_job_progress(str(job.id), _build_progress_event(job, "start"))
 
+            # Send Telegram "job started" notification
+            try:
+                from app.services.tenant_config import get_telegram_config
+                from app.services.telegram_notify import send_job_started_notification
+
+                tg_config = await get_telegram_config(db, job.tenant_id)
+                token = tg_config["bot_token"]
+
+                user_result = await db.execute(
+                    select(User).where(User.id == job.user_id)
+                )
+                job_user = user_result.scalar_one_or_none()
+                if job_user and job_user.telegram_chat_id:
+                    await send_job_started_notification(
+                        job_user.telegram_chat_id, job, bot_token=token
+                    )
+            except Exception as notify_err:
+                logger.warning(f"[Job {job_id}] Job started notification failed: {notify_err}")
+
             # Read job settings
             job_settings = job.settings or {}
             profile_retry_count = min(int(job_settings.get("profile_retry_count", 2)), 3)
@@ -1101,6 +1120,17 @@ async def _execute_pipeline(job_id: str, celery_task):
                         await send_job_completion_notification(
                             tenant_chat_id, job, bot_token=token
                         )
+                    # Send credit warning if balance is low after deduction
+                    if balance and balance.balance < 50 and job_user and job_user.telegram_chat_id:
+                        from app.services.telegram_notify import send_credit_warning_notification
+                        await send_credit_warning_notification(
+                            job_user.telegram_chat_id,
+                            balance_after=balance.balance,
+                            credits_used=credits_used,
+                            job=job,
+                            bot_token=token,
+                        )
+
                 except Exception as notify_err:
                     logger.warning(f"[Job {job_id}] Telegram notification failed: {notify_err}")
 
