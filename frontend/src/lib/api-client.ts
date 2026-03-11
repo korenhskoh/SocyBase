@@ -155,7 +155,7 @@ export const exportApi = {
     api.get(`/export/${jobId}/facebook-ads`, { responseType: "blob" }),
   downloadXlsx: (jobId: string) =>
     api.get(`/export/${jobId}/xlsx`, { responseType: "blob" }),
-  batchExport: (data: { job_ids: string[]; format?: string }) =>
+  batchExport: (data: { job_ids: string[]; format?: string; mode?: string }) =>
     api.post("/export/batch", data, { responseType: "blob" }),
 };
 

@@ -261,15 +261,25 @@ export default function JobsPage() {
   };
 
   /* ── Batch export ── */
-  const handleBatchExport = async () => {
+  const handleBatchExport = async (mode: "combined" | "individual") => {
     const completedIds = selectedArr.filter((id) => {
       const j = jobs.find((job) => job.id === id);
       return j && j.status === "completed" && j.result_row_count > 0;
     });
     if (completedIds.length === 0) return;
     try {
-      const res = await exportApi.batchExport({ job_ids: completedIds, format: "csv" });
-      downloadBlob(res.data, "application/zip", "socybase_batch_export.zip");
+      const res = await exportApi.batchExport({ job_ids: completedIds, format: "csv", mode });
+      if (mode === "combined") {
+        // Combined mode returns a single CSV (or ZIP if mixed types)
+        const contentType = res.headers?.["content-type"] || "";
+        if (contentType.includes("text/csv")) {
+          downloadBlob(res.data, "text/csv", "socybase_combined_export.csv");
+        } else {
+          downloadBlob(res.data, "application/zip", "socybase_combined_export.zip");
+        }
+      } else {
+        downloadBlob(res.data, "application/zip", "socybase_batch_export.zip");
+      }
     } catch {
       setActionError("Batch export failed");
     }
@@ -497,15 +507,26 @@ export default function JobsPage() {
           )}
 
           {canBatchExport && (
-            <button
-              onClick={handleBatchExport}
-              className="flex items-center gap-1.5 rounded-lg bg-teal-500/10 border border-teal-500/20 px-3 py-1.5 text-xs font-medium text-teal-400 hover:bg-teal-500/20 transition"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-              </svg>
-              Export ZIP
-            </button>
+            <>
+              <button
+                onClick={() => handleBatchExport("combined")}
+                className="flex items-center gap-1.5 rounded-lg bg-teal-500/10 border border-teal-500/20 px-3 py-1.5 text-xs font-medium text-teal-400 hover:bg-teal-500/20 transition"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                Export CSV
+              </button>
+              <button
+                onClick={() => handleBatchExport("individual")}
+                className="flex items-center gap-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 px-3 py-1.5 text-xs font-medium text-cyan-400 hover:bg-cyan-500/20 transition"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0l-3-3m3 3l3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+                </svg>
+                Export ZIP
+              </button>
+            </>
           )}
 
           {canBatchAudience && (

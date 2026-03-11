@@ -340,6 +340,7 @@ async def export_xlsx(
 class BatchExportRequest(BaseModel):
     job_ids: list[str] = Field(..., min_length=1, max_length=50)
     format: str = Field(default="csv", pattern="^(csv|xlsx)$")
+    mode: str = Field(default="individual", pattern="^(individual|combined)$")
 
 
 def _generate_csv_bytes(profiles, author) -> bytes:
@@ -402,50 +403,96 @@ async def batch_export(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Export multiple jobs as a ZIP file containing individual CSV/XLSX files."""
-    zip_buffer = io.BytesIO()
+    """Export multiple jobs. mode=individual -> ZIP of CSVs, mode=combined -> single merged CSV."""
 
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for jid_str in data.job_ids:
-            try:
-                jid = UUID(jid_str)
-            except ValueError:
-                continue
+    # Collect jobs and their data
+    jobs_data: list[tuple] = []  # (job, author, profiles_or_posts)
+    for jid_str in data.job_ids:
+        try:
+            jid = UUID(jid_str)
+        except ValueError:
+            continue
 
-            job_result = await db.execute(
-                select(ScrapingJob).where(
-                    ScrapingJob.id == jid,
-                    ScrapingJob.tenant_id == user.tenant_id,
-                )
+        job_result = await db.execute(
+            select(ScrapingJob).where(
+                ScrapingJob.id == jid,
+                ScrapingJob.tenant_id == user.tenant_id,
             )
-            job = job_result.scalar_one_or_none()
-            if not job:
-                continue
+        )
+        job = job_result.scalar_one_or_none()
+        if not job:
+            continue
 
-            author = await _get_author(db, jid)
-            # Determine a short label for the filename
-            label = (job.input_value or str(jid))[:40].replace("/", "_").replace("\\", "_").replace(":", "")
+        author = await _get_author(db, jid)
 
-            if job.job_type == "post_discovery":
-                result = await db.execute(
-                    select(ScrapedPost).where(ScrapedPost.job_id == jid)
-                    .order_by(ScrapedPost.created_time.desc().nulls_last())
-                )
-                posts = result.scalars().all()
-                csv_bytes = _generate_post_csv_bytes(posts, author)
-                zf.writestr(f"{label}_{str(jid)[:8]}.csv", csv_bytes)
+        if job.job_type == "post_discovery":
+            result = await db.execute(
+                select(ScrapedPost).where(ScrapedPost.job_id == jid)
+                .order_by(ScrapedPost.created_time.desc().nulls_last())
+            )
+            posts = result.scalars().all()
+            jobs_data.append((job, author, posts, "posts"))
+        else:
+            result = await db.execute(
+                select(ScrapedProfile)
+                .where(ScrapedProfile.job_id == jid, ScrapedProfile.scrape_status == "success")
+            )
+            profiles = result.scalars().all()
+            jobs_data.append((job, author, profiles, "profiles"))
+
+    if data.mode == "combined":
+        # Merge all profiles into one CSV (posts go into a separate section if mixed)
+        all_profiles = []
+        all_posts = []
+        for job, author, items, kind in jobs_data:
+            if kind == "profiles":
+                all_profiles.extend(items)
             else:
-                result = await db.execute(
-                    select(ScrapedProfile)
-                    .where(ScrapedProfile.job_id == jid, ScrapedProfile.scrape_status == "success")
-                )
-                profiles = result.scalars().all()
-                csv_bytes = _generate_csv_bytes(profiles, author)
-                zf.writestr(f"{label}_{str(jid)[:8]}.csv", csv_bytes)
+                all_posts.extend(items)
 
-    zip_buffer.seek(0)
-    return StreamingResponse(
-        iter([zip_buffer.getvalue()]),
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=socybase_batch_export.zip"},
-    )
+        if all_profiles and not all_posts:
+            csv_bytes = _generate_csv_bytes(all_profiles, None)
+            return StreamingResponse(
+                iter([csv_bytes]),
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=socybase_combined_export.csv"},
+            )
+        elif all_posts and not all_profiles:
+            csv_bytes = _generate_post_csv_bytes(all_posts, None)
+            return StreamingResponse(
+                iter([csv_bytes]),
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=socybase_combined_export.csv"},
+            )
+        else:
+            # Mixed: profiles CSV + posts CSV in a ZIP
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                if all_profiles:
+                    zf.writestr("all_profiles.csv", _generate_csv_bytes(all_profiles, None))
+                if all_posts:
+                    zf.writestr("all_posts.csv", _generate_post_csv_bytes(all_posts, None))
+            zip_buffer.seek(0)
+            return StreamingResponse(
+                iter([zip_buffer.getvalue()]),
+                media_type="application/zip",
+                headers={"Content-Disposition": "attachment; filename=socybase_combined_export.zip"},
+            )
+    else:
+        # Individual mode: ZIP with separate CSV per job
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for job, author, items, kind in jobs_data:
+                label = (job.input_value or str(job.id))[:40].replace("/", "_").replace("\\", "_").replace(":", "")
+                if kind == "posts":
+                    csv_bytes = _generate_post_csv_bytes(items, author)
+                else:
+                    csv_bytes = _generate_csv_bytes(items, author)
+                zf.writestr(f"{label}_{str(job.id)[:8]}.csv", csv_bytes)
+
+        zip_buffer.seek(0)
+        return StreamingResponse(
+            iter([zip_buffer.getvalue()]),
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=socybase_batch_export.zip"},
+        )
