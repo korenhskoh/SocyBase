@@ -1537,3 +1537,62 @@ async def update_tutorial_videos(
 
     await db.commit()
     return merged
+
+
+# ── Promo Banner Settings ──────────────────────────────────────────────
+
+PROMO_BANNERS_KEY = "promo_banners"
+
+
+class PromoBannerUpdate(BaseModel):
+    image_url: str | None = None
+    video_url: str | None = None
+    link_url: str | None = None
+    is_active: bool = True
+    position: str = "bottom"  # "bottom" or "progress"
+    title: str | None = None
+
+
+@router.get("/promo-banners")
+async def get_promo_banners(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all promo banners."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == PROMO_BANNERS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {"banners": []}
+    return {"banners": setting.value.get("banners", [])}
+
+
+@router.put("/promo-banners")
+async def update_promo_banners(
+    data: dict,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace all promo banners (admin sends full list)."""
+    banners = data.get("banners", [])
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == PROMO_BANNERS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+
+    value = {"banners": banners}
+    if setting:
+        setting.value = value
+        setting.updated_by = admin.id
+    else:
+        setting = SystemSetting(
+            key=PROMO_BANNERS_KEY,
+            value=value,
+            description="Promotional banners for dashboard",
+            updated_by=admin.id,
+        )
+        db.add(setting)
+
+    await db.commit()
+    return {"banners": banners}

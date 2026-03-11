@@ -127,3 +127,17 @@ async def get_tutorial_videos(db: AsyncSession = Depends(get_db)):
         "comment_scraper_url": data.get("comment_scraper_url", ""),
         "post_discovery_url": data.get("post_discovery_url", ""),
     }
+
+
+@router.get("/promo-banners")
+async def get_promo_banners(db: AsyncSession = Depends(get_db)):
+    """Public endpoint: returns active promo banners for dashboard display."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "promo_banners")
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {"banners": []}
+    all_banners = setting.value.get("banners", [])
+    active = [b for b in all_banners if b.get("is_active", True)]
+    return {"banners": active}

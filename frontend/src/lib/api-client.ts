@@ -128,6 +128,7 @@ export const creditsApi = {
   getPublicConfig: () => api.get("/credits/public-config"),
   getWhatsappContact: () => api.get("/credits/whatsapp-contact"),
   getTutorialVideos: () => api.get("/credits/tutorial-videos"),
+  getPromoBanners: () => api.get("/credits/promo-banners"),
 };
 
 // Payments API
@@ -318,6 +319,16 @@ export const adminApi = {
     comment_scraper_url?: string;
     post_discovery_url?: string;
   }) => api.put("/admin/tutorial-videos", data),
+  // Promo banner settings
+  getPromoBanners: () => api.get("/admin/promo-banners"),
+  updatePromoBanners: (banners: Array<{
+    image_url?: string;
+    video_url?: string;
+    link_url?: string;
+    is_active?: boolean;
+    position?: string;
+    title?: string;
+  }>) => api.put("/admin/promo-banners", { banners }),
 };
 
 // Telegram API

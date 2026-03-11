@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { jobsApi, exportApi, fanAnalysisApi, fbAdsApi } from "@/lib/api-client";
+import { PromoBannerProgress } from "@/components/layout/PromoBanner";
 import { formatDate, formatNumber, getStatusColor, downloadBlob } from "@/lib/utils";
 import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile, FanEngagementMetrics } from "@/types";
 
@@ -684,7 +685,7 @@ export default function JobDetailPage() {
       )}
 
       {/* Progress Card */}
-      {(job.status === "running" || job.status === "queued") && (
+      {(job.status === "running" || job.status === "queued") && (<>
         <div className="glass-card p-6 relative overflow-hidden">
           {/* Animated background shimmer */}
           <div className="absolute inset-0 opacity-[0.03]">
@@ -873,7 +874,9 @@ export default function JobDetailPage() {
             );
           })()}
         </div>
-      )}
+        {/* Promo banner shown during active jobs */}
+        <PromoBannerProgress />
+      </>)}
 
       {/* Stats */}
       {(() => {

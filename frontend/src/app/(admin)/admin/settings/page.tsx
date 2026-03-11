@@ -82,6 +82,22 @@ export default function AdminSettingsPage() {
   const [tutSaving, setTutSaving] = useState(false);
   const [tutMessage, setTutMessage] = useState("");
 
+  // Promo banner settings
+  interface PromoBanner {
+    image_url?: string;
+    video_url?: string;
+    link_url?: string;
+    is_active: boolean;
+    position: string;
+    title?: string;
+  }
+  const [banners, setBanners] = useState<PromoBanner[]>([]);
+  const [bannerSaving, setBannerSaving] = useState(false);
+  const [bannerMessage, setBannerMessage] = useState("");
+  const [bannerUploading, setBannerUploading] = useState<number | null>(null);
+  const bannerFileRef = useRef<HTMLInputElement>(null);
+  const [uploadTargetIdx, setUploadTargetIdx] = useState<number | null>(null);
+
   useEffect(() => {
     if (user?.role === "super_admin") {
       Promise.all([
@@ -142,6 +158,9 @@ export default function AdminSettingsPage() {
           if (d.comment_scraper_url) setTutCommentUrl(d.comment_scraper_url);
           if (d.post_discovery_url) setTutDiscoveryUrl(d.post_discovery_url);
         }).catch(() => {}),
+        adminApi.getPromoBanners().then((r) => {
+          if (r.data.banners) setBanners(r.data.banners);
+        }).catch(() => {}),
       ]).finally(() => setLoading(false));
     }
   }, [user]);
@@ -159,6 +178,45 @@ export default function AdminSettingsPage() {
       setTutMessage("Failed to save tutorial videos");
     } finally {
       setTutSaving(false);
+    }
+  };
+
+  const handleSaveBanners = async () => {
+    setBannerSaving(true);
+    setBannerMessage("");
+    try {
+      await adminApi.updatePromoBanners(banners);
+      setBannerMessage("Banners saved successfully!");
+    } catch {
+      setBannerMessage("Failed to save banners");
+    } finally {
+      setBannerSaving(false);
+    }
+  };
+
+  const addBanner = () => {
+    setBanners([...banners, { is_active: true, position: "bottom", title: "" }]);
+  };
+
+  const removeBanner = (idx: number) => {
+    setBanners(banners.filter((_, i) => i !== idx));
+  };
+
+  const updateBanner = (idx: number, field: string, value: string | boolean) => {
+    const updated = [...banners];
+    updated[idx] = { ...updated[idx], [field]: value };
+    setBanners(updated);
+  };
+
+  const handleBannerImageUpload = async (idx: number, file: File) => {
+    setBannerUploading(idx);
+    try {
+      const res = await uploadsApi.uploadProof(file);
+      updateBanner(idx, "image_url", res.data.proof_url);
+    } catch {
+      setBannerMessage("Failed to upload image");
+    } finally {
+      setBannerUploading(null);
     }
   };
 
@@ -991,6 +1049,156 @@ export default function AdminSettingsPage() {
             className="btn-glow w-full py-3 disabled:opacity-50"
           >
             {tutSaving ? "Saving..." : "Save Tutorial Videos"}
+          </button>
+
+          {/* Promo Banners */}
+          <div className="glass-card p-6 space-y-4 mt-8">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-amber-500/10 border border-amber-500/20">
+                  <svg className="h-5 w-5 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Promo Banners</h2>
+                  <p className="text-sm text-white/40">Image or video banners shown to users</p>
+                </div>
+              </div>
+              <button onClick={addBanner} className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 transition">
+                + Add Banner
+              </button>
+            </div>
+
+            {banners.length === 0 && (
+              <p className="text-sm text-white/30 text-center py-4">No banners configured. Click &quot;Add Banner&quot; to create one.</p>
+            )}
+
+            {banners.map((banner, idx) => (
+              <div key={idx} className="rounded-xl bg-white/[0.02] border border-white/10 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-white/70">Banner {idx + 1}</span>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-xs text-white/50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={banner.is_active}
+                        onChange={(e) => updateBanner(idx, "is_active", e.target.checked)}
+                        className="rounded border-white/20 bg-white/5"
+                      />
+                      Active
+                    </label>
+                    <button onClick={() => removeBanner(idx)} className="text-xs text-red-400/70 hover:text-red-400 transition">Remove</button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/60 mb-1">Title (optional)</label>
+                  <input
+                    type="text"
+                    value={banner.title || ""}
+                    onChange={(e) => updateBanner(idx, "title", e.target.value)}
+                    placeholder="e.g. Special Offer!"
+                    className="input-glass text-sm"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-white/60 mb-1">Position</label>
+                    <select
+                      value={banner.position}
+                      onChange={(e) => updateBanner(idx, "position", e.target.value)}
+                      className="input-glass text-sm w-full"
+                    >
+                      <option value="bottom">Floating Bottom Bar</option>
+                      <option value="progress">Job Progress View</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/60 mb-1">Click URL (optional)</label>
+                    <input
+                      type="text"
+                      value={banner.link_url || ""}
+                      onChange={(e) => updateBanner(idx, "link_url", e.target.value)}
+                      placeholder="https://..."
+                      className="input-glass text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/60 mb-1">Image</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={banner.image_url || ""}
+                      onChange={(e) => updateBanner(idx, "image_url", e.target.value)}
+                      placeholder="Image URL or upload"
+                      className="input-glass text-sm flex-1"
+                    />
+                    <button
+                      onClick={() => { setUploadTargetIdx(idx); bannerFileRef.current?.click(); }}
+                      disabled={bannerUploading === idx}
+                      className="text-xs px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 transition shrink-0 disabled:opacity-50"
+                    >
+                      {bannerUploading === idx ? "Uploading..." : "Upload"}
+                    </button>
+                  </div>
+                  {banner.image_url && (
+                    <img src={banner.image_url} alt="Preview" className="mt-2 h-16 rounded-lg object-contain border border-white/10" />
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/60 mb-1">Video URL (optional, YouTube or embed link)</label>
+                  <input
+                    type="text"
+                    value={banner.video_url || ""}
+                    onChange={(e) => updateBanner(idx, "video_url", e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    className="input-glass text-sm"
+                  />
+                </div>
+              </div>
+            ))}
+
+            <div className="rounded-lg bg-amber-500/5 border border-amber-500/15 p-3">
+              <p className="text-xs text-amber-300/80">
+                <b>Floating Bottom Bar:</b> Shows as a sticky banner at the bottom of all dashboard pages. Users can dismiss it.<br />
+                <b>Job Progress View:</b> Shows inside the job detail page while a scraping job is running.
+              </p>
+            </div>
+          </div>
+
+          {/* Hidden file input for banner image uploads */}
+          <input
+            ref={bannerFileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && uploadTargetIdx !== null) {
+                handleBannerImageUpload(uploadTargetIdx, file);
+              }
+              e.target.value = "";
+            }}
+          />
+
+          {/* Save Promo Banners */}
+          {bannerMessage && (
+            <p className={`text-sm ${bannerMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+              {bannerMessage}
+            </p>
+          )}
+
+          <button
+            onClick={handleSaveBanners}
+            disabled={bannerSaving}
+            className="btn-glow w-full py-3 disabled:opacity-50"
+          >
+            {bannerSaving ? "Saving..." : "Save Promo Banners"}
           </button>
         </>
       )}
