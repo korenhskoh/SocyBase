@@ -1596,3 +1596,53 @@ async def update_promo_banners(
 
     await db.commit()
     return {"banners": banners}
+
+
+# ── Messenger Template Settings ──────────────────────────────────────────
+
+MESSENGER_TEMPLATES_KEY = "messenger_templates"
+
+
+@router.get("/messenger-templates")
+async def get_messenger_templates(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all messenger templates."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == MESSENGER_TEMPLATES_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {"templates": []}
+    return {"templates": setting.value.get("templates", [])}
+
+
+@router.put("/messenger-templates")
+async def update_messenger_templates(
+    data: dict,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace all messenger templates (admin sends full list)."""
+    templates = data.get("templates", [])
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == MESSENGER_TEMPLATES_KEY)
+    )
+    setting = result.scalar_one_or_none()
+
+    value = {"templates": templates}
+    if setting:
+        setting.value = value
+        setting.updated_by = admin.id
+    else:
+        setting = SystemSetting(
+            key=MESSENGER_TEMPLATES_KEY,
+            value=value,
+            description="Messenger message templates for profile outreach",
+            updated_by=admin.id,
+        )
+        db.add(setting)
+
+    await db.commit()
+    return {"templates": templates}

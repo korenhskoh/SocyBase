@@ -12,16 +12,23 @@ interface Banner {
   title?: string;
 }
 
-function getYouTubeEmbedUrl(url: string): string | null {
+function getYouTubeEmbedUrl(url: string, autoplay = false): string | null {
   try {
     const u = new URL(url);
+    let videoId: string | null = null;
     if (u.hostname.includes("youtube.com") && u.searchParams.get("v")) {
-      return `https://www.youtube.com/embed/${u.searchParams.get("v")}`;
+      videoId = u.searchParams.get("v");
+    } else if (u.hostname === "youtu.be") {
+      videoId = u.pathname.slice(1);
+    } else if (u.pathname.includes("/embed/")) {
+      videoId = u.pathname.split("/embed/")[1]?.split(/[?/]/)[0] || null;
     }
-    if (u.hostname === "youtu.be") {
-      return `https://www.youtube.com/embed${u.pathname}`;
+    if (!videoId) return null;
+    const base = `https://www.youtube.com/embed/${videoId}`;
+    if (autoplay) {
+      return `${base}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&showinfo=0&rel=0`;
     }
-    if (u.pathname.includes("/embed/")) return url;
+    return base;
   } catch {}
   return null;
 }
@@ -52,8 +59,10 @@ export function PromoBannerFloat() {
   if (!banner) return null;
 
   const embedUrl = banner.video_url ? getYouTubeEmbedUrl(banner.video_url) : null;
+  const autoplayEmbedUrl = banner.video_url ? getYouTubeEmbedUrl(banner.video_url, true) : null;
+  const hasVideo = !!embedUrl;
 
-  const content = (
+  const textContent = (
     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
       {banner.image_url && (
         <img
@@ -66,10 +75,11 @@ export function PromoBannerFloat() {
         {banner.title && (
           <p className="text-xs sm:text-sm font-semibold text-white leading-snug line-clamp-2">{banner.title}</p>
         )}
+        {/* Mobile only: Watch video toggle */}
         {banner.video_url && (
           <button
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpandedVideo(expandedVideo === bannerIdx ? null : bannerIdx); }}
-            className="text-[11px] sm:text-xs text-primary-400 hover:text-primary-300 transition mt-0.5 sm:mt-1"
+            className="sm:hidden text-[11px] text-primary-400 hover:text-primary-300 transition mt-0.5"
           >
             {expandedVideo === bannerIdx ? "Hide video" : "Watch video"}
           </button>
@@ -91,7 +101,7 @@ export function PromoBannerFloat() {
           visible ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"
         }`}
       >
-        <div className="pointer-events-auto max-w-2xl mx-auto rounded-xl bg-navy-800/95 backdrop-blur-lg border border-primary-500/20 shadow-[0_0_20px_rgba(99,102,241,0.1)] p-2.5 sm:p-3.5 relative">
+        <div className={`pointer-events-auto ${hasVideo ? "max-w-3xl" : "max-w-2xl"} mx-auto rounded-xl bg-navy-800/95 backdrop-blur-lg border border-primary-500/20 shadow-[0_0_20px_rgba(99,102,241,0.1)] p-2.5 sm:p-3.5 relative`}>
           {/* Dismiss button — top-left, inset on mobile so it doesn't clip */}
           <button
             onClick={() => { const s = new Set(Array.from(dismissed)); s.add(bannerIdx); setDismissed(s); setVisible(false); }}
@@ -102,25 +112,51 @@ export function PromoBannerFloat() {
             </svg>
           </button>
 
-          {banner.link_url ? (
-            <a href={banner.link_url} target="_blank" rel="noopener noreferrer" className="block">
-              {content}
-            </a>
-          ) : (
-            content
-          )}
-
-          {/* Expanded video */}
-          {expandedVideo === bannerIdx && embedUrl && (
-            <div className="mt-2 sm:mt-3 rounded-lg overflow-hidden aspect-video">
-              <iframe
-                src={embedUrl}
-                className="w-full h-full"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
+          {/* Desktop layout: text + inline video side-by-side */}
+          <div className="hidden sm:flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              {banner.link_url ? (
+                <a href={banner.link_url} target="_blank" rel="noopener noreferrer" className="block">
+                  {textContent}
+                </a>
+              ) : (
+                textContent
+              )}
             </div>
-          )}
+            {hasVideo && autoplayEmbedUrl && (
+              <div className="shrink-0 w-48 aspect-video rounded-lg overflow-hidden">
+                <iframe
+                  src={autoplayEmbedUrl}
+                  className="w-full h-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Mobile layout: text + expandable video below */}
+          <div className="sm:hidden">
+            {banner.link_url ? (
+              <a href={banner.link_url} target="_blank" rel="noopener noreferrer" className="block">
+                {textContent}
+              </a>
+            ) : (
+              textContent
+            )}
+
+            {/* Mobile expanded video */}
+            {expandedVideo === bannerIdx && embedUrl && (
+              <div className="mt-2 rounded-lg overflow-hidden aspect-video">
+                <iframe
+                  src={embedUrl}
+                  className="w-full h-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </>

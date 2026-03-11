@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { jobsApi, exportApi, fanAnalysisApi, fbAdsApi } from "@/lib/api-client";
+import { jobsApi, exportApi, fanAnalysisApi, fbAdsApi, creditsApi } from "@/lib/api-client";
 import { PromoBannerProgress } from "@/components/layout/PromoBanner";
 import { formatDate, formatNumber, getStatusColor, downloadBlob } from "@/lib/utils";
 import type { ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile, FanEngagementMetrics } from "@/types";
@@ -73,6 +73,73 @@ export default function JobDetailPage() {
   const [analyzingFans, setAnalyzingFans] = useState<Set<string>>(new Set());
   const [batchAnalyzing, setBatchAnalyzing] = useState(false);
   const [expandedFan, setExpandedFan] = useState<string | null>(null);
+
+  // Messenger templates state
+  const [msgTemplates, setMsgTemplates] = useState<{ name: string; body: string; is_default: boolean }[]>([]);
+  const [selectedProfiles, setSelectedProfiles] = useState<Set<string>>(new Set());
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const renderTemplate = (body: string, p: ScrapedProfile) => {
+    return body
+      .replace(/\{name\}/g, (p.name && p.name !== "NA" ? p.name : ""))
+      .replace(/\{first_name\}/g, (p.first_name && p.first_name !== "NA" ? p.first_name : ""))
+      .replace(/\{last_name\}/g, (p.last_name && p.last_name !== "NA" ? p.last_name : ""))
+      .replace(/\{username\}/g, (p.username && p.username !== "NA" ? p.username : ""))
+      .trim();
+  };
+
+  const getMessengerUrl = (p: ScrapedProfile) => {
+    if (p.platform_user_id && p.platform_user_id !== "NA") return `https://m.me/${p.platform_user_id}`;
+    if (p.username && p.username !== "NA") return `https://m.me/${p.username}`;
+    return null;
+  };
+
+  const handleMessageProfile = async (p: ScrapedProfile) => {
+    const url = getMessengerUrl(p);
+    if (!url) return;
+    const defaultTpl = msgTemplates.find((t) => t.is_default) || msgTemplates[0];
+    if (defaultTpl) {
+      const rendered = renderTemplate(defaultTpl.body, p);
+      try {
+        await navigator.clipboard.writeText(rendered);
+        setCopiedId(p.id);
+        setTimeout(() => setCopiedId(null), 2000);
+      } catch {}
+    }
+    window.open(url, "_blank");
+  };
+
+  const handleBulkMessage = async () => {
+    const selected = profiles.filter((p) => selectedProfiles.has(p.id));
+    const defaultTpl = msgTemplates.find((t) => t.is_default) || msgTemplates[0];
+    for (let i = 0; i < selected.length; i++) {
+      const p = selected[i];
+      const url = getMessengerUrl(p);
+      if (!url) continue;
+      if (defaultTpl) {
+        const rendered = renderTemplate(defaultTpl.body, p);
+        try { await navigator.clipboard.writeText(rendered); } catch {}
+      }
+      window.open(url, "_blank");
+      // Small delay to avoid popup blockers
+      if (i < selected.length - 1) await new Promise((r) => setTimeout(r, 300));
+    }
+    setSelectedProfiles(new Set());
+  };
+
+  const toggleProfileSelection = (id: string) => {
+    const next = new Set(Array.from(selectedProfiles));
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelectedProfiles(next);
+  };
+
+  const toggleAllProfiles = () => {
+    if (selectedProfiles.size === profiles.length) {
+      setSelectedProfiles(new Set());
+    } else {
+      setSelectedProfiles(new Set(profiles.map((p) => p.id)));
+    }
+  };
 
   const fetchProfiles = useCallback(async (page?: number, pageSize?: number) => {
     const pg = page ?? profilesPage;
@@ -321,6 +388,13 @@ export default function JobDetailPage() {
       }
     };
   }, [job?.status, jobId, connectSSE]);
+
+  // Fetch messenger templates once
+  useEffect(() => {
+    creditsApi.getMessengerTemplates().then((r) => {
+      if (r.data.templates) setMsgTemplates(r.data.templates);
+    }).catch(() => {});
+  }, []);
 
   // Initial fetch + fallback poll (only if SSE is not connected)
   useEffect(() => {
@@ -1544,20 +1618,68 @@ export default function JobDetailPage() {
               ))}
             </div>
           </div>
+          {/* Bulk message action bar */}
+          {selectedProfiles.size > 0 && (
+            <div className="px-4 py-2.5 bg-blue-500/10 border-b border-blue-500/20 flex items-center justify-between">
+              <span className="text-sm text-blue-300">
+                {selectedProfiles.size} profile{selectedProfiles.size !== 1 ? "s" : ""} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedProfiles(new Set())}
+                  className="text-xs px-3 py-1.5 rounded-lg text-white/50 hover:text-white/80 hover:bg-white/5 transition"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={handleBulkMessage}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 transition flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2C6.477 2 2 6.145 2 11.243c0 2.908 1.434 5.503 3.678 7.2V22l3.378-1.855c.9.25 1.855.384 2.944.384 5.523 0 10-4.145 10-9.243S17.523 2 12 2z" />
+                  </svg>
+                  Message {selectedProfiles.size} profile{selectedProfiles.size !== 1 ? "s" : ""}
+                </button>
+              </div>
+            </div>
+          )}
           <div className="overflow-auto max-h-[600px]">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-navy-900/95 backdrop-blur-sm z-10">
                 <tr className="border-b border-white/5">
+                  {msgTemplates.length > 0 && (
+                    <th className="w-10 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedProfiles.size === profiles.length && profiles.length > 0}
+                        onChange={toggleAllProfiles}
+                        className="accent-primary-500 rounded"
+                      />
+                    </th>
+                  )}
                   {["Name", "First Name", "Last Name", "ID", "Gender", "Birthday", "Location", "Hometown", "Education", "Work", "Username", "Username Link"].map((h) => (
                     <th key={h} className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3 whitespace-nowrap">
                       {h}
                     </th>
                   ))}
+                  {msgTemplates.length > 0 && (
+                    <th className="text-left text-xs font-medium text-white/40 uppercase px-4 py-3 whitespace-nowrap">Action</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {profiles.map((p) => (
                   <tr key={p.id} className="hover:bg-white/[0.02]">
+                    {msgTemplates.length > 0 && (
+                      <td className="w-10 px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedProfiles.has(p.id)}
+                          onChange={() => toggleProfileSelection(p.id)}
+                          className="accent-primary-500 rounded"
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
@@ -1595,6 +1717,23 @@ export default function JobDetailPage() {
                         </a>
                       ) : "—"}
                     </td>
+                    {msgTemplates.length > 0 && (
+                      <td className="px-4 py-3">
+                        {getMessengerUrl(p) ? (
+                          <button
+                            onClick={() => handleMessageProfile(p)}
+                            className="text-xs px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition whitespace-nowrap flex items-center gap-1.5"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M12 2C6.477 2 2 6.145 2 11.243c0 2.908 1.434 5.503 3.678 7.2V22l3.378-1.855c.9.25 1.855.384 2.944.384 5.523 0 10-4.145 10-9.243S17.523 2 12 2z" />
+                            </svg>
+                            {copiedId === p.id ? "Copied!" : "Message"}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-white/20">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

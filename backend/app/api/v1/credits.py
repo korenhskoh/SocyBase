@@ -129,6 +129,18 @@ async def get_tutorial_videos(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/messenger-templates")
+async def get_messenger_templates(db: AsyncSession = Depends(get_db)):
+    """Public endpoint: returns messenger templates for profile outreach."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "messenger_templates")
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {"templates": []}
+    return {"templates": setting.value.get("templates", [])}
+
+
 @router.get("/promo-banners")
 async def get_promo_banners(db: AsyncSession = Depends(get_db)):
     """Public endpoint: returns active promo banners for dashboard display."""

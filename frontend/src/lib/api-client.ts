@@ -129,6 +129,7 @@ export const creditsApi = {
   getWhatsappContact: () => api.get("/credits/whatsapp-contact"),
   getTutorialVideos: () => api.get("/credits/tutorial-videos"),
   getPromoBanners: () => api.get("/credits/promo-banners"),
+  getMessengerTemplates: () => api.get("/credits/messenger-templates"),
 };
 
 // Payments API
@@ -329,6 +330,13 @@ export const adminApi = {
     position?: string;
     title?: string;
   }>) => api.put("/admin/promo-banners", { banners }),
+  // Messenger template settings
+  getMessengerTemplates: () => api.get("/admin/messenger-templates"),
+  updateMessengerTemplates: (templates: Array<{
+    name: string;
+    body: string;
+    is_default?: boolean;
+  }>) => api.put("/admin/messenger-templates", { templates }),
 };
 
 // Telegram API

@@ -98,6 +98,16 @@ export default function AdminSettingsPage() {
   const bannerFileRef = useRef<HTMLInputElement>(null);
   const [uploadTargetIdx, setUploadTargetIdx] = useState<number | null>(null);
 
+  // Messenger template settings
+  interface MessengerTemplate {
+    name: string;
+    body: string;
+    is_default: boolean;
+  }
+  const [msgTemplates, setMsgTemplates] = useState<MessengerTemplate[]>([]);
+  const [msgSaving, setMsgSaving] = useState(false);
+  const [msgMessage, setMsgMessage] = useState("");
+
   useEffect(() => {
     if (user?.role === "super_admin") {
       Promise.all([
@@ -161,6 +171,9 @@ export default function AdminSettingsPage() {
         adminApi.getPromoBanners().then((r) => {
           if (r.data.banners) setBanners(r.data.banners);
         }).catch(() => {}),
+        adminApi.getMessengerTemplates().then((r) => {
+          if (r.data.templates) setMsgTemplates(r.data.templates);
+        }).catch(() => {}),
       ]).finally(() => setLoading(false));
     }
   }, [user]);
@@ -218,6 +231,50 @@ export default function AdminSettingsPage() {
     } finally {
       setBannerUploading(null);
     }
+  };
+
+  // Messenger template helpers
+  const handleSaveTemplates = async () => {
+    setMsgSaving(true);
+    setMsgMessage("");
+    try {
+      await adminApi.updateMessengerTemplates(msgTemplates);
+      setMsgMessage("Templates saved successfully!");
+    } catch {
+      setMsgMessage("Failed to save templates");
+    } finally {
+      setMsgSaving(false);
+    }
+  };
+
+  const addTemplate = () => {
+    setMsgTemplates([...msgTemplates, { name: "", body: "", is_default: msgTemplates.length === 0 }]);
+  };
+
+  const removeTemplate = (idx: number) => {
+    const updated = msgTemplates.filter((_, i) => i !== idx);
+    // If we removed the default, make the first one default
+    if (updated.length > 0 && !updated.some((t) => t.is_default)) {
+      updated[0].is_default = true;
+    }
+    setMsgTemplates(updated);
+  };
+
+  const updateTemplate = (idx: number, field: string, value: string | boolean) => {
+    const updated = [...msgTemplates];
+    if (field === "is_default" && value === true) {
+      // Only one default at a time
+      updated.forEach((t, i) => { updated[i] = { ...t, is_default: i === idx }; });
+    } else {
+      updated[idx] = { ...updated[idx], [field]: value };
+    }
+    setMsgTemplates(updated);
+  };
+
+  const insertVariable = (idx: number, variable: string) => {
+    const updated = [...msgTemplates];
+    updated[idx] = { ...updated[idx], body: updated[idx].body + variable };
+    setMsgTemplates(updated);
   };
 
   const handleSave = async () => {
@@ -1199,6 +1256,89 @@ export default function AdminSettingsPage() {
             className="btn-glow w-full py-3 disabled:opacity-50"
           >
             {bannerSaving ? "Saving..." : "Save Promo Banners"}
+          </button>
+
+          {/* Messenger Templates */}
+          <div className="mt-8 rounded-xl bg-navy-800/50 border border-white/5 overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-white/5 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Messenger Templates</h2>
+                <p className="text-sm text-white/40">Pre-written messages for Facebook Messenger outreach</p>
+              </div>
+              <button onClick={addTemplate} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 hover:bg-blue-500/20 transition">
+                + Add Template
+              </button>
+            </div>
+            <div className="p-4 sm:p-5 space-y-4">
+              {msgTemplates.length === 0 && (
+                <p className="text-sm text-white/30 text-center py-4">No templates configured. Click &quot;Add Template&quot; to create one.</p>
+              )}
+
+              {msgTemplates.map((tpl, idx) => (
+                <div key={idx} className="rounded-lg bg-navy-700/50 border border-white/5 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-white/70">Template {idx + 1}</span>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-1.5 text-xs text-white/50">
+                        <input
+                          type="radio"
+                          name="default_template"
+                          checked={tpl.is_default}
+                          onChange={() => updateTemplate(idx, "is_default", true)}
+                          className="accent-primary-500"
+                        />
+                        Default
+                      </label>
+                      <button onClick={() => removeTemplate(idx)} className="text-xs text-red-400/70 hover:text-red-400 transition">Remove</button>
+                    </div>
+                  </div>
+                  <input
+                    value={tpl.name}
+                    onChange={(e) => updateTemplate(idx, "name", e.target.value)}
+                    placeholder="Template name (e.g. Friendly intro)"
+                    className="w-full bg-navy-900/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:border-primary-500/50 focus:outline-none"
+                  />
+                  <textarea
+                    value={tpl.body}
+                    onChange={(e) => updateTemplate(idx, "body", e.target.value)}
+                    placeholder="Hi {first_name}, I saw your comment and wanted to reach out..."
+                    rows={3}
+                    className="w-full bg-navy-900/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:border-primary-500/50 focus:outline-none resize-none"
+                  />
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] text-white/30">Insert:</span>
+                    {["{name}", "{first_name}", "{last_name}", "{username}"].map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => insertVariable(idx, v)}
+                        className="text-[11px] px-2 py-0.5 rounded bg-primary-500/10 border border-primary-500/20 text-primary-300 hover:bg-primary-500/20 transition"
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              <p className="text-xs text-white/25 leading-relaxed">
+                Templates are shown when messaging scraped profiles. The default template is auto-selected. Variables like {"{name}"} are replaced with the profile&apos;s data.
+              </p>
+            </div>
+          </div>
+
+          {/* Save Messenger Templates */}
+          {msgMessage && (
+            <p className={`text-sm ${msgMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+              {msgMessage}
+            </p>
+          )}
+
+          <button
+            onClick={handleSaveTemplates}
+            disabled={msgSaving}
+            className="btn-glow w-full py-3 disabled:opacity-50"
+          >
+            {msgSaving ? "Saving..." : "Save Messenger Templates"}
           </button>
         </>
       )}
