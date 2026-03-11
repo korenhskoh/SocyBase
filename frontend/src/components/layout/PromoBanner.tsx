@@ -12,25 +12,61 @@ interface Banner {
   title?: string;
 }
 
-function getYouTubeEmbedUrl(url: string, autoplay = false): string | null {
+function getYouTubeVideoId(url: string): string | null {
   try {
     const u = new URL(url);
-    let videoId: string | null = null;
-    if (u.hostname.includes("youtube.com") && u.searchParams.get("v")) {
-      videoId = u.searchParams.get("v");
-    } else if (u.hostname === "youtu.be") {
-      videoId = u.pathname.slice(1);
-    } else if (u.pathname.includes("/embed/")) {
-      videoId = u.pathname.split("/embed/")[1]?.split(/[?/]/)[0] || null;
-    }
-    if (!videoId) return null;
-    const base = `https://www.youtube.com/embed/${videoId}`;
-    if (autoplay) {
-      return `${base}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&showinfo=0&rel=0`;
-    }
-    return base;
+    if (u.hostname.includes("youtube.com") && u.searchParams.get("v")) return u.searchParams.get("v");
+    if (u.hostname === "youtu.be") return u.pathname.slice(1);
+    if (u.pathname.includes("/embed/")) return u.pathname.split("/embed/")[1]?.split(/[?/]/)[0] || null;
   } catch {}
   return null;
+}
+
+function isDirectVideoUrl(url: string): boolean {
+  return /\.(mp4|webm|ogg)(\?|$)/i.test(url);
+}
+
+function VideoPlayer({ url, autoplay = false, className = "" }: { url: string; autoplay?: boolean; className?: string }) {
+  const ytId = getYouTubeVideoId(url);
+
+  if (ytId) {
+    const src = autoplay
+      ? `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&loop=1&playlist=${ytId}&controls=0&showinfo=0&rel=0`
+      : `https://www.youtube.com/embed/${ytId}`;
+    return (
+      <iframe
+        src={src}
+        className={className}
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+      />
+    );
+  }
+
+  if (isDirectVideoUrl(url)) {
+    return (
+      <video
+        src={url}
+        className={className}
+        autoPlay={autoplay}
+        muted
+        loop
+        playsInline
+        controls={!autoplay}
+      />
+    );
+  }
+
+  // Fallback: treat as embeddable iframe URL
+  const iframeSrc = autoplay && url.includes("?") ? `${url}&autoplay=1&mute=1` : autoplay ? `${url}?autoplay=1&mute=1` : url;
+  return (
+    <iframe
+      src={iframeSrc}
+      className={className}
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+      allowFullScreen
+    />
+  );
 }
 
 export function PromoBannerFloat() {
@@ -58,9 +94,7 @@ export function PromoBannerFloat() {
   const banner = banners[bannerIdx];
   if (!banner) return null;
 
-  const embedUrl = banner.video_url ? getYouTubeEmbedUrl(banner.video_url) : null;
-  const autoplayEmbedUrl = banner.video_url ? getYouTubeEmbedUrl(banner.video_url, true) : null;
-  const hasVideo = !!embedUrl;
+  const hasVideo = !!banner.video_url;
 
   const textContent = (
     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -123,14 +157,9 @@ export function PromoBannerFloat() {
                 textContent
               )}
             </div>
-            {hasVideo && autoplayEmbedUrl && (
+            {hasVideo && banner.video_url && (
               <div className="shrink-0 w-48 aspect-video rounded-lg overflow-hidden">
-                <iframe
-                  src={autoplayEmbedUrl}
-                  className="w-full h-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
+                <VideoPlayer url={banner.video_url} autoplay className="w-full h-full object-cover" />
               </div>
             )}
           </div>
@@ -146,14 +175,9 @@ export function PromoBannerFloat() {
             )}
 
             {/* Mobile expanded video */}
-            {expandedVideo === bannerIdx && embedUrl && (
+            {expandedVideo === bannerIdx && banner.video_url && (
               <div className="mt-2 rounded-lg overflow-hidden aspect-video">
-                <iframe
-                  src={embedUrl}
-                  className="w-full h-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
+                <VideoPlayer url={banner.video_url} className="w-full h-full" />
               </div>
             )}
           </div>
@@ -176,8 +200,6 @@ export function PromoBannerProgress() {
 
   if (banners.length === 0) return null;
   const banner = banners[0];
-
-  const embedUrl = banner.video_url ? getYouTubeEmbedUrl(banner.video_url) : null;
 
   const inner = (
     <div className="flex items-center gap-3">
@@ -216,14 +238,9 @@ export function PromoBannerProgress() {
       ) : (
         inner
       )}
-      {expandedVideo && embedUrl && (
+      {expandedVideo && banner.video_url && (
         <div className="mt-3 rounded-lg overflow-hidden aspect-video">
-          <iframe
-            src={embedUrl}
-            className="w-full h-full"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
+          <VideoPlayer url={banner.video_url} className="w-full h-full" />
         </div>
       )}
     </div>
