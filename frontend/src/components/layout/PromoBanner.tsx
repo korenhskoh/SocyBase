@@ -17,6 +17,7 @@ function getYouTubeVideoId(url: string): string | null {
     const u = new URL(url);
     if (u.hostname.includes("youtube.com") && u.searchParams.get("v")) return u.searchParams.get("v");
     if (u.hostname === "youtu.be") return u.pathname.slice(1);
+    if (u.pathname.includes("/shorts/")) return u.pathname.split("/shorts/")[1]?.split(/[?/]/)[0] || null;
     if (u.pathname.includes("/embed/")) return u.pathname.split("/embed/")[1]?.split(/[?/]/)[0] || null;
   } catch {}
   return null;
