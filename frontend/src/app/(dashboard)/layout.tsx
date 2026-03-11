@@ -25,7 +25,7 @@ export default function DashboardLayout({
     <div className="min-h-screen bg-navy-900">
       <Sidebar />
       <main className="md:pl-64">
-        <div className="pt-16 px-4 pb-6 md:pt-8 md:px-6 lg:px-8">{children}</div>
+        <div className="pt-16 px-4 pb-24 md:pt-8 md:px-6 lg:px-8">{children}</div>
       </main>
       <PromoBannerFloat />
     </div>
