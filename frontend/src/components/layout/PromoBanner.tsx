@@ -23,6 +23,13 @@ function getYouTubeVideoId(url: string): string | null {
   return null;
 }
 
+function isYouTubeShorts(url: string): boolean {
+  try {
+    return new URL(url).pathname.includes("/shorts/");
+  } catch {}
+  return false;
+}
+
 function isDirectVideoUrl(url: string): boolean {
   return /\.(mp4|webm|ogg)(\?|$)/i.test(url);
 }
@@ -96,6 +103,7 @@ export function PromoBannerFloat() {
   if (!banner) return null;
 
   const hasVideo = !!banner.video_url;
+  const isShorts = banner.video_url ? isYouTubeShorts(banner.video_url) : false;
 
   const textContent = (
     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -114,14 +122,20 @@ export function PromoBannerFloat() {
         {banner.video_url && (
           <button
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpandedVideo(expandedVideo === bannerIdx ? null : bannerIdx); }}
-            className="sm:hidden text-[11px] text-primary-400 hover:text-primary-300 transition mt-0.5"
+            className="sm:hidden text-[11px] text-primary-400 hover:text-primary-300 transition mt-0.5 flex items-center gap-1"
           >
+            <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
+              {expandedVideo === bannerIdx
+                ? <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                : <path d="M8 5v14l11-7z" />
+              }
+            </svg>
             {expandedVideo === bannerIdx ? "Hide video" : "Watch video"}
           </button>
         )}
       </div>
       {banner.link_url && (
-        <span className="shrink-0 px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg bg-primary-500 hover:bg-primary-400 text-white text-[11px] sm:text-xs font-medium transition whitespace-nowrap">
+        <span className="shrink-0 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-gradient-to-r from-primary-500 to-primary-400 hover:from-primary-400 hover:to-primary-300 text-white text-[11px] sm:text-xs font-semibold transition-all shadow-[0_0_12px_rgba(99,102,241,0.4)] hover:shadow-[0_0_20px_rgba(99,102,241,0.6)] whitespace-nowrap">
           Learn More
         </span>
       )}
@@ -136,8 +150,11 @@ export function PromoBannerFloat() {
           visible ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"
         }`}
       >
-        <div className={`pointer-events-auto ${hasVideo ? "max-w-3xl" : "max-w-2xl"} mx-auto rounded-xl bg-navy-800/95 backdrop-blur-lg border border-primary-500/20 shadow-[0_0_20px_rgba(99,102,241,0.1)] p-2.5 sm:p-3.5 relative`}>
-          {/* Dismiss button — top-left, inset on mobile so it doesn't clip */}
+        <div className={`pointer-events-auto ${hasVideo ? "max-w-3xl" : "max-w-2xl"} mx-auto rounded-xl bg-navy-800/95 backdrop-blur-lg border border-primary-500/30 shadow-[0_0_30px_rgba(99,102,241,0.15),0_4px_20px_rgba(0,0,0,0.3)] p-2.5 sm:p-3.5 relative`}>
+          {/* Subtle top accent line */}
+          <div className="absolute top-0 left-4 right-4 h-[1px] bg-gradient-to-r from-transparent via-primary-400/50 to-transparent" />
+
+          {/* Dismiss button */}
           <button
             onClick={() => { const s = new Set(Array.from(dismissed)); s.add(bannerIdx); setDismissed(s); setVisible(false); }}
             className="absolute -top-2 left-1 sm:-left-2 h-6 w-6 flex items-center justify-center rounded-full bg-navy-700 border border-white/10 text-white/50 hover:text-white hover:bg-navy-600 transition shadow-lg z-10"
@@ -148,7 +165,7 @@ export function PromoBannerFloat() {
           </button>
 
           {/* Desktop layout: text + inline video side-by-side */}
-          <div className="hidden sm:flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-4">
             <div className="flex-1 min-w-0">
               {banner.link_url ? (
                 <a href={banner.link_url} target="_blank" rel="noopener noreferrer" className="block">
@@ -159,7 +176,9 @@ export function PromoBannerFloat() {
               )}
             </div>
             {hasVideo && banner.video_url && (
-              <div className="shrink-0 w-48 aspect-video rounded-lg overflow-hidden">
+              <div className={`shrink-0 rounded-lg overflow-hidden border border-white/10 ${
+                isShorts ? "w-[70px] h-[124px]" : "w-56 aspect-video"
+              }`}>
                 <VideoPlayer url={banner.video_url} autoplay className="w-full h-full object-cover" />
               </div>
             )}
@@ -177,7 +196,9 @@ export function PromoBannerFloat() {
 
             {/* Mobile expanded video */}
             {expandedVideo === bannerIdx && banner.video_url && (
-              <div className="mt-2 rounded-lg overflow-hidden aspect-video">
+              <div className={`mt-2 rounded-lg overflow-hidden border border-white/10 ${
+                isShorts ? "aspect-[9/16] max-w-[200px] mx-auto" : "aspect-video"
+              }`}>
                 <VideoPlayer url={banner.video_url} className="w-full h-full" />
               </div>
             )}
@@ -201,6 +222,7 @@ export function PromoBannerProgress() {
 
   if (banners.length === 0) return null;
   const banner = banners[0];
+  const isShorts = banner.video_url ? isYouTubeShorts(banner.video_url) : false;
 
   const inner = (
     <div className="flex items-center gap-3">
@@ -218,8 +240,14 @@ export function PromoBannerProgress() {
         {banner.video_url && !banner.link_url && (
           <button
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpandedVideo(!expandedVideo); }}
-            className="text-xs text-primary-400 hover:text-primary-300 transition mt-0.5"
+            className="text-xs text-primary-400 hover:text-primary-300 transition mt-0.5 flex items-center gap-1"
           >
+            <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
+              {expandedVideo
+                ? <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                : <path d="M8 5v14l11-7z" />
+              }
+            </svg>
             {expandedVideo ? "Hide video" : "Watch video"}
           </button>
         )}
@@ -240,7 +268,9 @@ export function PromoBannerProgress() {
         inner
       )}
       {expandedVideo && banner.video_url && (
-        <div className="mt-3 rounded-lg overflow-hidden aspect-video">
+        <div className={`mt-3 rounded-lg overflow-hidden ${
+          isShorts ? "aspect-[9/16] max-w-[280px] mx-auto" : "aspect-video"
+        }`}>
           <VideoPlayer url={banner.video_url} className="w-full h-full" />
         </div>
       )}
