@@ -22,6 +22,7 @@ REQUIRED_SCOPES = [
     "ads_read",
     "business_management",
     "pages_read_engagement",
+    "pages_manage_engagement",
     "pages_show_list",
 ]
 
@@ -620,6 +621,92 @@ class MetaAPIService:
                 raise Exception(f"Meta API error: {error_detail}") from e
             data = resp.json()
             return data.get("data", [])
+
+    # -- Live Video & Comments (Live Sell Helper) ----------------------------
+
+    async def list_page_videos(
+        self, access_token: str, page_id: str, limit: int = 20
+    ) -> list[dict]:
+        """Fetch videos from a Facebook Page with live status info.
+
+        Uses the /videos edge (not /live_videos) so comment creation works.
+        """
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{GRAPH_BASE}/{page_id}/videos",
+                params={
+                    **self._auth_params(access_token),
+                    "fields": "id,title,description,live_status,created_time,length,permalink_url",
+                    "limit": limit,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json().get("data", [])
+
+    async def get_video_comments(
+        self, access_token: str, video_id: str,
+        since: str | None = None, limit: int = 50,
+    ) -> dict:
+        """Fetch comments on a video (for polling fallback).
+
+        Args:
+            since: ISO datetime string — only return comments after this time.
+        """
+        params: dict = {
+            **self._auth_params(access_token),
+            "fields": "id,from{id,name},message,created_time",
+            "filter": "stream",
+            "order": "reverse_chronological",
+            "limit": limit,
+        }
+        if since:
+            params["since"] = since
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{GRAPH_BASE}/{video_id}/comments",
+                params=params,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def reply_to_comment(
+        self, access_token: str, comment_id: str, message: str
+    ) -> dict:
+        """Reply to a specific comment on a video."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{GRAPH_BASE}/{comment_id}/comments",
+                params=self._auth_params(access_token),
+                data={"message": message},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def create_video_comment(
+        self, access_token: str, video_id: str, message: str
+    ) -> dict:
+        """Post a new comment on a video."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{GRAPH_BASE}/{video_id}/comments",
+                params=self._auth_params(access_token),
+                data={"message": message},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def hide_comment(
+        self, access_token: str, comment_id: str, hidden: bool = True
+    ) -> dict:
+        """Hide or unhide a comment."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{GRAPH_BASE}/{comment_id}",
+                params=self._auth_params(access_token),
+                data={"is_hidden": "true" if hidden else "false"},
+            )
+            resp.raise_for_status()
+            return resp.json()
 
     async def search_interests(
         self, access_token: str, query: str, limit: int = 25

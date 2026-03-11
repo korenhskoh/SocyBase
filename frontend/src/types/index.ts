@@ -696,3 +696,38 @@ export interface TrafficBotWalletDeposit {
   created_at: string;
   reviewed_at: string | null;
 }
+
+// ── Live Sell ───────────────────────────────────────────────
+
+export interface LiveSession {
+  id: string;
+  video_id: string;
+  title?: string;
+  status: "monitoring" | "stopped" | "completed";
+  total_comments: number;
+  total_orders: number;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+}
+
+export interface LiveComment {
+  id: string;
+  fb_comment_id: string;
+  commenter_id: string;
+  commenter_name: string;
+  message: string;
+  is_order: boolean;
+  matched_keywords: string[];
+  replied: boolean;
+  reply_message?: string;
+  created_at: string;
+}
+
+export interface LiveSellSettings {
+  order_keywords: string[];
+  auto_reply_enabled: boolean;
+  auto_reply_mode: "template" | "ai" | "disabled";
+  auto_reply_template: string;
+  ai_reply_instructions: string;
+}

@@ -12,6 +12,7 @@ from app.database import get_db
 from app.utils.security import decode_token
 from app.models.user import User
 from app.models.job import ScrapingJob
+from app.models.fb_live_sell import LiveSession
 from app.config import get_settings
 
 import redis.asyncio as aioredis
@@ -198,6 +199,88 @@ async def stream_job_progress(
                             break
                     except Exception:
                         logger.debug("SSE DB status check failed for job %s", job_id, exc_info=True)
+
+                await asyncio.sleep(0.5)
+        finally:
+            await pubsub.unsubscribe(channel)
+            await r.close()
+
+    return EventSourceResponse(event_generator())
+
+
+@router.get("/live-sell/{session_id}/stream")
+async def stream_live_comments(
+    session_id: UUID,
+    token: str | None = Query(None, description="JWT access token (for EventSource clients)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """SSE endpoint that streams real-time live comments from a monitoring session."""
+    user = await _resolve_user(token, db, None)
+
+    # Verify session ownership
+    result = await db.execute(
+        select(LiveSession).where(
+            LiveSession.id == session_id,
+            LiveSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    settings = get_settings()
+
+    async def event_generator():
+        r = aioredis.from_url(settings.redis_url)
+        pubsub = r.pubsub()
+        channel = f"live_comments:{session_id}"
+        await pubsub.subscribe(channel)
+
+        try:
+            # Send initial state
+            yield {
+                "event": "session_info",
+                "data": json.dumps({
+                    "status": session.status,
+                    "total_comments": session.total_comments,
+                    "total_orders": session.total_orders,
+                }),
+            }
+
+            if session.status != "monitoring":
+                yield {"event": "session_ended", "data": json.dumps({"status": session.status})}
+                return
+
+            tick_count = 0
+            while True:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0,
+                )
+                if message and message["type"] == "message":
+                    data = json.loads(message["data"])
+                    event_type = data.pop("event", "new_comment")
+                    yield {"event": event_type, "data": json.dumps(data)}
+
+                    if event_type == "session_ended":
+                        break
+                    tick_count = 0
+                else:
+                    yield {"event": "ping", "data": ""}
+                    tick_count += 1
+
+                # Defensive DB check every ~30s
+                if tick_count >= 20:
+                    tick_count = 0
+                    try:
+                        check = await db.execute(
+                            select(LiveSession.status).where(LiveSession.id == session_id)
+                        )
+                        row = check.one_or_none()
+                        if row and row[0] != "monitoring":
+                            yield {"event": "session_ended", "data": json.dumps({"status": row[0]})}
+                            break
+                    except Exception:
+                        logger.debug("SSE DB check failed for live session %s", session_id, exc_info=True)
 
                 await asyncio.sleep(0.5)
         finally:

@@ -566,4 +566,49 @@ export const extensionApi = {
   getPendingTasks: () => api.get("/extension/tasks"),
 };
 
+// ── Live Sell ───────────────────────────────────────────────
+
+export const liveSellApi = {
+  // Videos
+  listVideos: () => api.get("/live-sell/videos"),
+
+  // Sessions
+  startSession: (data: { video_id: string; title?: string }) =>
+    api.post("/live-sell/sessions", data),
+  stopSession: (sessionId: string) =>
+    api.post(`/live-sell/sessions/${sessionId}/stop`),
+  listSessions: (params?: { page?: number; page_size?: number }) =>
+    api.get("/live-sell/sessions", { params }),
+  getSession: (sessionId: string) =>
+    api.get(`/live-sell/sessions/${sessionId}`),
+
+  // Comments
+  listComments: (
+    sessionId: string,
+    params?: { orders_only?: boolean; page?: number; page_size?: number }
+  ) => api.get(`/live-sell/sessions/${sessionId}/comments`, { params }),
+  replyToComment: (sessionId: string, commentId: string, message: string) =>
+    api.post(`/live-sell/sessions/${sessionId}/comments/${commentId}/reply`, {
+      message,
+    }),
+  exportOrders: (sessionId: string) =>
+    api.get(`/live-sell/sessions/${sessionId}/orders/export`, {
+      responseType: "blob",
+    }),
+
+  // Settings
+  getSettings: () => api.get("/live-sell/settings"),
+  updateSettings: (data: {
+    order_keywords?: string[];
+    auto_reply_enabled?: boolean;
+    auto_reply_mode?: string;
+    auto_reply_template?: string;
+    ai_reply_instructions?: string;
+  }) => api.put("/live-sell/settings", data),
+
+  // SSE stream URL
+  getCommentStreamUrl: (sessionId: string) =>
+    `${API_BASE}/api/v1/sse/live-sell/${sessionId}/stream`,
+};
+
 export default api;

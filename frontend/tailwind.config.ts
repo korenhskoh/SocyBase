@@ -96,6 +96,7 @@ const config: Config = {
         "card-reveal": "cardReveal 0.5s ease-out both",
         "ticker": "ticker 0.4s ease-out both",
         "shimmer": "shimmer 2s ease-in-out infinite",
+        "slide-in-right": "slideInRight 0.35s cubic-bezier(0.21, 1.02, 0.73, 1) forwards",
       },
       keyframes: {
         float: {
@@ -160,6 +161,10 @@ const config: Config = {
         shimmer: {
           "0%": { backgroundPosition: "200% 0" },
           "100%": { backgroundPosition: "-200% 0" },
+        },
+        slideInRight: {
+          from: { opacity: "0", transform: "translateX(80px) scale(0.95)" },
+          to: { opacity: "1", transform: "translateX(0) scale(1)" },
         },
       },
       backdropBlur: {

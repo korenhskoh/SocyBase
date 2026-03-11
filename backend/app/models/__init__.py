@@ -20,6 +20,7 @@ from app.models.traffic_bot import (
     TrafficBotWallet, TrafficBotTransaction,
     TrafficBotService, TrafficBotOrder,
 )
+from app.models.fb_live_sell import LiveSession, LiveComment
 
 __all__ = [
     "Tenant",
@@ -61,4 +62,7 @@ __all__ = [
     "TrafficBotTransaction",
     "TrafficBotService",
     "TrafficBotOrder",
+    # Live Sell
+    "LiveSession",
+    "LiveComment",
 ]
