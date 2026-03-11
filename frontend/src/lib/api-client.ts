@@ -127,6 +127,7 @@ export const creditsApi = {
   getPaymentInfo: () => api.get("/credits/payment-info"),
   getPublicConfig: () => api.get("/credits/public-config"),
   getWhatsappContact: () => api.get("/credits/whatsapp-contact"),
+  getTutorialVideos: () => api.get("/credits/tutorial-videos"),
 };
 
 // Payments API
@@ -311,6 +312,12 @@ export const adminApi = {
     api.post(`/admin/jobs/${jobId}/cancel`),
   adminPauseJob: (jobId: string) =>
     api.post(`/admin/jobs/${jobId}/pause`),
+  // Tutorial video settings
+  getTutorialVideos: () => api.get("/admin/tutorial-videos"),
+  updateTutorialVideos: (data: {
+    comment_scraper_url?: string;
+    post_discovery_url?: string;
+  }) => api.put("/admin/tutorial-videos", data),
 };
 
 // Telegram API

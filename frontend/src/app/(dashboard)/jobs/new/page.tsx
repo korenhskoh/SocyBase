@@ -120,6 +120,10 @@ function NewJobPage() {
   // Credit balance for cost warnings
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
 
+  // Tutorial video URLs + modal
+  const [tutorialVideos, setTutorialVideos] = useState<Record<string, string>>({});
+  const [tutorialModal, setTutorialModal] = useState<{ label: string; url: string } | null>(null);
+
   useEffect(() => {
     creditsApi.getBalance().then((r) => setCreditBalance(r.data?.balance ?? null)).catch(() => {});
     jobsApi.list({ page: 1, page_size: 50, status: "running" }).then((r) => {
@@ -134,6 +138,15 @@ function NewJobPage() {
     jobsApi.getFeatureFlags().then((r) => {
       const flags = r.data?.flags || {};
       if (flags.dedup_save_credits === false) setDedupFeatureEnabled(false);
+    }).catch(() => {});
+
+    // Load tutorial video URLs
+    creditsApi.getTutorialVideos().then((r) => {
+      const d = r.data || {};
+      setTutorialVideos({
+        comment_scraper: d.comment_scraper_url || "",
+        post_discovery: d.post_discovery_url || "",
+      });
     }).catch(() => {});
   }, []);
 
@@ -315,6 +328,17 @@ function NewJobPage() {
     }
   };
 
+  // Convert YouTube URL to embed URL
+  const getYouTubeEmbedUrl = (url: string): string | null => {
+    if (!url) return null;
+    // youtube.com/watch?v=ID
+    const watchMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+    if (watchMatch) return `https://www.youtube.com/embed/${watchMatch[1]}`;
+    // already an embed URL
+    if (url.includes("youtube.com/embed/")) return url;
+    return null;
+  };
+
   // ── Submit ──────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -493,43 +517,64 @@ function NewJobPage() {
           </button>
 
           <div className="space-y-3">
-            {selectedPlatform.scrapeTypes.map((st) => (
-              <button
-                key={st.id}
-                type="button"
-                onClick={() => selectScrapeType(st)}
-                className="w-full group rounded-2xl border-2 border-white/10 bg-white/[0.02] hover:border-primary-500/50 hover:bg-primary-500/5 p-6 text-left transition-all cursor-pointer"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary-500/20 to-accent-purple/20 border border-primary-500/20 flex items-center justify-center text-primary-400 shrink-0 transition-colors group-hover:border-primary-500/40">
-                    {st.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-base font-semibold text-white">{st.label}</p>
-                    <p className="text-sm text-white/40 mt-0.5">{st.desc}</p>
-                    {/* Mini steps */}
-                    <div className="flex items-center gap-3 mt-3">
-                      {st.steps.map((s, i) => (
-                        <div key={i} className="flex items-center gap-1.5">
-                          <div className="h-5 w-5 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
-                            <span className="text-[10px] font-bold text-white/40">{i + 1}</span>
-                          </div>
-                          <span className="text-xs text-white/30">{s.title}</span>
-                          {i < st.steps.length - 1 && (
-                            <svg className="h-3 w-3 text-white/15 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                            </svg>
-                          )}
+            {selectedPlatform.scrapeTypes.map((st) => {
+              const videoUrl = tutorialVideos[st.id] || "";
+              return (
+                <div key={st.id} className="group rounded-2xl border-2 border-white/10 bg-white/[0.02] hover:border-primary-500/50 hover:bg-primary-500/5 transition-all">
+                  <button
+                    type="button"
+                    onClick={() => selectScrapeType(st)}
+                    className="w-full p-6 text-left cursor-pointer"
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary-500/20 to-accent-purple/20 border border-primary-500/20 flex items-center justify-center text-primary-400 shrink-0 transition-colors group-hover:border-primary-500/40">
+                        {st.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-base font-semibold text-white">{st.label}</p>
+                        <p className="text-sm text-white/40 mt-0.5">{st.desc}</p>
+                        {/* Mini steps */}
+                        <div className="flex items-center gap-3 mt-3">
+                          {st.steps.map((s, i) => (
+                            <div key={i} className="flex items-center gap-1.5">
+                              <div className="h-5 w-5 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+                                <span className="text-[10px] font-bold text-white/40">{i + 1}</span>
+                              </div>
+                              <span className="text-xs text-white/30">{s.title}</span>
+                              {i < st.steps.length - 1 && (
+                                <svg className="h-3 w-3 text-white/15 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                                </svg>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      </div>
+                      <svg className="h-5 w-5 text-white/20 group-hover:text-primary-400 transition-colors shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                      </svg>
                     </div>
-                  </div>
-                  <svg className="h-5 w-5 text-white/20 group-hover:text-primary-400 transition-colors shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                  </svg>
+                  </button>
+                  {videoUrl && (
+                    <div className="px-6 pb-4 -mt-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTutorialModal({ label: st.label, url: videoUrl });
+                        }}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-400 bg-rose-400/10 border border-rose-400/20 rounded-lg px-3 py-1.5 hover:bg-rose-400/20 transition"
+                      >
+                        <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                        Watch Tutorial
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1014,6 +1059,40 @@ function NewJobPage() {
               }
             </button>
           </form>
+        </div>
+      )}
+      {/* Tutorial Video Modal */}
+      {tutorialModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="glass-card max-w-2xl w-full mx-4 p-0 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-sm font-semibold text-white">{tutorialModal.label} — Tutorial</h3>
+              <button
+                type="button"
+                onClick={() => setTutorialModal(null)}
+                className="text-white/40 hover:text-white text-xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="aspect-video bg-black">
+              {getYouTubeEmbedUrl(tutorialModal.url) ? (
+                <iframe
+                  src={getYouTubeEmbedUrl(tutorialModal.url)!}
+                  title="Tutorial video"
+                  className="w-full h-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : (
+                <video
+                  src={tutorialModal.url}
+                  controls
+                  className="w-full h-full"
+                />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

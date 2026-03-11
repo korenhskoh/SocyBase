@@ -359,7 +359,7 @@ async def oauth_callback(
             token_expires_at=expires_at,
             fb_user_id=fb_user["id"],
             fb_user_name=fb_user.get("name", ""),
-            scopes=["ads_management", "ads_read", "business_management", "pages_read_engagement", "pages_show_list", "pages_read_user_content"],
+            scopes=["ads_management", "ads_read", "business_management", "pages_read_engagement", "pages_show_list"],
         )
         db.add(conn)
 

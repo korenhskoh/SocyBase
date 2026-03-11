@@ -1478,3 +1478,62 @@ async def get_telegram_bot_status(
     except Exception:
         status = "offline"
     return {"status": status}
+
+
+# ── Tutorial Video Settings ─────────────────────────────────────────────
+
+TUTORIAL_VIDEOS_KEY = "tutorial_videos"
+
+
+class TutorialVideosUpdate(BaseModel):
+    comment_scraper_url: str | None = None
+    post_discovery_url: str | None = None
+
+
+@router.get("/tutorial-videos")
+async def get_tutorial_videos(
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get tutorial video URLs."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == TUTORIAL_VIDEOS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        return {"comment_scraper_url": "", "post_discovery_url": ""}
+    data = setting.value or {}
+    return {
+        "comment_scraper_url": data.get("comment_scraper_url", ""),
+        "post_discovery_url": data.get("post_discovery_url", ""),
+    }
+
+
+@router.put("/tutorial-videos")
+async def update_tutorial_videos(
+    data: TutorialVideosUpdate,
+    admin: User = Depends(get_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update tutorial video URLs."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == TUTORIAL_VIDEOS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    existing = dict(setting.value) if setting else {}
+    merged = {**existing, **data.model_dump(exclude_none=True)}
+
+    if setting:
+        setting.value = merged
+        setting.updated_by = admin.id
+    else:
+        setting = SystemSetting(
+            key=TUTORIAL_VIDEOS_KEY,
+            value=merged,
+            description="Tutorial video URLs for scrape types",
+            updated_by=admin.id,
+        )
+        db.add(setting)
+
+    await db.commit()
+    return merged

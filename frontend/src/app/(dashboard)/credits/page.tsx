@@ -232,6 +232,35 @@ export default function CreditsPage() {
         </div>
       </div>
 
+      {/* Low Credit Warning */}
+      {balance && balance.balance > 0 && balance.balance < 50 && (
+        <div className="flex items-start gap-3 rounded-xl bg-amber-500/5 border border-amber-500/20 p-4">
+          <svg className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          <div>
+            <p className="text-sm font-medium text-amber-300">Low credit balance</p>
+            <p className="text-xs text-amber-300/70 mt-1">
+              Your balance may not be enough for large scraping jobs. If credits run out during a job, it will stop early and you may not get all results. Top up now to avoid interruptions.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {balance && balance.balance === 0 && (
+        <div className="flex items-start gap-3 rounded-xl bg-red-500/5 border border-red-500/20 p-4">
+          <svg className="h-5 w-5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          <div>
+            <p className="text-sm font-medium text-red-300">No credits remaining</p>
+            <p className="text-xs text-red-300/70 mt-1">
+              You need credits to run AI-Scraping and Post Discovery jobs. Purchase a package below to get started.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* How It Works */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[

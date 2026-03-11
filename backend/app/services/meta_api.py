@@ -23,7 +23,6 @@ REQUIRED_SCOPES = [
     "business_management",
     "pages_read_engagement",
     "pages_show_list",
-    "pages_read_user_content",  # Required to read page posts (user must have page role)
 ]
 
 

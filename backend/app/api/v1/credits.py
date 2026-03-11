@@ -113,3 +113,17 @@ async def get_whatsapp_contact(db: AsyncSession = Depends(get_db)):
     data = setting.value if setting else {}
     number = data.get("whatsapp_contact_number") or data.get("whatsapp_admin_number") or None
     return {"whatsapp_contact_number": number}
+
+
+@router.get("/tutorial-videos")
+async def get_tutorial_videos(db: AsyncSession = Depends(get_db)):
+    """Public endpoint: returns tutorial video URLs for scrape type cards."""
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "tutorial_videos")
+    )
+    setting = result.scalar_one_or_none()
+    data = setting.value if setting else {}
+    return {
+        "comment_scraper_url": data.get("comment_scraper_url", ""),
+        "post_discovery_url": data.get("post_discovery_url", ""),
+    }

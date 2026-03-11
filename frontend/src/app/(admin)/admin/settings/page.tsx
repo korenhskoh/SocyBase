@@ -76,6 +76,12 @@ export default function AdminSettingsPage() {
   const [tgSaving, setTgSaving] = useState(false);
   const [tgMessage, setTgMessage] = useState("");
 
+  // Tutorial video settings
+  const [tutCommentUrl, setTutCommentUrl] = useState("");
+  const [tutDiscoveryUrl, setTutDiscoveryUrl] = useState("");
+  const [tutSaving, setTutSaving] = useState(false);
+  const [tutMessage, setTutMessage] = useState("");
+
   useEffect(() => {
     if (user?.role === "super_admin") {
       Promise.all([
@@ -131,9 +137,30 @@ export default function AdminSettingsPage() {
           }
           if (d.notification_chat_id) setTgChatId(d.notification_chat_id);
         }).catch(() => {}),
+        adminApi.getTutorialVideos().then((r) => {
+          const d = r.data;
+          if (d.comment_scraper_url) setTutCommentUrl(d.comment_scraper_url);
+          if (d.post_discovery_url) setTutDiscoveryUrl(d.post_discovery_url);
+        }).catch(() => {}),
       ]).finally(() => setLoading(false));
     }
   }, [user]);
+
+  const handleSaveTutorials = async () => {
+    setTutSaving(true);
+    setTutMessage("");
+    try {
+      await adminApi.updateTutorialVideos({
+        comment_scraper_url: tutCommentUrl || undefined,
+        post_discovery_url: tutDiscoveryUrl || undefined,
+      });
+      setTutMessage("Tutorial videos saved successfully!");
+    } catch {
+      setTutMessage("Failed to save tutorial videos");
+    } finally {
+      setTutSaving(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -905,6 +932,65 @@ export default function AdminSettingsPage() {
             className="btn-glow w-full py-3 disabled:opacity-50"
           >
             {tgSaving ? "Saving..." : "Save Telegram Settings"}
+          </button>
+
+          {/* Tutorial Videos */}
+          <div className="glass-card p-6 space-y-4 mt-8">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-rose-500/10 border border-rose-500/20">
+                <svg className="h-5 w-5 text-rose-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Tutorial Videos</h2>
+                <p className="text-sm text-white/40">YouTube or video links shown on the New Job page</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Comment Profile Scraper</label>
+                <input
+                  type="text"
+                  value={tutCommentUrl}
+                  onChange={(e) => setTutCommentUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  className="input-glass text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Page Post Discovery</label>
+                <input
+                  type="text"
+                  value={tutDiscoveryUrl}
+                  onChange={(e) => setTutDiscoveryUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  className="input-glass text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-rose-500/5 border border-rose-500/15 p-3">
+              <p className="text-xs text-rose-300/80">
+                Paste a YouTube URL or any embeddable video link. Users will see a &quot;Watch Tutorial&quot; button next to each scrape type on the New Job page.
+              </p>
+            </div>
+          </div>
+
+          {/* Save Tutorial Videos */}
+          {tutMessage && (
+            <p className={`text-sm ${tutMessage.includes("success") ? "text-emerald-400" : "text-red-400"}`}>
+              {tutMessage}
+            </p>
+          )}
+
+          <button
+            onClick={handleSaveTutorials}
+            disabled={tutSaving}
+            className="btn-glow w-full py-3 disabled:opacity-50"
+          >
+            {tutSaving ? "Saving..." : "Save Tutorial Videos"}
           </button>
         </>
       )}
