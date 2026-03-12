@@ -117,10 +117,11 @@ async def export_csv(
             "Updated Time": p.scraped_at.strftime("%Y-%m-%d %H:%M:%S") if p.scraped_at else "NA",
         })
 
-    output.seek(0)
+    # UTF-8 BOM so Excel on Mac/Windows handles non-ASCII correctly
+    csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
+        iter([csv_bytes]),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=socybase_export_{job_id}.csv"},
     )
 
@@ -177,10 +178,10 @@ async def export_facebook_ads(
             "Updated Time": p.scraped_at.strftime("%Y-%m-%d %H:%M:%S") if p.scraped_at else "NA",
         })
 
-    output.seek(0)
+    csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
+        iter([csv_bytes]),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=socybase_fb_ads_{job_id}.csv"},
     )
 
@@ -372,7 +373,7 @@ def _generate_csv_bytes(profiles, author) -> bytes:
             "Picture URL": p.picture_url or "NA",
             "Updated Time": p.scraped_at.strftime("%Y-%m-%d %H:%M:%S") if p.scraped_at else "NA",
         })
-    return output.getvalue().encode("utf-8")
+    return b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
 
 
 def _generate_post_csv_bytes(posts, author) -> bytes:
@@ -394,7 +395,7 @@ def _generate_post_csv_bytes(posts, author) -> bytes:
             "Type": p.attachment_type or "status",
             "URL": p.post_url or "",
         })
-    return output.getvalue().encode("utf-8")
+    return b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
 
 
 @router.post("/batch")

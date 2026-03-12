@@ -7,8 +7,10 @@
  */
 
 const POLL_INTERVAL_MS = 5000;
+const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max per task
 
 let pollTimer = null;
+let processingTask = false; // Guard against overlapping task processing
 
 // ── Config helpers ──────────────────────────────────────────────────
 
@@ -58,6 +60,41 @@ async function apiPost(path, body) {
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   return res.json();
+}
+
+// Retry wrapper for result submission — retries up to 3 times with backoff
+async function apiPostWithRetry(path, body, maxRetries = 3) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await apiPost(path, body);
+    } catch (e) {
+      console.warn(`[SocyBase] API POST attempt ${attempt + 1}/${maxRetries} failed:`, e.message);
+      if (attempt < maxRetries - 1) {
+        const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
+        await new Promise((r) => setTimeout(r, delay));
+      } else {
+        throw e;
+      }
+    }
+  }
+}
+
+// Safe tab cleanup — logs errors instead of swallowing them
+async function safeCloseTab(tabId) {
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch (e) {
+    if (!e.message?.includes("not attached")) {
+      console.warn(`[SocyBase] Debugger detach warning for tab ${tabId}:`, e.message);
+    }
+  }
+  try {
+    await chrome.tabs.remove(tabId);
+  } catch (e) {
+    if (!e.message?.includes("No tab")) {
+      console.warn(`[SocyBase] Tab close warning for tab ${tabId}:`, e.message);
+    }
+  }
 }
 
 // ── Facebook fetch with cookies ─────────────────────────────────────
@@ -177,9 +214,7 @@ async function fetchAndParseViaTab(url, taskType) {
     console.log(`[SocyBase] Tab extraction: ${result.items.length} items, nextUrl=${result.nextUrl}`);
     return result;
   } finally {
-    // Detach debugger if attached, then close tab
-    chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
-    chrome.tabs.remove(tab.id).catch(() => {});
+    await safeCloseTab(tab.id);
   }
 }
 
@@ -760,7 +795,8 @@ async function processTask(task) {
     return;
   }
 
-  try {
+  // Wrap the entire task in a timeout
+  const taskPromise = (async () => {
     let currentUrl = task.target_url;
     let allItems = [];
     let pagesLoaded = 0;
@@ -770,8 +806,6 @@ async function processTask(task) {
     while (pagesLoaded < maxPages && allItems.length < limit) {
       console.log(`[SocyBase] Page ${pagesLoaded + 1}: ${currentUrl}`);
 
-      // Open the page in a real browser tab — Facebook always serves JS-rendered
-      // content to fetch(), so we need the browser to render the page first.
       const { items, nextUrl } = await fetchAndParseViaTab(currentUrl, task.task_type);
 
       for (const item of items) {
@@ -787,24 +821,36 @@ async function processTask(task) {
 
       currentUrl = nextUrl;
 
-      // Rate limiting delay
       await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1000));
     }
 
-    allItems = allItems.slice(0, limit);
-    console.log(`[SocyBase] Task ${task.id}: extracted ${allItems.length} items from ${pagesLoaded} pages`);
+    return allItems.slice(0, limit);
+  })();
 
-    // Submit results
-    await apiPost(`/extension/tasks/${task.id}/result`, {
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("Task timed out after 5 minutes")), TASK_TIMEOUT_MS)
+  );
+
+  try {
+    const allItems = await Promise.race([taskPromise, timeoutPromise]);
+    console.log(`[SocyBase] Task ${task.id}: extracted ${allItems.length} items`);
+
+    // Submit results with retry
+    await apiPostWithRetry(`/extension/tasks/${task.id}/result`, {
       success: true,
       data: { data: allItems, paging: {} },
     });
   } catch (e) {
     console.error(`[SocyBase] Task ${task.id} failed:`, e.message);
-    await apiPost(`/extension/tasks/${task.id}/result`, {
-      success: false,
-      error: e.message,
-    });
+    // Submit failure with retry — don't lose the error report
+    try {
+      await apiPostWithRetry(`/extension/tasks/${task.id}/result`, {
+        success: false,
+        error: e.message,
+      });
+    } catch (submitErr) {
+      console.error(`[SocyBase] Failed to submit error result for task ${task.id}:`, submitErr.message);
+    }
   }
 }
 
@@ -812,13 +858,18 @@ async function processTask(task) {
 
 async function pollForTasks() {
   if (!(await isConfigured())) return;
+  if (processingTask) return; // Skip if already processing
 
   try {
     const data = await apiGet("/extension/tasks");
     if (data.tasks && data.tasks.length > 0) {
       console.log(`[SocyBase] Found ${data.tasks.length} pending task(s)`);
-      // Process one task at a time
-      await processTask(data.tasks[0]);
+      processingTask = true;
+      try {
+        await processTask(data.tasks[0]);
+      } finally {
+        processingTask = false;
+      }
     }
   } catch (e) {
     console.warn("[SocyBase] Poll error:", e.message);

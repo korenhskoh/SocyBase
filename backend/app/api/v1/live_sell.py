@@ -384,10 +384,10 @@ async def export_orders(
             o.reply_message or "",
         ])
 
-    output.seek(0)
+    csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
+        iter([csv_bytes]),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=live_orders_{session_id}.csv"},
     )
 
