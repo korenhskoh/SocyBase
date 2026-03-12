@@ -510,6 +510,7 @@ async def _execute_post_discovery(job_id: str, celery_task):
 
                 logger.info(f"[Job {job_id}] Stage 2: Fetching posts for {page_id}")
                 await _append_log(db, job, "info", "fetch_posts", f"Fetching posts for {page_id}")
+                await _save_pipeline_state(db, job, "fetch_posts")
 
                 # Settings
                 token_type = job_settings.get("token_type", "EAAAAU")
@@ -975,9 +976,15 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         current_state = (job.error_details or {}).get("pipeline_state", {})
                         failed_stage = current_state.get("current_stage", "unknown")
 
-                        # Add user-friendly hint for permission errors
+                        # Add user-friendly hint for common errors
                         err_str = str(e)
-                        if "code 100" in err_str or "does not exist" in err_str or "missing permissions" in err_str:
+                        if "code 12" in err_str:
+                            job.error_message = (
+                                "This page's feed is not accessible with the current API version. "
+                                "This is a known limitation for some pages. "
+                                "Please try a different page or contact support."
+                            )
+                        elif "code 100" in err_str or "does not exist" in err_str or "missing permissions" in err_str:
                             job.error_message = (
                                 "This page cannot be scraped due to permission restrictions. "
                                 "Not all Facebook pages allow post access. "
