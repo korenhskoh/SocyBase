@@ -245,7 +245,7 @@ def _unwrap_response(raw: dict) -> tuple[list[dict], dict]:
     return posts, paging
 
 
-def _next_page_params(paging: dict) -> dict | None:
+def _next_page_params(paging: dict, posts: list[dict] | None = None) -> dict | None:
     """
     Extract ALL pagination parameters from the AKNG paging ``next`` URL.
 
@@ -253,7 +253,9 @@ def _next_page_params(paging: dict) -> dict | None:
     AND ``__paging_token`` to advance.  Extracting only ``__paging_token``
     (without ``until``) causes the API to return the first page repeatedly.
 
-    Falls back to standard ``cursors.after`` format.
+    When ``next`` URL is missing, constructs time-based pagination from the
+    oldest post's ``created_time`` (more reliable for feeds than cursors.after).
+    Falls back to standard ``cursors.after`` as last resort.
     """
     from urllib.parse import urlparse, parse_qs
 
@@ -270,7 +272,26 @@ def _next_page_params(paging: dict) -> dict | None:
         if params:
             return params
 
-    # Fallback: standard Facebook cursors format
+    # Fallback: construct time-based pagination from oldest post's created_time.
+    # Feed endpoints paginate by time (until=UNIX_TS), not by cursor (after=TOKEN).
+    # When AKNG omits the next URL but we have posts, this is more reliable.
+    if posts:
+        oldest_ts: int | None = None
+        for post in posts:
+            ct = post.get("created_time")
+            if ct:
+                try:
+                    dt = datetime.fromisoformat(ct)
+                    unix_ts = int(dt.timestamp())
+                    if oldest_ts is None or unix_ts < oldest_ts:
+                        oldest_ts = unix_ts
+                except (ValueError, TypeError):
+                    continue
+        if oldest_ts is not None:
+            logger.info("_next_page_params: no next URL, using time-based fallback until=%s", oldest_ts)
+            return {"until": str(oldest_ts)}
+
+    # Last resort: standard Facebook cursors format
     cursors = paging.get("cursors", {})
     after = cursors.get("after")
     if after:
@@ -771,7 +792,8 @@ async def _execute_post_discovery(job_id: str, celery_task):
                         break
 
                     # Advance pagination — extract all params (until + __paging_token etc.)
-                    page_params = _next_page_params(paging)
+                    # Pass posts_data so time-based fallback can use oldest post's timestamp
+                    page_params = _next_page_params(paging, posts_data)
                     if not page_params:
                         break
 
