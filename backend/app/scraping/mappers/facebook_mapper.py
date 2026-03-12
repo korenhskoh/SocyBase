@@ -268,6 +268,16 @@ class FacebookProfileMapper(AbstractProfileMapper):
             next_cursor = cursors["after"]
         if paging.get("next"):
             has_next = True
+            # Fallback: extract cursor from paging.next URL if cursors.after is missing
+            if not next_cursor:
+                try:
+                    from urllib.parse import urlparse, parse_qs
+                    qs = parse_qs(urlparse(paging["next"]).query)
+                    next_cursor = qs.get("after", [None])[0]
+                    if next_cursor:
+                        logger.info("extract_comments: recovered cursor from paging.next URL")
+                except Exception:
+                    pass
 
         return {
             "comments": comments_list,

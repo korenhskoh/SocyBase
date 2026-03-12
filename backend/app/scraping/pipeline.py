@@ -461,7 +461,7 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                 # Pagination loop (normal or continuing from cursor)
                 seen_cursors = set()  # Detect cursor cycling (API looping back)
-                MAX_COMMENT_PAGES = 500  # Safety limit: 500 * 25 = 12,500 comments max
+                MAX_COMMENT_PAGES = 1000  # Safety limit: 1000 * 25 = 25,000 comments max
                 if not resume_from_job_id or next_cursor:
                     while page_count < MAX_COMMENT_PAGES:
                         if not await rate_limiter.wait_for_slot(
@@ -539,7 +539,42 @@ async def _execute_pipeline(job_id: str, celery_task):
                             await _append_log(db, job, "warn", "fetch_comments",
                                 f"API error code {err_code} for post {post_id}")
 
-                            if page_count == 0:
+                            if page_count > 0:
+                                # Non-first page: retry up to 3 times with backoff before giving up
+                                _retry_ok = False
+                                for _body_retry in range(3):
+                                    wait = 5 * (_body_retry + 1)
+                                    logger.info(f"[Job {job_id}] Retrying wrapped error on page {page_count + 1} ({_body_retry + 1}/3) in {wait}s")
+                                    await _append_log(db, job, "warn", "fetch_comments",
+                                        f"Wrapped error on page {page_count + 1}, retrying ({_body_retry + 1}/3)")
+                                    await asyncio.sleep(wait)
+                                    await rate_limiter.wait_for_slot("akng_api_global", max_requests=settings_rate_limit())
+                                    try:
+                                        retry_resp = await client.get_post_comments(
+                                            post_id, is_group=is_group, after=next_cursor, limit=25,
+                                        )
+                                        _ri = retry_resp
+                                        if "success" in retry_resp and isinstance(retry_resp.get("data"), dict):
+                                            _ri = retry_resp["data"]
+                                        if "error" not in _ri or not isinstance(_ri.get("error"), dict):
+                                            response = retry_resp
+                                            _retry_ok = True
+                                            logger.info(f"[Job {job_id}] Wrapped error retry succeeded on attempt {_body_retry + 1}")
+                                            break
+                                    except Exception as _re:
+                                        logger.warning(f"[Job {job_id}] Wrapped error retry attempt {_body_retry + 1} failed: {_re}")
+
+                                if not _retry_ok:
+                                    logger.warning(
+                                        f"[Job {job_id}] Wrapped API error persists after retries on page {page_count + 1}, "
+                                        f"continuing with {len(all_comments)} comments collected"
+                                    )
+                                    await _append_log(db, job, "warn", "fetch_comments",
+                                        f"API error persists on page {page_count + 1} after retries, keeping {len(all_comments)} comments")
+                                    break
+                                # If retry succeeded, fall through to extract_comments_data below
+
+                            elif page_count == 0:
                                 # First page failed — try alternative post IDs / endpoints
                                 fallback_response = None
 
@@ -651,15 +686,6 @@ async def _execute_pipeline(job_id: str, celery_task):
                                         )
                                         await db.commit()
                                         break
-                            else:
-                                # Error on non-first page — keep what we have
-                                logger.warning(
-                                    f"[Job {job_id}] API error on page {page_count + 1}, "
-                                    f"continuing with {len(all_comments)} comments collected"
-                                )
-                                await _append_log(db, job, "warn", "fetch_comments",
-                                    f"API error on page {page_count + 1}, keeping {len(all_comments)} comments")
-                                break
 
                         extracted = mapper.extract_comments_data(response, is_group=is_group)
                         logger.info(
@@ -688,6 +714,13 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                         # Save cursor after each page
                         next_cursor = extracted.get("next_cursor")
+                        has_next = extracted.get("has_next", False)
+
+                        # Warn if API says more pages exist but no cursor available
+                        if has_next and not next_cursor:
+                            logger.warning(f"[Job {job_id}] has_next=True but no cursor on page {page_count}, pagination may be incomplete")
+                            await _append_log(db, job, "warn", "fetch_comments",
+                                f"Page {page_count}: API signals more comments but no cursor available")
 
                         # Stop if page returned 0 comments (exhausted)
                         if not extracted["comments"]:
