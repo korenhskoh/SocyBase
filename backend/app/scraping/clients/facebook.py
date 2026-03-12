@@ -312,11 +312,16 @@ class FacebookGraphClient(AbstractSocialClient):
         ``next`` URL) which includes ``until`` + ``__paging_token`` — both are
         required for Facebook's time-based feed pagination to advance.
         """
-        url = f"{self.base_url}/{self.api_version}/{page_id}/feed"
+        # Use v1.0 per AKNG API docs (not self.api_version which is for Meta direct API)
+        url = f"{self.base_url}/v1.0/{page_id}/feed"
         params = {
             "access_token": self.access_token,
             "token_type": token_type,
-            "fields": "message,updated_time,created_time,from,comments.limit(0).summary(total_count),reactions.limit(0).summary(total_count),shares,attachments",
+            # Exclude comments/reactions — AKNG embeds 50+ comments per post which
+            # bloats the response and causes pagination to break (no next URL).
+            # Comment/reaction counts default to 0; users get accurate counts when
+            # they run comment scraping on individual posts.
+            "fields": "message,updated_time,created_time,from,shares,attachments",
             "limit": limit,
             "order": order,
         }
