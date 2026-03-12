@@ -46,6 +46,7 @@ export default function JobDetailPage() {
   const [author, setAuthor] = useState<PageAuthorProfile | null>(null);
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
   const [showOnlyHighPotential, setShowOnlyHighPotential] = useState(false);
+  const [includeRelatedPosts, setIncludeRelatedPosts] = useState(false);
   const [creatingJobs, setCreatingJobs] = useState(false);
   const [continuationJobId, setContinuationJobId] = useState<string | null>(null);
   const [continuationStatus, setContinuationStatus] = useState<string | null>(null);
@@ -57,6 +58,7 @@ export default function JobDetailPage() {
   const [liveProgress, setLiveProgress] = useState<ProgressEvent | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastPostsFetchRef = useRef<number>(0);
+  const includeRelatedRef = useRef(false);
   const fetchPostsRef = useRef<() => void>(() => {});
   const fetchProfilesRef = useRef<() => void>(() => {});
   const fetchJobRef = useRef<(opts?: { loadResults?: boolean }) => void>(() => {});
@@ -161,7 +163,7 @@ export default function JobDetailPage() {
     const pg = page ?? postsPage;
     const ps = pageSize ?? postsPageSize;
     try {
-      const res = await jobsApi.getPosts(jobId, { page: pg, page_size: ps });
+      const res = await jobsApi.getPosts(jobId, { page: pg, page_size: ps, include_related: includeRelatedRef.current });
       const data = res.data;
       if (data.items) {
         setPosts(data.items);
@@ -176,6 +178,7 @@ export default function JobDetailPage() {
   }, [jobId, postsPage, postsPageSize]);
 
   // Keep refs current so SSE handler always uses latest fetch functions
+  includeRelatedRef.current = includeRelatedPosts;
   fetchPostsRef.current = fetchPosts;
   fetchProfilesRef.current = fetchProfiles;
 
@@ -430,11 +433,11 @@ export default function JobDetailPage() {
     return () => clearInterval(interval);
   }, [job?.status, job?.job_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fetch posts when pagination changes
+  // Re-fetch posts when pagination or include_related toggle changes
   useEffect(() => {
     if (!job || job.job_type !== "post_discovery") return;
     fetchPosts();
-  }, [postsPage, postsPageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [postsPage, postsPageSize, includeRelatedPosts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch profiles when pagination changes
   useEffect(() => {
@@ -781,7 +784,7 @@ export default function JobDetailPage() {
               stageIcon = "M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z";
               stageColor = "#7C5CFF";
               stageText = "Discovering posts";
-              const postsFound = stageData.total_posts || liveProgress?.result_row_count || postsTotal || posts.length || 0;
+              const postsFound = stageData.total_posts ?? liveProgress?.result_row_count ?? 0;
               const pagesDone = stageData.pages_fetched || 0;
               const maxPg = stageData.max_pages || 0;
               detailText = `${formatNumber(postsFound)} posts found`;
@@ -956,8 +959,12 @@ export default function JobDetailPage() {
       {(() => {
         const isRunning = job.status === "running" || job.status === "queued";
         const liveTotal = isPostDiscovery
-          ? (liveProgress?.result_row_count ?? job.result_row_count) || postsTotal || posts.length
-          : (isRunning ? (liveProgress?.processed_items ?? job.processed_items ?? 0) : 0) || job.result_row_count || profilesTotal || profiles.length;
+          ? (isRunning
+              ? (liveProgress?.result_row_count ?? job.result_row_count ?? 0)
+              : (postsTotal || job.result_row_count || posts.length))
+          : (isRunning
+              ? (liveProgress?.processed_items ?? job.processed_items ?? 0)
+              : (job.result_row_count || profilesTotal || profiles.length));
         const liveCredits = isRunning
           ? (liveProgress?.stage_data as any)?.pages_fetched || job.credits_used
           : job.credits_used;
@@ -1287,6 +1294,15 @@ export default function JobDetailPage() {
                   </button>
                 ))}
               </div>
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeRelatedPosts}
+                  onChange={(e) => { setIncludeRelatedPosts(e.target.checked); setPostsPage(1); }}
+                  className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 text-primary-500 focus:ring-primary-500/30 focus:ring-offset-0 cursor-pointer"
+                />
+                <span className="text-xs text-white/40">Include previous scrapes</span>
+              </label>
               <button
                 onClick={handleScrapeSelected}
                 disabled={creatingJobs || selectedPosts.size === 0}

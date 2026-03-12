@@ -692,7 +692,7 @@ async def get_job_posts(
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
-    include_related: bool = Query(True),
+    include_related: bool = Query(False),
 ):
     """Get discovered posts for a post_discovery job.
 

@@ -105,7 +105,7 @@ export const jobsApi = {
   hardDelete: (id: string) => api.delete(`/jobs/${id}/delete`),
   batchAction: (data: { action: string; job_ids: string[] }) => api.post("/jobs/batch", data),
   getLogs: (id: string) => api.get(`/jobs/${id}/logs`),
-  getPosts: (id: string, params?: { page?: number; page_size?: number }) =>
+  getPosts: (id: string, params?: { page?: number; page_size?: number; include_related?: boolean }) =>
     api.get(`/jobs/${id}/posts`, { params }),
   createFromPosts: (data: { post_ids: string[]; settings?: Record<string, unknown> }) =>
     api.post("/jobs/create-from-posts", data),
