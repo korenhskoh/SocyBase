@@ -140,27 +140,43 @@ class FacebookGraphClient(AbstractSocialClient):
         after: str | None = None,
         limit: int = 25,
         comment_filter: str | None = None,
+        use_direct: bool = False,
     ) -> dict:
         """
-        Fetch comments for a post with pagination via nested field expansion.
+        Fetch comments for a post with pagination.
 
-        Uses GET /{post_id}?fields=comments.limit(N).after(CURSOR){...}
+        **Field expansion** (default): GET /{post_id}?fields=comments.limit(N)...
+        **Direct endpoint** (use_direct=True): GET /v1.0/{post_id}/comments?after=...
 
-        ``comment_filter`` can be:
+        ``comment_filter`` can be (field expansion only):
         - None (default): no filter modifier
-        - "stream": .filter(stream) — returns ALL comments chronologically,
-          often with a different/larger cursor space for live videos
-        - "toplevel": .filter(toplevel) — top-level only, no reply nesting
+        - "stream": .filter(stream) — ALL comments chronologically
+        - "toplevel": .filter(toplevel) — top-level only
 
         Note: token_type is NOT supported by this endpoint (only by feed).
         """
         comment_fields = "message,created_time,from,like_count,can_remove,message_tags"
         reply_fields = "comments.limit(25)"
 
+        if use_direct:
+            # Direct /comments endpoint with version prefix (matches paging.next URL format)
+            url = f"{self.base_url}/v1.0/{post_id}/comments"
+            params = {
+                "access_token": self.access_token,
+                "fields": f"{comment_fields},{reply_fields}",
+                "limit": limit,
+            }
+            if after:
+                params["after"] = after
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+
+        # Field expansion approach
         url = f"{self.base_url}/{post_id}"
 
         # Build field expansion string with optional filter + cursor
-        parts = [f"comments"]
+        parts = ["comments"]
         if comment_filter:
             parts.append(f".filter({comment_filter})")
         parts.append(f".limit({limit})")

@@ -464,10 +464,11 @@ async def _execute_pipeline(job_id: str, celery_task):
                 seen_comment_ids = set()  # Track comment IDs to verify cursor cycling
                 cursor_cycle_count = 0  # How many times we've seen a recycled cursor
                 MAX_CURSOR_CYCLES = 5  # Stop after this many recycled-cursor pages with no new data
-                # Filter fallback chain: try no filter → stream → toplevel
+                # Filter fallback chain: try no filter → stream → toplevel → direct /v1.0/ endpoint
                 COMMENT_FILTERS = [None, "stream", "toplevel"]
                 current_filter_idx = 0
                 current_comment_filter = COMMENT_FILTERS[0]
+                use_direct_endpoint = False  # Final fallback: direct /v1.0/{id}/comments endpoint
                 _switching_filter = False  # Flag to avoid breaking when switching filters
                 MAX_COMMENT_PAGES = 1000  # Safety limit: 1000 * 25 = 25,000 comments max
                 if not resume_from_job_id or next_cursor:
@@ -490,6 +491,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                                     after=next_cursor,
                                     limit=25,
                                     comment_filter=current_comment_filter,
+                                    use_direct=use_direct_endpoint,
                                 )
                                 break
                             except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
@@ -562,6 +564,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                                         retry_resp = await client.get_post_comments(
                                             post_id, is_group=is_group, after=next_cursor, limit=25,
                                             comment_filter=current_comment_filter,
+                                            use_direct=use_direct_endpoint,
                                         )
                                         _ri = retry_resp
                                         if "success" in retry_resp and isinstance(retry_resp.get("data"), dict):
@@ -782,15 +785,29 @@ async def _execute_pipeline(job_id: str, celery_task):
                                         seen_cursors = {}
                                         cursor_cycle_count = 0
                                         next_cursor = None  # Start from page 1 with new filter
+                                    elif not use_direct_endpoint:
+                                        # All filters exhausted — try direct /v1.0/ endpoint as final fallback
+                                        count_so_far = len(all_comments)
+                                        logger.info(
+                                            f"[Job {job_id}] All filters exhausted on page {page_count}, "
+                                            f"switching to direct /v1.0/ endpoint. Have {count_so_far} comments."
+                                        )
+                                        await _append_log(db, job, "info", "fetch_comments",
+                                            f"All filters exhausted ({count_so_far} comments), trying direct /v1.0/ endpoint")
+                                        use_direct_endpoint = True
+                                        _switching_filter = True
+                                        seen_cursors = {}
+                                        cursor_cycle_count = 0
+                                        next_cursor = None  # Start direct endpoint from page 1
                                     else:
-                                        # All filters exhausted — real end of data
+                                        # Direct endpoint also cycled — real end of data
                                         logger.warning(
-                                            f"[Job {job_id}] All filters exhausted on page {page_count} "
-                                            f"(last: '{filter_label}', matches page {orig_page}), 0 new comments. Stopping. "
+                                            f"[Job {job_id}] All strategies exhausted on page {page_count} "
+                                            f"(matches page {orig_page}), 0 new comments. Stopping. "
                                             f"Cursor: {next_cursor}"
                                         )
                                         await _append_log(db, job, "warn", "fetch_comments",
-                                            f"All filters exhausted on page {page_count}, stopping with {len(all_comments)} comments")
+                                            f"All strategies exhausted on page {page_count}, stopping with {len(all_comments)} comments")
                                         next_cursor = None
                                 else:
                                     # Cursor recycled but page had new comments → API reused cursor, keep going
