@@ -460,7 +460,10 @@ async def _execute_pipeline(job_id: str, celery_task):
                     logger.info(f"[Job {job_id}] Starting from user-selected cursor")
 
                 # Pagination loop (normal or continuing from cursor)
-                seen_cursors = set()  # Detect cursor cycling (API looping back)
+                seen_cursors = {}  # cursor → page_number mapping for cycle detection
+                seen_comment_ids = set()  # Track comment IDs to verify cursor cycling
+                cursor_cycle_count = 0  # How many times we've seen a recycled cursor
+                MAX_CURSOR_CYCLES = 5  # Stop after this many recycled-cursor pages with no new data
                 MAX_COMMENT_PAGES = 1000  # Safety limit: 1000 * 25 = 25,000 comments max
                 if not resume_from_job_id or next_cursor:
                     while page_count < MAX_COMMENT_PAGES:
@@ -691,9 +694,14 @@ async def _execute_pipeline(job_id: str, celery_task):
                         logger.info(
                             "[Job %s] Page %d extraction: %d comments, next_cursor=%s, has_next=%s",
                             job_id, page_count + 1, len(extracted["comments"]),
-                            extracted.get("next_cursor", "NONE")[:50] if extracted.get("next_cursor") else "NONE",
+                            extracted.get("next_cursor", "NONE") or "NONE",
                             extracted.get("has_next"),
                         )
+                        # Count how many comments on this page are genuinely new
+                        page_comment_ids = {c["comment_id"] for c in extracted["comments"]}
+                        new_on_this_page = page_comment_ids - seen_comment_ids
+                        seen_comment_ids.update(page_comment_ids)
+
                         all_comments.extend(extracted["comments"])
                         total_top_level += extracted.get("top_level_count", 0)
                         total_replies += extracted.get("reply_count", 0)
@@ -727,15 +735,39 @@ async def _execute_pipeline(job_id: str, celery_task):
                             logger.info(f"[Job {job_id}] Empty page {page_count}, stopping pagination")
                             next_cursor = None
 
-                        # Stop if cursor is cycling (API looping back to start)
+                        # Cursor cycling detection — don't stop immediately, verify with comment IDs
                         if next_cursor:
                             if next_cursor in seen_cursors:
-                                logger.warning(f"[Job {job_id}] Duplicate cursor detected on page {page_count}, stopping pagination")
-                                await _append_log(db, job, "warn", "fetch_comments",
-                                    f"Cursor cycle detected on page {page_count}, stopping")
-                                next_cursor = None
+                                orig_page = seen_cursors[next_cursor]
+                                if len(new_on_this_page) == 0:
+                                    # Cursor recycled AND zero new comments → real end of data
+                                    cursor_cycle_count += 1
+                                    logger.warning(
+                                        f"[Job {job_id}] Cursor from page {page_count} matches page {orig_page}'s cursor "
+                                        f"with 0 new comments (cycle {cursor_cycle_count}/{MAX_CURSOR_CYCLES}), stopping. "
+                                        f"Cursor: {next_cursor}"
+                                    )
+                                    await _append_log(db, job, "warn", "fetch_comments",
+                                        f"Cursor cycle on page {page_count} (same as page {orig_page}) with no new comments, stopping")
+                                    next_cursor = None
+                                else:
+                                    # Cursor recycled but page had new comments → API reused cursor, keep going
+                                    cursor_cycle_count += 1
+                                    logger.info(
+                                        f"[Job {job_id}] Cursor from page {page_count} matches page {orig_page} but "
+                                        f"{len(new_on_this_page)} new comments found (cycle {cursor_cycle_count}/{MAX_CURSOR_CYCLES}), continuing. "
+                                        f"Cursor: {next_cursor}"
+                                    )
+                                    if cursor_cycle_count >= MAX_CURSOR_CYCLES:
+                                        logger.warning(
+                                            f"[Job {job_id}] Hit max cursor cycles ({MAX_CURSOR_CYCLES}), stopping pagination"
+                                        )
+                                        await _append_log(db, job, "warn", "fetch_comments",
+                                            f"Hit max cursor cycles ({MAX_CURSOR_CYCLES}) on page {page_count}, stopping")
+                                        next_cursor = None
                             else:
-                                seen_cursors.add(next_cursor)
+                                seen_cursors[next_cursor] = page_count
+                                cursor_cycle_count = 0  # Reset on genuinely new cursor
 
                         job.progress_pct = _calc_stage_progress("fetch_comments", pages_fetched=page_count)
                         await _save_pipeline_state(
