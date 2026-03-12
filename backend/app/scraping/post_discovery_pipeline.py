@@ -118,12 +118,9 @@ def _extract_post_fields(item: dict) -> dict:
         or comments_obj.get("summary", {}).get("total_count")
         or 0
     )
-    reactions_obj = item.get("reactions") or {}
-    reaction_count = (
-        reactions_obj.get("count")
-        or reactions_obj.get("summary", {}).get("total_count")
-        or 0
-    )
+    # Reactions not available on AKNG v1.0 (requires v2.6+, returns code 12).
+    # Hardcode 0 — the field is excluded from the feed request.
+    reaction_count = 0
     share_count = (item.get("shares") or {}).get("count", 0)
 
     # Attachments
