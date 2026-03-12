@@ -317,11 +317,11 @@ class FacebookGraphClient(AbstractSocialClient):
         params = {
             "access_token": self.access_token,
             "token_type": token_type,
-            # Exclude comments/reactions — AKNG embeds 50+ comments per post which
-            # bloats the response and causes pagination to break (no next URL).
-            # Comment/reaction counts default to 0; users get accurate counts when
-            # they run comment scraping on individual posts.
-            "fields": "message,updated_time,created_time,from,shares,attachments",
+            # Use .limit(1) on comments/reactions — AKNG always returns the count
+            # field but without limit it embeds 50+ items per post, bloating the
+            # response so much that pagination breaks.  .limit(1) keeps the count
+            # while reducing each post's payload from ~5KB to ~100 bytes.
+            "fields": "message,updated_time,created_time,from,comments.limit(1),reactions.limit(1),shares,attachments",
             "limit": limit,
             "order": order,
         }
