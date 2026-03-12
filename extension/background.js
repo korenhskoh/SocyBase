@@ -7,7 +7,7 @@
  */
 
 const POLL_INTERVAL_MS = 5000;
-const TASK_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes max per task (backend waits 10min)
+const TASK_TIMEOUT_MS = 110 * 1000; // 110s task timeout (backend waits 2min = 120s)
 
 let pollTimer = null;
 let processingTask = false; // Guard against overlapping task processing
@@ -828,7 +828,7 @@ async function processTask(task) {
   })();
 
   const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("Task timed out after 8 minutes")), TASK_TIMEOUT_MS)
+    setTimeout(() => reject(new Error("Task timed out after 2 minutes")), TASK_TIMEOUT_MS)
   );
 
   try {
