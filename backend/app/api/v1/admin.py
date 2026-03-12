@@ -1080,7 +1080,7 @@ class CreatePlatformRequest(BaseModel):
     is_enabled: bool = True
     credit_cost_per_profile: int = Field(1, ge=0)
     credit_cost_per_comment_page: int = Field(1, ge=0)
-    credit_cost_per_post: int = Field(1, ge=0)
+    credit_cost_per_page: int = Field(1, ge=0)
 
 
 class UpdatePlatformRequest(BaseModel):
@@ -1088,7 +1088,7 @@ class UpdatePlatformRequest(BaseModel):
     is_enabled: bool | None = None
     credit_cost_per_profile: int | None = Field(None, ge=0)
     credit_cost_per_comment_page: int | None = Field(None, ge=0)
-    credit_cost_per_post: int | None = Field(None, ge=0)
+    credit_cost_per_page: int | None = Field(None, ge=0)
 
 
 @router.get("/platforms")
@@ -1109,7 +1109,7 @@ async def admin_list_platforms(
             "is_enabled": p.is_enabled,
             "credit_cost_per_profile": p.credit_cost_per_profile,
             "credit_cost_per_comment_page": p.credit_cost_per_comment_page,
-            "credit_cost_per_post": p.credit_cost_per_post,
+            "credit_cost_per_page": p.credit_cost_per_page,
         }
         for p in platforms
     ]
@@ -1136,7 +1136,7 @@ async def create_platform(
         is_enabled=data.is_enabled,
         credit_cost_per_profile=data.credit_cost_per_profile,
         credit_cost_per_comment_page=data.credit_cost_per_comment_page,
-        credit_cost_per_post=data.credit_cost_per_post,
+        credit_cost_per_page=data.credit_cost_per_page,
     )
     db.add(platform)
     await db.flush()
@@ -1147,7 +1147,7 @@ async def create_platform(
         "is_enabled": platform.is_enabled,
         "credit_cost_per_profile": platform.credit_cost_per_profile,
         "credit_cost_per_comment_page": platform.credit_cost_per_comment_page,
-        "credit_cost_per_post": platform.credit_cost_per_post,
+        "credit_cost_per_page": platform.credit_cost_per_page,
     }
 
 
@@ -1178,7 +1178,7 @@ async def update_platform(
         "is_enabled": platform.is_enabled,
         "credit_cost_per_profile": platform.credit_cost_per_profile,
         "credit_cost_per_comment_page": platform.credit_cost_per_comment_page,
-        "credit_cost_per_post": platform.credit_cost_per_post,
+        "credit_cost_per_page": platform.credit_cost_per_page,
     }
 
 

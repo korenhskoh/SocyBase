@@ -169,14 +169,14 @@ export const platformsApi = {
     is_enabled?: boolean;
     credit_cost_per_profile?: number;
     credit_cost_per_comment_page?: number;
-    credit_cost_per_post?: number;
+    credit_cost_per_page?: number;
   }) => api.post("/admin/platforms", data),
   update: (id: string, data: {
     display_name?: string;
     is_enabled?: boolean;
     credit_cost_per_profile?: number;
     credit_cost_per_comment_page?: number;
-    credit_cost_per_post?: number;
+    credit_cost_per_page?: number;
   }) => api.put(`/admin/platforms/${id}`, data),
   delete: (id: string) => api.delete(`/admin/platforms/${id}`),
 };

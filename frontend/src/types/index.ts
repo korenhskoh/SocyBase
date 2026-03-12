@@ -186,7 +186,7 @@ export interface Platform {
   is_enabled: boolean;
   credit_cost_per_profile: number;
   credit_cost_per_comment_page: number;
-  credit_cost_per_post: number;
+  credit_cost_per_page: number;
 }
 
 export interface AdminDashboard {

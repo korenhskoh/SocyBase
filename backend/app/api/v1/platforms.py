@@ -16,7 +16,7 @@ class PlatformResponse(BaseModel):
     is_enabled: bool
     credit_cost_per_profile: int
     credit_cost_per_comment_page: int
-    credit_cost_per_post: int = 1
+    credit_cost_per_page: int = 1
 
     model_config = {"from_attributes": True}
 

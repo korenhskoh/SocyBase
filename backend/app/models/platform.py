@@ -18,7 +18,9 @@ class Platform(Base):
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     credit_cost_per_profile: Mapped[int] = mapped_column(Integer, default=1)
     credit_cost_per_comment_page: Mapped[int] = mapped_column(Integer, default=1)
-    credit_cost_per_post: Mapped[int] = mapped_column(Integer, default=1)
+    # DB column is still "credit_cost_per_post" (no migration needed),
+    # but Python attr is "credit_cost_per_page" since post discovery charges per page.
+    credit_cost_per_page: Mapped[int] = mapped_column("credit_cost_per_post", Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

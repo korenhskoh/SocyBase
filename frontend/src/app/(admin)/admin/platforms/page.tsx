@@ -10,7 +10,7 @@ interface EditValues {
   display_name?: string;
   credit_cost_per_profile?: number;
   credit_cost_per_comment_page?: number;
-  credit_cost_per_post?: number;
+  credit_cost_per_page?: number;
 }
 
 export default function AdminPlatformsPage() {
@@ -25,7 +25,7 @@ export default function AdminPlatformsPage() {
     display_name: "",
     credit_cost_per_profile: 1,
     credit_cost_per_comment_page: 1,
-    credit_cost_per_post: 1,
+    credit_cost_per_page: 1,
   });
 
   const fetchPlatforms = () => {
@@ -45,7 +45,7 @@ export default function AdminPlatformsPage() {
     try {
       await platformsApi.create(newPlatform);
       setShowCreate(false);
-      setNewPlatform({ name: "", display_name: "", credit_cost_per_profile: 1, credit_cost_per_comment_page: 1, credit_cost_per_post: 1 });
+      setNewPlatform({ name: "", display_name: "", credit_cost_per_profile: 1, credit_cost_per_comment_page: 1, credit_cost_per_page: 1 });
       fetchPlatforms();
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to create platform");
@@ -58,7 +58,7 @@ export default function AdminPlatformsPage() {
       display_name: p.display_name,
       credit_cost_per_profile: p.credit_cost_per_profile,
       credit_cost_per_comment_page: p.credit_cost_per_comment_page,
-      credit_cost_per_post: p.credit_cost_per_post ?? 1,
+      credit_cost_per_page: p.credit_cost_per_page ?? 1,
     });
   };
 
@@ -169,12 +169,12 @@ export default function AdminPlatformsPage() {
               />
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1">Credits / Job Post</label>
+              <label className="block text-xs text-white/40 mb-1">Credits / Page</label>
               <input
                 type="number"
                 min={0}
-                value={newPlatform.credit_cost_per_post}
-                onChange={(e) => setNewPlatform({ ...newPlatform, credit_cost_per_post: parseInt(e.target.value) || 0 })}
+                value={newPlatform.credit_cost_per_page}
+                onChange={(e) => setNewPlatform({ ...newPlatform, credit_cost_per_page: parseInt(e.target.value) || 0 })}
                 className="input-glass text-sm"
               />
             </div>
@@ -209,7 +209,7 @@ export default function AdminPlatformsPage() {
                   <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Status</th>
                   <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Credits / Profile</th>
                   <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Credits / Comment</th>
-                  <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Credits / Post</th>
+                  <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Credits / Page</th>
                   <th className="text-left text-xs font-medium text-white/40 uppercase tracking-wider px-6 py-3">Actions</th>
                 </tr>
               </thead>
@@ -252,8 +252,8 @@ export default function AdminPlatformsPage() {
                           <input
                             type="number"
                             min={0}
-                            value={editValues.credit_cost_per_post ?? 0}
-                            onChange={(e) => setEditValues({ ...editValues, credit_cost_per_post: parseInt(e.target.value) || 0 })}
+                            value={editValues.credit_cost_per_page ?? 0}
+                            onChange={(e) => setEditValues({ ...editValues, credit_cost_per_page: parseInt(e.target.value) || 0 })}
                             className="input-glass text-sm w-16"
                           />
                         </td>
@@ -292,7 +292,7 @@ export default function AdminPlatformsPage() {
                         </td>
                         <td className="px-6 py-4 text-sm text-white/60">{p.credit_cost_per_profile}</td>
                         <td className="px-6 py-4 text-sm text-white/60">{p.credit_cost_per_comment_page}</td>
-                        <td className="px-6 py-4 text-sm text-white/60">{p.credit_cost_per_post ?? 1}</td>
+                        <td className="px-6 py-4 text-sm text-white/60">{p.credit_cost_per_page ?? 1}</td>
                         <td className="px-6 py-4">
                           <div className="flex gap-2">
                             <button

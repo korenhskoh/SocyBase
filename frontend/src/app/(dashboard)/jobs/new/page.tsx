@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { jobsApi, creditsApi } from "@/lib/api-client";
+import { jobsApi, creditsApi, platformsApi } from "@/lib/api-client";
 import type { CursorHistoryItem } from "@/types";
 
 // ── Platform & scrape type definitions ────────────────────────────────
@@ -119,6 +119,8 @@ function NewJobPage() {
 
   // Credit balance for cost warnings
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  // Platform credit cost per page (admin-configurable "Credits / Post" setting)
+  const [creditCostPerPage, setCreditCostPerPage] = useState(1);
 
   // Tutorial video URLs + modal
   const [tutorialVideos, setTutorialVideos] = useState<Record<string, string>>({});
@@ -126,6 +128,10 @@ function NewJobPage() {
 
   useEffect(() => {
     creditsApi.getBalance().then((r) => setCreditBalance(r.data?.balance ?? null)).catch(() => {});
+    platformsApi.list().then((r) => {
+      const fb = (r.data || []).find((p: { name: string }) => p.name === "facebook");
+      if (fb?.credit_cost_per_page) setCreditCostPerPage(fb.credit_cost_per_page);
+    }).catch(() => {});
     jobsApi.list({ page: 1, page_size: 50, status: "running" }).then((r) => {
       const running = Array.isArray(r.data) ? r.data.length : 0;
       jobsApi.list({ page: 1, page_size: 50, status: "queued" }).then((r2) => {
@@ -923,7 +929,7 @@ function NewJobPage() {
                     />
                   </div>
                   <p className="text-xs text-white/30">
-                    ~{maxPages * 10} posts estimated ({maxPages} pages x ~10 posts/page). Uses {maxPages} credits.
+                    ~{maxPages * 10} posts estimated ({maxPages} pages x ~10 posts/page). Uses {maxPages * creditCostPerPage} credits.
                   </p>
                 </div>
 
@@ -1014,7 +1020,7 @@ function NewJobPage() {
                   <span className="text-xs text-white/40">Credit cost</span>
                   <span className="text-sm font-medium text-white/70">
                     {selectedScrapeType.id === "post_discovery"
-                      ? `~${maxPages} credits (${maxPages} pages)`
+                      ? `~${maxPages * creditCostPerPage} credits (${maxPages} pages)`
                       : "1 credit per profile enriched"}
                   </span>
                 </div>
