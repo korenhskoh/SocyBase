@@ -77,7 +77,7 @@ async def _try_extension_comment_fallback(db, job, input_url: str) -> dict | Non
         job_id=job.id,
         task_type="scrape_comments",
         target_url=desktop_url,
-        limit=5000,
+        limit=30000,
     )
     db.add(task)
     await db.commit()
