@@ -706,13 +706,24 @@ async def _execute_pipeline(job_id: str, celery_task):
                         new_on_this_page = page_comment_ids - seen_comment_ids
                         seen_comment_ids.update(page_comment_ids)
 
-                        all_comments.extend(extracted["comments"])
-                        total_top_level += extracted.get("top_level_count", 0)
-                        total_replies += extracted.get("reply_count", 0)
+                        # Only add genuinely new comments (avoids duplicates when switching strategies)
+                        new_comments = [c for c in extracted["comments"] if c["comment_id"] in new_on_this_page]
+                        skipped = len(extracted["comments"]) - len(new_comments)
+                        if skipped > 0:
+                            logger.info(f"[Job {job_id}] Page {page_count + 1}: {len(new_comments)} new, {skipped} duplicate comments skipped")
+                        all_comments.extend(new_comments)
+                        # When all comments are new (normal case), use extracted counts directly.
+                        # When some are duplicates (strategy switch overlap), count only new ones.
+                        if len(new_comments) == len(extracted["comments"]):
+                            total_top_level += extracted.get("top_level_count", 0)
+                            total_replies += extracted.get("reply_count", 0)
+                        else:
+                            # Can't distinguish top-level vs reply in filtered set, count all as top-level
+                            total_top_level += len(new_comments)
                         page_count += 1
 
-                        # Store comments in DB
-                        for c in extracted["comments"]:
+                        # Store comments in DB (only new ones)
+                        for c in new_comments:
                             comment = ExtractedComment(
                                 job_id=job.id,
                                 post_id=post_id,
