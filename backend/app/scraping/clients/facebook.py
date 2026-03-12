@@ -145,8 +145,12 @@ class FacebookGraphClient(AbstractSocialClient):
         """
         Fetch comments for a post with pagination.
 
-        **Field expansion** (default): GET /{post_id}?fields=comments.limit(N)...
-        **Direct endpoint** (use_direct=True): GET /v1.0/{post_id}/comments?after=...
+        **Field expansion** (default):
+            GET /{post_id}?fields=comments.limit(N){...}&after=TOKEN
+            Per AKNG docs, `after` is a separate query parameter (not .after() in fields).
+
+        **Direct endpoint** (use_direct=True):
+            GET /v1.0/{post_id}/comments?after=TOKEN&fields=...
 
         ``comment_filter`` can be (field expansion only):
         - None (default): no filter modifier
@@ -172,16 +176,14 @@ class FacebookGraphClient(AbstractSocialClient):
             response.raise_for_status()
             return response.json()
 
-        # Field expansion approach
+        # Field expansion approach — after cursor as separate query param (per AKNG docs)
         url = f"{self.base_url}/{post_id}"
 
-        # Build field expansion string with optional filter + cursor
+        # Build field expansion string (filter only, NO .after() — cursor goes in query params)
         parts = ["comments"]
         if comment_filter:
             parts.append(f".filter({comment_filter})")
         parts.append(f".limit({limit})")
-        if after:
-            parts.append(f".after({after})")
         parts.append(f"{{{comment_fields},{reply_fields}}}")
         fields = "".join(parts)
 
@@ -189,6 +191,8 @@ class FacebookGraphClient(AbstractSocialClient):
             "access_token": self.access_token,
             "fields": fields,
         }
+        if after:
+            params["after"] = after
 
         response = await self.client.get(url, params=params)
         response.raise_for_status()
