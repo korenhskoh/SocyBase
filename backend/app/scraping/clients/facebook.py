@@ -139,6 +139,7 @@ class FacebookGraphClient(AbstractSocialClient):
         is_group: bool = False,
         after: str | None = None,
         limit: int = 25,
+        force_direct: bool = False,
     ) -> dict:
         """
         Fetch comments for a post with pagination.
@@ -148,45 +149,50 @@ class FacebookGraphClient(AbstractSocialClient):
         Strategy 2 (fallback): direct /comments endpoint — works for groups,
         has standard query-param pagination.
 
+        Set force_direct=True to skip Strategy 1 and go straight to Strategy 2
+        (useful when Strategy 1 cursor cycling is detected).
+
         Note: token_type is NOT supported by this endpoint (only by feed).
         """
         comment_fields = "message,created_time,from,like_count,can_remove,message_tags"
         reply_fields = "comments.limit(25)"
 
-        # Strategy 1: nested field expansion (wider access + pagination via .after())
-        url = f"{self.base_url}/{post_id}"
-        if after:
-            fields = f"comments.limit({limit}).after({after}){{{comment_fields},{reply_fields}}}"
-        else:
-            fields = f"comments.limit({limit}){{{comment_fields},{reply_fields}}}"
-        params = {
-            "access_token": self.access_token,
-            "fields": fields,
-        }
-
-        response = await self.client.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        # Check if AKNG returned an error
-        inner = data
-        if "success" in data and isinstance(data.get("data"), dict):
-            inner = data["data"]
-        if "error" in inner and isinstance(inner.get("error"), dict):
-            # Strategy 2: direct /comments endpoint
-            url = f"{self.base_url}/{post_id}/comments"
+        if not force_direct:
+            # Strategy 1: nested field expansion (wider access + pagination via .after())
+            url = f"{self.base_url}/{post_id}"
+            if after:
+                fields = f"comments.limit({limit}).after({after}){{{comment_fields},{reply_fields}}}"
+            else:
+                fields = f"comments.limit({limit}){{{comment_fields},{reply_fields}}}"
             params = {
                 "access_token": self.access_token,
-                "fields": f"{comment_fields},{reply_fields}",
-                "limit": limit,
+                "fields": fields,
             }
-            if after:
-                params["after"] = after
+
             response = await self.client.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
 
-        return data
+            # Check if AKNG returned an error
+            inner = data
+            if "success" in data and isinstance(data.get("data"), dict):
+                inner = data["data"]
+            if "error" not in inner or not isinstance(inner.get("error"), dict):
+                return data
+            # Strategy 1 returned error — fall through to Strategy 2
+
+        # Strategy 2: direct /comments endpoint
+        url = f"{self.base_url}/{post_id}/comments"
+        params = {
+            "access_token": self.access_token,
+            "fields": f"{comment_fields},{reply_fields}",
+            "limit": limit,
+        }
+        if after:
+            params["after"] = after
+        response = await self.client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
 
     async def get_user_profile(self, user_id: str) -> dict:
         """
