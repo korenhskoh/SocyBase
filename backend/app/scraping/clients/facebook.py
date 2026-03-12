@@ -316,7 +316,7 @@ class FacebookGraphClient(AbstractSocialClient):
         params = {
             "access_token": self.access_token,
             "token_type": token_type,
-            "fields": "message,updated_time,created_time,from,comments.summary(total_count),reactions.summary(total_count),shares,attachments",
+            "fields": "message,updated_time,created_time,from,comments.limit(0).summary(total_count),reactions.limit(0).summary(total_count),shares,attachments",
             "limit": limit,
             "order": order,
         }
