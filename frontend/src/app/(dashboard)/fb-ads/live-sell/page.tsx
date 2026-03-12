@@ -849,11 +849,24 @@ export default function LiveSellPage() {
       </div>
 
       {error && (
-        <div className="mb-6 p-3.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2">
-          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-3">
+          <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
           </svg>
-          {error}
+          <div className="flex-1">
+            <p>{error}</p>
+            {(error.toLowerCase().includes("no facebook page") || error.toLowerCase().includes("connect a page") || error.toLowerCase().includes("reconnect")) && (
+              <Link
+                href="/fb-ads/connect"
+                className="text-xs text-primary-400 hover:text-primary-300 mt-1 inline-flex items-center gap-1 transition"
+              >
+                Go to FB Connection
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                </svg>
+              </Link>
+            )}
+          </div>
         </div>
       )}
 

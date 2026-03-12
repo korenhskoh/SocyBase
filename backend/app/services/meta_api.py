@@ -627,21 +627,67 @@ class MetaAPIService:
     async def list_page_videos(
         self, access_token: str, page_id: str, limit: int = 20
     ) -> list[dict]:
-        """Fetch videos from a Facebook Page with live status info.
+        """Fetch videos from a Facebook Page including live videos.
 
-        Uses the /videos edge (not /live_videos) so comment creation works.
+        Queries both /live_videos (current/recent live streams) and /videos
+        (uploaded/VOD), merges and deduplicates, with live videos first.
         """
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                f"{GRAPH_BASE}/{page_id}/videos",
-                params={
-                    **self._auth_params(access_token),
-                    "fields": "id,title,description,live_status,created_time,length,permalink_url",
-                    "limit": limit,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json().get("data", [])
+            videos: list[dict] = []
+            seen_ids: set[str] = set()
+
+            # 1) Live videos first (includes currently streaming)
+            try:
+                resp = await client.get(
+                    f"{GRAPH_BASE}/{page_id}/live_videos",
+                    params={
+                        **self._auth_params(access_token),
+                        "fields": "id,title,description,status,creation_time,permalink_url,embed_html",
+                        "limit": limit,
+                    },
+                )
+                resp.raise_for_status()
+                for v in resp.json().get("data", []):
+                    vid = {
+                        "id": v["id"],
+                        "title": v.get("title") or v.get("description", ""),
+                        "live_status": v.get("status", "").upper(),  # LIVE / LIVE_STOPPED / VOD
+                        "created_time": v.get("creation_time"),
+                        "permalink_url": v.get("permalink_url"),
+                    }
+                    # Normalise status names
+                    if vid["live_status"] == "LIVE_STOPPED":
+                        vid["live_status"] = "LIVE_STOPPED"
+                    videos.append(vid)
+                    seen_ids.add(v["id"])
+            except Exception:
+                pass  # non-fatal — fall through to /videos
+
+            # 2) Regular videos (uploaded + past live replays)
+            try:
+                resp = await client.get(
+                    f"{GRAPH_BASE}/{page_id}/videos",
+                    params={
+                        **self._auth_params(access_token),
+                        "fields": "id,title,description,live_status,created_time,length,permalink_url",
+                        "limit": limit,
+                    },
+                )
+                resp.raise_for_status()
+                for v in resp.json().get("data", []):
+                    if v["id"] not in seen_ids:
+                        videos.append({
+                            "id": v["id"],
+                            "title": v.get("title") or v.get("description", ""),
+                            "live_status": v.get("live_status", "").upper() if v.get("live_status") else None,
+                            "created_time": v.get("created_time"),
+                            "permalink_url": v.get("permalink_url"),
+                        })
+                        seen_ids.add(v["id"])
+            except Exception:
+                pass
+
+            return videos
 
     async def get_video_comments(
         self, access_token: str, video_id: str,
