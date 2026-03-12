@@ -237,14 +237,20 @@ def _unwrap_response(raw: dict) -> tuple[list[dict], dict]:
     if "error" in inner and isinstance(inner["error"], dict):
         err = inner["error"]
         err_code = err.get("code")
-        # Code 12: "Reactions read API requires version v2.6 or higher"
-        # Non-fatal — just means reactions/likes data is unavailable with v1.0.
-        # Return whatever data exists (usually empty), don't crash the job.
+        # Code 12 can mean two things:
+        # a) "Reactions read API requires version v2.6 or higher" — non-fatal,
+        #    posts are still returned alongside the error.
+        # b) "multi_photo_posts requires version v2.1 or higher" — fatal,
+        #    entire feed failed, no posts returned.
+        # Only ignore code 12 when actual post data exists alongside the error.
         if err_code == 12:
-            logger.warning("AKNG API code 12 (reactions/likes unsupported), ignoring: %s", err.get("message"))
             posts = inner.get("data", [])
             paging = inner.get("paging", {})
-            return posts, paging
+            if isinstance(posts, list) and posts:
+                logger.warning("AKNG API code 12, ignoring (data still present): %s", err.get("message"))
+                return posts, paging
+            # No data alongside error — this is a real failure
+            logger.warning("AKNG API code 12 with no data, treating as error: %s", err.get("message"))
         raise RuntimeError(
             f"AKNG API error (code {err.get('code')}): {err.get('message')}"
         )
