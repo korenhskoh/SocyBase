@@ -312,8 +312,8 @@ class FacebookGraphClient(AbstractSocialClient):
         ``next`` URL) which includes ``until`` + ``__paging_token`` — both are
         required for Facebook's time-based feed pagination to advance.
         """
-        # Use v1.0 per AKNG API docs (not self.api_version which is for Meta direct API)
-        url = f"{self.base_url}/v1.0/{page_id}/feed"
+        # AKNG passes version through to Facebook — reactions require v2.6+
+        url = f"{self.base_url}/v3.0/{page_id}/feed"
         params = {
             "access_token": self.access_token,
             "token_type": token_type,
