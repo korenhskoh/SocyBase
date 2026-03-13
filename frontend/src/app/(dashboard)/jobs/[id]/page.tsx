@@ -506,19 +506,30 @@ export default function JobDetailPage() {
     return () => clearInterval(interval);
   }, [continuationJobId, continuationStatus, fetchPosts]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const showExportNotice = (filename: string) => {
+    setExportNotice(filename);
+    setTimeout(() => setExportNotice(null), 4000);
+  };
+
   const handleExportCsv = async () => {
+    const filename = `socybase_export_${jobId}.csv`;
     const res = await exportApi.downloadCsv(jobId);
-    downloadBlob(res.data, "text/csv", `socybase_export_${jobId}.csv`);
+    downloadBlob(res.data, "text/csv", filename);
+    showExportNotice(filename);
   };
 
   const handleExportFbAds = async () => {
+    const filename = `socybase_fb_ads_${jobId}.csv`;
     const res = await exportApi.downloadFbAds(jobId);
-    downloadBlob(res.data, "text/csv", `socybase_fb_ads_${jobId}.csv`);
+    downloadBlob(res.data, "text/csv", filename);
+    showExportNotice(filename);
   };
 
   const handleExportXlsx = async () => {
+    const filename = `socybase_export_${jobId}.xlsx`;
     const res = await exportApi.downloadXlsx(jobId);
-    downloadBlob(res.data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", `socybase_export_${jobId}.xlsx`);
+    downloadBlob(res.data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename);
+    showExportNotice(filename);
   };
 
   const [audienceCreated, setAudienceCreated] = useState<{
@@ -528,6 +539,8 @@ export default function JobDetailPage() {
     lookalike_audience_id?: string;
     lookalike_audience_name?: string;
   } | null>(null);
+
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
 
   const handleCreateCustomAudience = async () => {
     setCreatingAudience(true);
@@ -1219,44 +1232,6 @@ export default function JobDetailPage() {
                   )}
                 </div>
 
-                {/* Success banner after audience creation */}
-                {audienceCreated && (
-                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
-                    <div className="flex items-start gap-2">
-                      <svg className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      <div>
-                        <p className="text-sm font-medium text-emerald-400">Custom Audience Created!</p>
-                        <p className="text-xs text-white/60 mt-1">
-                          <span className="text-white/80">{audienceCreated.audience_name}</span> &middot; {audienceCreated.profiles_uploaded.toLocaleString()} profiles uploaded
-                        </p>
-                        {audienceCreated.lookalike_audience_id && (
-                          <p className="text-xs text-white/60 mt-0.5">
-                            Lookalike: <span className="text-white/80">{audienceCreated.lookalike_audience_name}</span>
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Audience size hint */}
-                    <div className="rounded-md bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 space-y-2.5">
-                      <div className="flex items-start gap-2">
-                        <svg className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
-                        <div className="text-xs text-amber-300/90 leading-relaxed">
-                          <p className="font-medium">Don&apos;t worry about &quot;Below 1,000&quot; audience size</p>
-                          <p className="text-amber-300/70 mt-0.5">
-                            If you see this in Meta Ads Manager, it&apos;s normal — Meta is still calculating the audience population.
-                            This may take a few minutes to hours. You can safely publish your ad campaign as usual.
-                          </p>
-                        </div>
-                      </div>
-                      <img
-                        src="/images/audience-below-1000.jpg"
-                        alt="Meta Ads Manager showing 'Below 1,000' estimated audience size — this is normal while calculating"
-                        className="rounded-md border border-white/10 w-full max-w-[320px] mx-auto"
-                      />
-                    </div>
-                  </div>
-                )}
               </div>
               <Link
                 href={`/jobs/${jobId}/report`}
@@ -2089,6 +2064,95 @@ export default function JobDetailPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Audience Created — floating modal */}
+      {audienceCreated && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setAudienceCreated(null)} />
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#0d1117] shadow-2xl shadow-black/50 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            {/* Close button */}
+            <button
+              onClick={() => setAudienceCreated(null)}
+              className="absolute top-3 right-3 text-white/30 hover:text-white/70 transition"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+
+            {/* Success header */}
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/15">
+                <svg className="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">Custom Audience Created!</h3>
+                <p className="text-xs text-white/50 mt-0.5">Your audience is ready in Meta Ads Manager</p>
+              </div>
+            </div>
+
+            {/* Audience details */}
+            <div className="rounded-lg bg-white/[0.03] border border-white/5 p-3 space-y-1.5 text-sm">
+              <p className="text-white/60">
+                <span className="text-white/40">Name:</span>{" "}
+                <span className="text-white/90">{audienceCreated.audience_name}</span>
+              </p>
+              <p className="text-white/60">
+                <span className="text-white/40">Profiles:</span>{" "}
+                {audienceCreated.profiles_uploaded.toLocaleString()} uploaded
+              </p>
+              {audienceCreated.lookalike_audience_id && (
+                <p className="text-white/60">
+                  <span className="text-white/40">Lookalike:</span>{" "}
+                  <span className="text-white/90">{audienceCreated.lookalike_audience_name}</span>
+                </p>
+              )}
+            </div>
+
+            {/* Audience size hint */}
+            <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 space-y-2.5">
+              <div className="flex items-start gap-2">
+                <svg className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+                <div className="text-xs text-amber-300/90 leading-relaxed">
+                  <p className="font-medium">Don&apos;t worry about &quot;Below 1,000&quot; audience size</p>
+                  <p className="text-amber-300/70 mt-0.5">
+                    If you see this in Meta Ads Manager, it&apos;s normal — Meta is still calculating the audience population.
+                    This may take a few minutes to hours. You can safely publish your ad campaign as usual.
+                  </p>
+                </div>
+              </div>
+              <img
+                src="/images/audience-below-1000.jpg"
+                alt="Meta Ads Manager showing 'Below 1,000' estimated audience size — this is normal while calculating"
+                className="rounded-md border border-white/10 w-full"
+              />
+            </div>
+
+            <button
+              onClick={() => setAudienceCreated(null)}
+              className="w-full rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-sm font-medium text-white transition hover:shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Export success — floating toast */}
+      {exportNotice && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
+          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#0d1117]/95 backdrop-blur-md shadow-2xl shadow-black/50 px-5 py-3.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/15">
+              <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-white">Export Downloaded</p>
+              <p className="text-xs text-white/50">{exportNotice}</p>
+            </div>
+            <button onClick={() => setExportNotice(null)} className="ml-2 text-white/30 hover:text-white/60 transition">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
         </div>
       )}
     </div>
