@@ -860,6 +860,24 @@ export default function JobsPage() {
                     )}
                   </div>
                 </div>
+                <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 space-y-2.5">
+                  <div className="flex items-start gap-2">
+                    <svg className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+                    <div className="text-xs text-amber-300/90 leading-relaxed">
+                      <p className="font-medium">Don&apos;t worry about &quot;Below 1,000&quot; audience size</p>
+                      <p className="text-amber-300/70 mt-0.5">
+                        If you see this in Meta Ads Manager, it&apos;s normal — Meta is still calculating the audience population.
+                        This may take a few minutes to hours. You can safely publish your ad campaign as usual.
+                      </p>
+                    </div>
+                  </div>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/images/audience-below-1000.jpg"
+                    alt="Meta Ads Manager showing 'Below 1,000' estimated audience size — this is normal while calculating"
+                    className="rounded-md border border-white/10 w-full max-w-[320px] mx-auto"
+                  />
+                </div>
                 <button
                   onClick={() => { setAudienceModalOpen(false); setAudienceResult(null); setSelectedJobs(new Set()); }}
                   className="w-full rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600 transition"

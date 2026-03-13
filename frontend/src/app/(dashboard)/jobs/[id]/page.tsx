@@ -521,18 +521,19 @@ export default function JobDetailPage() {
     downloadBlob(res.data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", `socybase_export_${jobId}.xlsx`);
   };
 
+  const [audienceCreated, setAudienceCreated] = useState<{
+    audience_name: string;
+    profiles_uploaded: number;
+    audience_id: string;
+    lookalike_audience_id?: string;
+    lookalike_audience_name?: string;
+  } | null>(null);
+
   const handleCreateCustomAudience = async () => {
     setCreatingAudience(true);
     try {
       const res = await fbAdsApi.createCustomAudience(jobId, undefined, createLLA);
-      const d = res.data;
-      let message = `Custom Audience created!\n\nName: ${d.audience_name}\nProfiles uploaded: ${d.profiles_uploaded}\nAudience ID: ${d.audience_id}`;
-
-      if (createLLA && d.lookalike_audience_id) {
-        message += `\n\n✨ Lookalike Audience created!\nName: ${d.lookalike_audience_name}\nCountry: Malaysia\nSize: 1%\nLLA ID: ${d.lookalike_audience_id}`;
-      }
-
-      alert(message);
+      setAudienceCreated(res.data);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to create Custom Audience";
       alert(msg);
@@ -1213,10 +1214,49 @@ export default function JobDetailPage() {
                   )}
                   {profilesTotal < 100 && (
                     <p className="text-xs text-red-400/80 pl-6">
-                      ❌ Minimum 100 profiles required (currently {profilesTotal.toLocaleString()})
+                      Minimum 100 profiles required (currently {profilesTotal.toLocaleString()})
                     </p>
                   )}
                 </div>
+
+                {/* Success banner after audience creation */}
+                {audienceCreated && (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
+                    <div className="flex items-start gap-2">
+                      <svg className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <div>
+                        <p className="text-sm font-medium text-emerald-400">Custom Audience Created!</p>
+                        <p className="text-xs text-white/60 mt-1">
+                          <span className="text-white/80">{audienceCreated.audience_name}</span> &middot; {audienceCreated.profiles_uploaded.toLocaleString()} profiles uploaded
+                        </p>
+                        {audienceCreated.lookalike_audience_id && (
+                          <p className="text-xs text-white/60 mt-0.5">
+                            Lookalike: <span className="text-white/80">{audienceCreated.lookalike_audience_name}</span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Audience size hint */}
+                    <div className="rounded-md bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 space-y-2.5">
+                      <div className="flex items-start gap-2">
+                        <svg className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+                        <div className="text-xs text-amber-300/90 leading-relaxed">
+                          <p className="font-medium">Don&apos;t worry about &quot;Below 1,000&quot; audience size</p>
+                          <p className="text-amber-300/70 mt-0.5">
+                            If you see this in Meta Ads Manager, it&apos;s normal — Meta is still calculating the audience population.
+                            This may take a few minutes to hours. You can safely publish your ad campaign as usual.
+                          </p>
+                        </div>
+                      </div>
+                      <img
+                        src="/images/audience-below-1000.jpg"
+                        alt="Meta Ads Manager showing 'Below 1,000' estimated audience size — this is normal while calculating"
+                        className="rounded-md border border-white/10 w-full max-w-[320px] mx-auto"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               <Link
                 href={`/jobs/${jobId}/report`}
