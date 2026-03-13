@@ -268,8 +268,8 @@ export default function AdminScrapingPage() {
               {data.recent_jobs.map((j) => (
                 <tr key={j.id} className="hover:bg-white/[0.02] transition">
                   <td className="px-6 py-4 text-sm text-white/60">{j.user_email}</td>
-                  <td className="px-6 py-4 text-sm text-white/80 truncate max-w-[200px]">
-                    {j.input_value}
+                  <td className="px-6 py-4 text-sm text-white/80 max-w-[400px]">
+                    <span className="break-all">{j.input_value}</span>
                   </td>
                   <td className="px-6 py-4">
                     <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${getStatusColor(j.status)}`}>

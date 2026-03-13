@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api-client";
@@ -147,89 +147,90 @@ export default function AdminAuditLogsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {logs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className="hover:bg-white/[0.02] transition cursor-pointer"
-                    onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
-                  >
-                    <td className="px-4 md:px-6 py-3 text-xs text-white/40 whitespace-nowrap">
-                      {formatDate(log.created_at)}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-white/50">
-                      {actionCategory(log.action)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <ActionBadge action={log.action} />
-                    </td>
-                    <td className="px-4 py-3 text-xs text-white/50 font-mono">
-                      {log.resource_type && (
-                        <span>
-                          {log.resource_type}
-                          {log.resource_id && (
-                            <span className="text-white/30 ml-1">
-                              {log.resource_id.slice(0, 8)}
+                {logs.map((log) => {
+                  const isExpanded = expandedId === log.id;
+                  return (
+                    <React.Fragment key={log.id}>
+                      <tr
+                        className={`hover:bg-white/[0.02] transition cursor-pointer ${isExpanded ? "bg-white/[0.03]" : ""}`}
+                        onClick={() => setExpandedId(isExpanded ? null : log.id)}
+                      >
+                        <td className="px-4 md:px-6 py-3 text-xs text-white/40 whitespace-nowrap">
+                          {formatDate(log.created_at)}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-white/50">
+                          {actionCategory(log.action)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <ActionBadge action={log.action} />
+                        </td>
+                        <td className="px-4 py-3 text-xs text-white/50 font-mono">
+                          {log.resource_type && (
+                            <span>
+                              {log.resource_type}
+                              {log.resource_id && (
+                                <span className="text-white/30 ml-1">
+                                  {log.resource_id.slice(0, 8)}
+                                </span>
+                              )}
                             </span>
                           )}
-                        </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-white/40 font-mono">
+                          {log.user_id ? `${log.user_id.slice(0, 8)}` : "system"}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-white/40">
+                          {log.details && Object.keys(log.details).length > 0 ? (
+                            <span className="text-primary-400 text-xs break-all">
+                              {Object.entries(log.details)
+                                .filter(([, v]) => v != null)
+                                .map(([k, v]) => `${k}: ${typeof v === "string" ? v : v}`)
+                                .join(" | ")}
+                            </span>
+                          ) : (
+                            "---"
+                          )}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={6} className="bg-white/[0.02] px-6 py-4">
+                            <div className="space-y-2">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                                <div>
+                                  <span className="text-white/30">Log ID</span>
+                                  <p className="text-white/60 font-mono">{log.id}</p>
+                                </div>
+                                <div>
+                                  <span className="text-white/30">User ID</span>
+                                  <p className="text-white/60 font-mono">{log.user_id || "system"}</p>
+                                </div>
+                                <div>
+                                  <span className="text-white/30">Tenant ID</span>
+                                  <p className="text-white/60 font-mono">{log.tenant_id || "---"}</p>
+                                </div>
+                                <div>
+                                  <span className="text-white/30">IP Address</span>
+                                  <p className="text-white/60 font-mono">{log.ip_address || "background task"}</p>
+                                </div>
+                              </div>
+                              {log.details && Object.keys(log.details).length > 0 && (
+                                <div>
+                                  <span className="text-white/30 text-xs">Details</span>
+                                  <pre className="mt-1 text-xs text-white/60 bg-black/30 rounded p-3 overflow-x-auto">
+                                    {JSON.stringify(log.details, null, 2)}
+                                  </pre>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-white/40 font-mono">
-                      {log.user_id ? `${log.user_id.slice(0, 8)}` : "system"}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-white/40 max-w-[200px] truncate">
-                      {log.details && Object.keys(log.details).length > 0 ? (
-                        <span className="text-primary-400 text-xs">
-                          {Object.entries(log.details)
-                            .filter(([, v]) => v != null)
-                            .slice(0, 2)
-                            .map(([k, v]) => `${k}: ${typeof v === "string" ? v.slice(0, 30) : v}`)
-                            .join(" | ")}
-                        </span>
-                      ) : (
-                        "---"
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
-
-            {/* Expanded detail row */}
-            {expandedId && (() => {
-              const log = logs.find((l) => l.id === expandedId);
-              if (!log) return null;
-              return (
-                <div className="border-t border-white/5 bg-white/[0.02] px-6 py-4 space-y-2">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                    <div>
-                      <span className="text-white/30">Log ID</span>
-                      <p className="text-white/60 font-mono">{log.id}</p>
-                    </div>
-                    <div>
-                      <span className="text-white/30">User ID</span>
-                      <p className="text-white/60 font-mono">{log.user_id || "system"}</p>
-                    </div>
-                    <div>
-                      <span className="text-white/30">Tenant ID</span>
-                      <p className="text-white/60 font-mono">{log.tenant_id || "---"}</p>
-                    </div>
-                    <div>
-                      <span className="text-white/30">IP Address</span>
-                      <p className="text-white/60 font-mono">{log.ip_address || "background task"}</p>
-                    </div>
-                  </div>
-                  {log.details && Object.keys(log.details).length > 0 && (
-                    <div>
-                      <span className="text-white/30 text-xs">Details</span>
-                      <pre className="mt-1 text-xs text-white/60 bg-black/30 rounded p-3 overflow-x-auto">
-                        {JSON.stringify(log.details, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
           </div>
         )}
 

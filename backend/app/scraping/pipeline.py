@@ -976,18 +976,36 @@ async def _execute_pipeline(job_id: str, celery_task):
                     skip_user_ids = {op.platform_user_id for op in orig_profiles if op.platform_user_id in unique_users}
 
                 # Only charge for profiles enriched (comment page fetching is free)
-                estimated_cost = (len(user_ids) - len(skip_user_ids)) * cost_per_profile
-                logger.info(f"[Job {job_id}] Step: estimated_cost={estimated_cost} (profiles to enrich={len(user_ids)}, skipped={len(skip_user_ids)})")
+                profiles_to_enrich_count = len(user_ids) - len(skip_user_ids)
+                estimated_cost = profiles_to_enrich_count * cost_per_profile
+                available_balance = balance.balance if balance else 0
+                logger.info(f"[Job {job_id}] Step: estimated_cost={estimated_cost} (profiles to enrich={profiles_to_enrich_count}, skipped={len(skip_user_ids)})")
 
                 job.credits_estimated = estimated_cost
 
-                if not balance or balance.balance < estimated_cost:
+                # Partial enrich: if not enough credits, enrich as many as we can afford
+                partial_enrich = False
+                if not balance or available_balance <= 0:
                     job.status = "failed"
-                    job.error_message = f"Insufficient credits. Need {estimated_cost}, have {balance.balance if balance else 0}"
-                    await _append_log(db, job, "error", "deduplicate", f"Insufficient credits: need {estimated_cost}, have {balance.balance if balance else 0}")
+                    job.error_message = f"No credits available. Need {estimated_cost} credits to enrich {profiles_to_enrich_count} profiles."
+                    await _append_log(db, job, "error", "deduplicate", f"No credits: need {estimated_cost}, have 0")
                     await db.commit()
                     publish_job_progress(str(job.id), _build_progress_event(job, "deduplicate"))
                     return
+
+                if available_balance < estimated_cost:
+                    partial_enrich = True
+                    affordable_count = available_balance // cost_per_profile
+                    logger.warning(f"[Job {job_id}] Partial enrich: can afford {affordable_count}/{profiles_to_enrich_count} profiles (balance={available_balance})")
+                    await _append_log(db, job, "warn", "deduplicate",
+                        f"Low credits: {profiles_to_enrich_count} profiles found but only {available_balance} credits available. "
+                        f"Will enrich {affordable_count} of {profiles_to_enrich_count} profiles.")
+                    publish_job_progress(str(job.id), _build_progress_event(
+                        job, "deduplicate",
+                        {"unique_users": len(user_ids), "total_comments": len(all_comments),
+                         "credit_warning": True, "credit_balance": available_balance,
+                         "profiles_needed": profiles_to_enrich_count, "profiles_affordable": affordable_count},
+                    ))
 
                 logger.info(f"[Job {job_id}] Step: credit check passed, creating {len(unique_users)} ScrapedProfile rows")
                 # Create ScrapedProfile rows for ALL unique users
@@ -1031,7 +1049,12 @@ async def _execute_pipeline(job_id: str, celery_task):
 
                 # Build list of profiles to actually fetch
                 user_ids_to_enrich = [uid for uid in user_ids if uid not in skip_user_ids]
-                logger.info(f"[Job {job_id}] Step: {len(user_ids_to_enrich)} users to enrich")
+                if partial_enrich:
+                    affordable_count = available_balance // cost_per_profile
+                    user_ids_to_enrich = user_ids_to_enrich[:affordable_count]
+                    logger.info(f"[Job {job_id}] Step: partial enrich — trimmed to {len(user_ids_to_enrich)} users (credit limit)")
+                else:
+                    logger.info(f"[Job {job_id}] Step: {len(user_ids_to_enrich)} users to enrich")
 
                 # ── STAGE 4: Enrich profiles ─────────────────────
                 # Check status before starting stage
@@ -1045,15 +1068,25 @@ async def _execute_pipeline(job_id: str, celery_task):
                     publish_job_progress(str(job.id), _build_progress_event(job, "enrich_profiles"))
                     return
 
+                # Track partial enrich info for SSE progress
+                enrich_total = len(skip_user_ids) + len(user_ids_to_enrich)
+                partial_info = {}
+                if partial_enrich:
+                    partial_info = {"credit_warning": True, "profiles_skipped_no_credits": profiles_to_enrich_count - len(user_ids_to_enrich)}
+                    await _append_log(db, job, "info", "enrich_profiles",
+                        f"Enriching {len(user_ids_to_enrich)} of {profiles_to_enrich_count} profiles (limited by credits)")
+                else:
+                    await _append_log(db, job, "info", "enrich_profiles",
+                        f"Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
+
                 logger.info(f"[Job {job_id}] Stage 4: Starting profile enrichment for {len(user_ids_to_enrich)} users ({len(skip_user_ids)} skipped)")
-                await _append_log(db, job, "info", "enrich_profiles", f"Enriching {len(user_ids_to_enrich)} profiles ({len(skip_user_ids)} skipped)")
                 already_done = len(skip_user_ids)
                 credits_used = 0  # Only charge per profile enriched (comment pages are free)
-                job.progress_pct = _calc_stage_progress("enrich_profiles", done=already_done, total=len(user_ids))
+                job.progress_pct = _calc_stage_progress("enrich_profiles", done=already_done, total=enrich_total)
                 publish_job_progress(str(job.id), _build_progress_event(
                     job, "enrich_profiles",
-                    {"profiles_done": already_done, "profiles_total": len(user_ids),
-                     "profiles_failed": 0},
+                    {"profiles_done": already_done, "profiles_total": enrich_total,
+                     "profiles_failed": 0, **partial_info},
                 ))
 
                 for i, uid in enumerate(user_ids_to_enrich):
@@ -1118,7 +1151,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                     total_done = already_done + i + 1
                     job.processed_items = total_done
                     job.progress_pct = _calc_stage_progress(
-                        "enrich_profiles", done=total_done, total=len(user_ids),
+                        "enrich_profiles", done=total_done, total=enrich_total,
                     )
                     await _save_pipeline_state(
                         db, job, "enrich_profiles",
@@ -1145,7 +1178,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                         state="PROGRESS",
                         meta={
                             "current": total_done,
-                            "total": len(user_ids),
+                            "total": enrich_total,
                             "percent": job.progress_pct,
                         },
                     )
@@ -1153,8 +1186,8 @@ async def _execute_pipeline(job_id: str, celery_task):
                     # Publish progress to SSE subscribers
                     publish_job_progress(str(job.id), _build_progress_event(
                         job, "enrich_profiles",
-                        {"profiles_done": total_done, "profiles_total": len(user_ids),
-                         "profiles_failed": job.failed_items},
+                        {"profiles_done": total_done, "profiles_total": enrich_total,
+                         "profiles_failed": job.failed_items, **partial_info},
                     ))
 
                 # ── STAGE 5: Finalize ────────────────────────────
