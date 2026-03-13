@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import dynamic from "next/dynamic";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api-client";
 import { formatCredits } from "@/lib/utils";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AdminDashboard } from "@/types";
+
+const DynamicVisitorGlobe = dynamic(
+  () => import("@/components/3d/VisitorGlobe").then((mod) => ({ default: mod.VisitorGlobe })),
+  { ssr: false },
+);
 
 interface Visitor {
   vid: string;
@@ -13,7 +19,7 @@ interface Visitor {
   path: string;
   method: string;
   ua: string;
-  geo: { country: string; country_code: string; city: string; region?: string };
+  geo: { country: string; country_code: string; city: string; region?: string; lat?: number; lon?: number };
   ts: number;
 }
 
@@ -99,6 +105,25 @@ export default function AdminDashboardPage() {
             <p className="text-2xl font-bold text-white mt-1">{stat.value}</p>
           </div>
         ))}
+      </div>
+
+      {/* Visitor Globe */}
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-white">Visitor Map</h2>
+            <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              {visitorCount} online
+            </span>
+          </div>
+        </div>
+        <div className="h-[400px] md:h-[500px] w-full">
+          <DynamicVisitorGlobe
+            visitors={visitors}
+            className="w-full h-full"
+          />
+        </div>
       </div>
 
       {/* Live Visitors */}

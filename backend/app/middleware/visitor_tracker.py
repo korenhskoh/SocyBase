@@ -43,7 +43,7 @@ def _visitor_id(ip: str, ua: str) -> str:
 async def _get_geo(r: aioredis.Redis, ip: str) -> dict:
     """Lookup IP geolocation with caching."""
     if ip in ("127.0.0.1", "::1", "unknown") or ip.startswith("10.") or ip.startswith("192.168."):
-        return {"country": "Local", "city": "", "country_code": ""}
+        return {"country": "Local", "city": "", "country_code": "", "lat": 0, "lon": 0}
 
     # Check cache
     cached = await r.hget(GEO_CACHE_KEY, ip)
@@ -57,7 +57,7 @@ async def _get_geo(r: aioredis.Redis, ip: str) -> dict:
     # Fetch from ip-api.com (free, 45 req/min)
     try:
         async with httpx.AsyncClient(timeout=3) as client:
-            resp = await client.get(f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,city,regionName")
+            resp = await client.get(f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,city,regionName,lat,lon")
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("status") == "success":
@@ -66,6 +66,8 @@ async def _get_geo(r: aioredis.Redis, ip: str) -> dict:
                         "country_code": data.get("countryCode", ""),
                         "city": data.get("city", ""),
                         "region": data.get("regionName", ""),
+                        "lat": data.get("lat", 0),
+                        "lon": data.get("lon", 0),
                     }
                     import json
                     await r.hset(GEO_CACHE_KEY, ip, json.dumps(geo))
@@ -74,7 +76,7 @@ async def _get_geo(r: aioredis.Redis, ip: str) -> dict:
     except Exception as e:
         logger.debug(f"Geo lookup failed for {ip}: {e}")
 
-    return {"country": "Unknown", "city": "", "country_code": ""}
+    return {"country": "Unknown", "city": "", "country_code": "", "lat": 0, "lon": 0}
 
 
 class VisitorTrackingMiddleware(BaseHTTPMiddleware):
