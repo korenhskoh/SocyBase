@@ -173,6 +173,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Visitor tracking (must be added after CORS)
+from app.middleware.visitor_tracker import VisitorTrackingMiddleware
+app.add_middleware(VisitorTrackingMiddleware)
+
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
 

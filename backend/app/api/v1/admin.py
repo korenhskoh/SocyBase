@@ -1646,3 +1646,48 @@ async def update_messenger_templates(
 
     await db.commit()
     return {"templates": templates}
+
+
+# ---------------------------------------------------------------------------
+# Live visitors (Redis-backed, from VisitorTrackingMiddleware)
+# ---------------------------------------------------------------------------
+
+@router.get("/live-visitors")
+async def get_live_visitors(admin: User = Depends(get_super_admin)):
+    """Return currently active visitors from Redis sorted set."""
+    import json
+    import time
+    import redis.asyncio as aioredis
+    from app.config import get_settings
+
+    settings = get_settings()
+    r = aioredis.from_url(settings.redis_url, decode_responses=True)
+
+    now = time.time()
+    ttl = 300  # must match VISITOR_TTL in visitor_tracker.py
+
+    try:
+        # Get all visitors active within TTL window
+        raw_entries = await r.zrangebyscore(
+            "socybase:active_visitors", now - ttl, "+inf"
+        )
+
+        # De-duplicate by visitor id (keep latest per vid)
+        visitors: dict[str, dict] = {}
+        for entry in raw_entries:
+            try:
+                data = json.loads(entry)
+                vid = data.get("vid", "")
+                if vid not in visitors or data.get("ts", 0) > visitors[vid].get("ts", 0):
+                    visitors[vid] = data
+            except Exception:
+                continue
+
+        visitor_list = sorted(visitors.values(), key=lambda v: v.get("ts", 0), reverse=True)
+
+        return {
+            "count": len(visitor_list),
+            "visitors": visitor_list,
+        }
+    finally:
+        await r.aclose()

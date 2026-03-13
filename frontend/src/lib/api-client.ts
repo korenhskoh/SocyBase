@@ -337,6 +337,7 @@ export const adminApi = {
     body: string;
     is_default?: boolean;
   }>) => api.put("/admin/messenger-templates", { templates }),
+  liveVisitors: () => api.get("/admin/live-visitors"),
 };
 
 // Telegram API
