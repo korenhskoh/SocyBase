@@ -45,12 +45,15 @@ async def _get_geo(r: aioredis.Redis, ip: str) -> dict:
     if ip in ("127.0.0.1", "::1", "unknown") or ip.startswith("10.") or ip.startswith("192.168."):
         return {"country": "Local", "city": "", "country_code": "", "lat": 0, "lon": 0}
 
-    # Check cache
+    # Check cache (re-fetch if old entry lacks lat/lon)
     cached = await r.hget(GEO_CACHE_KEY, ip)
     if cached:
         import json
         try:
-            return json.loads(cached)
+            data = json.loads(cached)
+            if "lat" in data:
+                return data
+            # Old cache entry without lat/lon — fall through to re-fetch
         except Exception:
             pass
 
