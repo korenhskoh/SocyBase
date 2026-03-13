@@ -512,6 +512,8 @@ export const competitorsApi = {
     page_size?: number;
   }) => api.get("/competitors/feed", { params }),
   scrape: (id: string) => api.post(`/competitors/${id}/scrape`),
+  exportFeed: (params?: { livestream_only?: boolean; sort_by?: string; days?: number }) =>
+    api.get("/competitors/feed/export", { params, responseType: "blob" }),
 };
 
 // Traffic Bot API

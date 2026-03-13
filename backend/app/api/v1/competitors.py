@@ -1,11 +1,14 @@
 """Competitor Intelligence API — track competitor pages, quick-scan, feed."""
 
+import csv
+import io
 import logging
 from datetime import datetime, timezone, timedelta
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -508,6 +511,121 @@ async def competitor_feed(
     paginated = items[start : start + page_size]
 
     return {"items": paginated, "total": total, "page": page, "page_size": page_size}
+
+
+# ---------------------------------------------------------------------------
+# GET /competitors/feed/export — Export feed as CSV
+# ---------------------------------------------------------------------------
+
+@router.get("/feed/export")
+async def export_competitor_feed(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    livestream_only: bool = Query(False),
+    sort_by: str = Query("virality_score"),
+    days: int = Query(90, ge=7, le=365),
+):
+    """Export aggregated competitor feed as CSV."""
+    comp_result = await db.execute(
+        select(CompetitorPage.page_id).where(
+            CompetitorPage.tenant_id == user.tenant_id,
+            CompetitorPage.is_active == True,
+        )
+    )
+    comp_page_ids = [r[0] for r in comp_result.all()]
+    if not comp_page_ids:
+        raise HTTPException(status_code=404, detail="No competitors tracked")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    job_result = await db.execute(
+        select(ScrapingJob.id, ScrapingJob.input_value).where(
+            ScrapingJob.tenant_id == user.tenant_id,
+            ScrapingJob.job_type == "post_discovery",
+            ScrapingJob.status.in_(["completed", "running"]),
+            ScrapingJob.input_value.in_(comp_page_ids),
+        )
+    )
+    jobs = job_result.all()
+    if not jobs:
+        raise HTTPException(status_code=404, detail="No feed data — run Full Scrape first")
+
+    job_ids = [j[0] for j in jobs]
+    job_input_map = {j[0]: j[1] for j in jobs}
+
+    post_filter = [
+        ScrapedPost.job_id.in_(job_ids),
+        (ScrapedPost.created_time >= cutoff) | (ScrapedPost.created_time.is_(None)),
+    ]
+    if livestream_only:
+        post_filter.append(ScrapedPost.is_livestream == True)
+
+    dedup_subq = (
+        select(
+            ScrapedPost.id,
+            ScrapedPost.job_id,
+            func.row_number().over(
+                partition_by=ScrapedPost.post_id,
+                order_by=ScrapedPost.created_time.desc().nulls_last(),
+            ).label("rn"),
+        )
+        .where(*post_filter)
+        .subquery()
+    )
+
+    result = await db.execute(
+        select(ScrapedPost)
+        .join(dedup_subq, ScrapedPost.id == dedup_subq.c.id)
+        .where(dedup_subq.c.rn == 1)
+    )
+    all_posts = result.scalars().all()
+
+    items = []
+    for p in all_posts:
+        score = _virality_score(
+            p.reaction_count or 0, p.comment_count or 0,
+            p.share_count or 0, p.created_time,
+        )
+        items.append({
+            "source_page": job_input_map.get(p.job_id, ""),
+            "post_id": p.post_id,
+            "message": (p.message or "")[:500],
+            "created_time": p.created_time.strftime("%Y-%m-%d %H:%M") if p.created_time else "",
+            "reactions": p.reaction_count or 0,
+            "comments": p.comment_count or 0,
+            "shares": p.share_count or 0,
+            "engagement": (p.reaction_count or 0) + (p.comment_count or 0) + (p.share_count or 0),
+            "virality_score": score,
+            "type": "livestream" if p.is_livestream else (p.attachment_type or "text"),
+            "video_views": p.video_views or "",
+            "post_url": p.post_url or "",
+        })
+
+    sort_map = {
+        "virality_score": lambda x: x["virality_score"],
+        "reactions": lambda x: x["reactions"],
+        "comments": lambda x: x["comments"],
+        "shares": lambda x: x["shares"],
+        "recency": lambda x: x["created_time"] or "",
+        "engagement": lambda x: x["engagement"],
+    }
+    items.sort(key=sort_map.get(sort_by, sort_map["virality_score"]), reverse=True)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=[
+        "source_page", "post_id", "message", "created_time",
+        "reactions", "comments", "shares", "engagement",
+        "virality_score", "type", "video_views", "post_url",
+    ])
+    writer.writeheader()
+    writer.writerows(items)
+
+    csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=competitor_feed.csv"},
+    )
 
 
 # ---------------------------------------------------------------------------

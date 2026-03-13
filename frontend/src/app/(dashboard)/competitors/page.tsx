@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { competitorsApi, businessProfileApi } from "@/lib/api-client";
+import { downloadBlob } from "@/lib/utils";
 import type { CompetitorPage, CompetitorPost, PageSearchResult } from "@/types";
 
 export default function CompetitorsPage() {
@@ -47,6 +48,14 @@ export default function CompetitorsPage() {
   const [feedSort, setFeedSort] = useState("virality_score");
   const [feedDays, setFeedDays] = useState(90);
   const [expandedPost, setExpandedPost] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  // Toast notifications
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const showToast = (type: "success" | "error", message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   // Load competitors
   const loadCompetitors = useCallback(async () => {
@@ -99,7 +108,7 @@ export default function CompetitorsPage() {
       loadCompetitors();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to add";
-      alert(msg);
+      showToast("error", msg);
     } finally {
       setAdding(false);
     }
@@ -116,10 +125,11 @@ export default function CompetitorsPage() {
         category: result.category || undefined,
         page_url: result.link || undefined,
       });
+      showToast("success", `Added ${result.name || "competitor"}`);
       loadCompetitors();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to add";
-      alert(msg);
+      showToast("error", msg);
     } finally {
       setAdding(false);
     }
@@ -148,9 +158,7 @@ export default function CompetitorsPage() {
       setLocResults(res.data.results || []);
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      if (detail === "Apify API token not configured") {
-        alert("Location search requires APIFY_API_TOKEN to be configured.");
-      }
+      showToast("error", detail || "Location search failed");
       setLocResults([]);
     } finally {
       setLocSearching(false);
@@ -181,7 +189,7 @@ export default function CompetitorsPage() {
       setScanResults(res.data.items || []);
       loadCompetitors(); // refresh stats
     } catch {
-      alert("Quick scan failed");
+      showToast("error", "Quick scan failed");
     } finally {
       setScanningId(null);
     }
@@ -190,11 +198,29 @@ export default function CompetitorsPage() {
   // Full scrape
   const handleScrape = async (comp: CompetitorPage) => {
     try {
-      const res = await competitorsApi.scrape(comp.id);
-      alert(`AI-Scraping job created! Job ID: ${res.data.job_id}`);
+      await competitorsApi.scrape(comp.id);
+      showToast("success", `Full scrape started for ${comp.name || comp.page_id}`);
       loadCompetitors();
     } catch {
-      alert("Failed to start scrape");
+      showToast("error", "Failed to start scrape");
+    }
+  };
+
+  // Export feed CSV
+  const handleExportFeed = async () => {
+    setExporting(true);
+    try {
+      const res = await competitorsApi.exportFeed({
+        livestream_only: feedTab === "livestream",
+        sort_by: feedSort,
+        days: feedDays,
+      });
+      downloadBlob(res.data, "text/csv", `competitor_feed_${feedDays}d.csv`);
+      showToast("success", "Feed exported as CSV");
+    } catch {
+      showToast("error", "Export failed — run Full Scrape first");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -254,8 +280,26 @@ export default function CompetitorsPage() {
 
       {/* Tracked Competitors Grid */}
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="h-8 w-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="glass-card p-4 animate-pulse">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="h-10 w-10 rounded-full bg-white/10" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3.5 w-24 rounded bg-white/10" />
+                  <div className="h-2.5 w-16 rounded bg-white/5" />
+                </div>
+              </div>
+              <div className="flex gap-3 mb-3">
+                <div className="h-2.5 w-14 rounded bg-white/5" />
+                <div className="h-2.5 w-16 rounded bg-white/5" />
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1 h-7 rounded-lg bg-white/5" />
+                <div className="flex-1 h-7 rounded-lg bg-white/5" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : competitors.length === 0 ? (
         <div className="glass-card p-12 text-center">
@@ -455,6 +499,14 @@ export default function CompetitorsPage() {
                 <option value={180}>6 months</option>
                 <option value={365}>1 year</option>
               </select>
+              <button
+                onClick={handleExportFeed}
+                disabled={exporting || feedPosts.length === 0}
+                className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 text-xs rounded-lg transition disabled:opacity-30 flex items-center gap-1.5"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                {exporting ? "Exporting..." : "Export CSV"}
+              </button>
             </div>
           </div>
 
@@ -719,8 +771,8 @@ export default function CompetitorsPage() {
                                 setAdding(true);
                                 competitorsApi
                                   .add({ input_value: s.facebook_url!, source: "ai", name: s.name })
-                                  .then(() => loadCompetitors())
-                                  .catch(() => {})
+                                  .then(() => { loadCompetitors(); showToast("success", `Added ${s.name}`); })
+                                  .catch(() => showToast("error", `Failed to add ${s.name}`))
                                   .finally(() => setAdding(false));
                               }}
                               disabled={adding}
@@ -745,6 +797,33 @@ export default function CompetitorsPage() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
+          <div className={`flex items-center gap-3 rounded-xl border px-5 py-3.5 shadow-2xl shadow-black/50 backdrop-blur-md ${
+            toast.type === "success"
+              ? "border-emerald-500/20 bg-emerald-500/10"
+              : "border-red-500/20 bg-red-500/10"
+          }`}>
+            <div className={`flex h-8 w-8 items-center justify-center rounded-full ${
+              toast.type === "success" ? "bg-emerald-500/15" : "bg-red-500/15"
+            }`}>
+              {toast.type === "success" ? (
+                <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              ) : (
+                <svg className="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+              )}
+            </div>
+            <p className={`text-sm font-medium ${toast.type === "success" ? "text-emerald-300" : "text-red-300"}`}>
+              {toast.message}
+            </p>
+            <button onClick={() => setToast(null)} className="ml-2 text-white/30 hover:text-white/60 transition">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
           </div>
         </div>
       )}
