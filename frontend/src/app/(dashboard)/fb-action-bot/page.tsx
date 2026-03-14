@@ -18,6 +18,7 @@ const ACTIONS = [
     fields: [
       { key: "content", label: "Content", required: true, placeholder: "What's on your mind?", multiline: true },
       { key: "images", label: "Image URLs", required: false, placeholder: "Comma-separated image URLs" },
+      { key: "preset_id", label: "Preset ID", required: false, placeholder: "Preset ID (optional)" },
       { key: "video_url", label: "Video URL", required: false, placeholder: "Video URL (overrides images)" },
     ],
   },
@@ -39,6 +40,7 @@ const ACTIONS = [
       { key: "group_id", label: "Group ID", required: true, placeholder: "Facebook group ID" },
       { key: "content", label: "Content", required: true, placeholder: "Post content", multiline: true },
       { key: "images", label: "Image URLs", required: false, placeholder: "Comma-separated image URLs" },
+      { key: "preset_id", label: "Preset ID", required: false, placeholder: "Preset ID (optional)" },
       { key: "video_url", label: "Video URL", required: false, placeholder: "Video URL (overrides images)" },
     ],
   },
