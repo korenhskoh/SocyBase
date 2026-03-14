@@ -402,11 +402,11 @@ export default function FBActionBotPage() {
               <span className={`text-sm font-medium ${result.success ? "text-emerald-400" : "text-red-400"}`}>
                 {result.success ? "SUCCESS" : (result.status_message as string) || "FAILED"}
               </span>
-              {result.status_code != null && (
+              {result.status_code != null ? (
                 <span className="text-xs text-white/30">Code: {String(result.status_code)}</span>
-              )}
+              ) : null}
             </div>
-            {result.data && typeof result.data === "object" && (
+            {result.data && typeof result.data === "object" ? (
               <div className="space-y-1 text-xs">
                 {Object.entries(result.data as Record<string, unknown>).map(([k, v]) => (
                   <div key={k} className="flex gap-2">
@@ -415,7 +415,7 @@ export default function FBActionBotPage() {
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
           </div>
         )}
       </div>
