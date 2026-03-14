@@ -199,6 +199,7 @@ export default function FBActionBotPage() {
   const [loginHistoryPage, setLoginHistoryPage] = useState(1);
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const loginFileInputRef = useRef<HTMLInputElement>(null);
+  const [autoGoToBatch, setAutoGoToBatch] = useState(true);
 
   // Toast
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -272,17 +273,35 @@ export default function FBActionBotPage() {
   useEffect(() => {
     if (activeLoginBatch && (activeLoginBatch.status === "pending" || activeLoginBatch.status === "running")) {
       loginPollRef.current = setInterval(() => {
-        fbActionApi.getLoginBatchStatus(activeLoginBatch.id).then((res) => {
+        fbActionApi.getLoginBatchStatus(activeLoginBatch.id).then(async (res) => {
           setActiveLoginBatch(res.data);
           if (res.data.status !== "pending" && res.data.status !== "running") {
             if (loginPollRef.current) clearInterval(loginPollRef.current);
             loadLoginHistory();
+
+            // Auto-download CSV and navigate to Batch Mode
+            if (autoGoToBatch && res.data.success_count > 0) {
+              try {
+                const csvRes = await fbActionApi.exportLoginResults(res.data.id);
+                const url = window.URL.createObjectURL(new Blob([csvRes.data]));
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `login_${res.data.id.slice(0, 8)}_action_ready.csv`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+                setActiveTab("batch");
+                showToast("success", `${res.data.success_count} accounts exported — fill in action_name & params, then upload here`);
+              } catch {
+                showToast("success", `Login done — ${res.data.success_count} successful. Export manually to continue.`);
+              }
+            }
           }
         }).catch(() => {});
       }, 3000);
       return () => { if (loginPollRef.current) clearInterval(loginPollRef.current); };
     }
-  }, [activeLoginBatch?.id, activeLoginBatch?.status, loadLoginHistory]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLoginBatch?.id, activeLoginBatch?.status, loadLoginHistory, autoGoToBatch]);
 
   // Save config
   const handleSaveConfig = async () => {
@@ -1035,7 +1054,16 @@ export default function FBActionBotPage() {
                   <input type="range" min={1} max={5} value={loginParallel} onChange={(e) => setLoginParallel(Number(e.target.value))} className="w-full accent-primary-500" />
                 </div>
               )}
-              <div className="flex items-end">
+              <div className="flex flex-col items-end gap-3">
+                <label className="flex items-center gap-2 cursor-pointer self-start">
+                  <input
+                    type="checkbox"
+                    checked={autoGoToBatch}
+                    onChange={(e) => setAutoGoToBatch(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-white/20 bg-white/5 accent-amber-500"
+                  />
+                  <span className="text-xs text-white/40">Auto-load results into Batch Mode when done</span>
+                </label>
                 <button
                   onClick={handleStartLoginBatch}
                   disabled={!loginFile || loginUploading}
