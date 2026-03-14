@@ -1034,6 +1034,45 @@ async def ai_plan_generate(
                     "comment_text": c.comment_text or "",
                 })
 
+        # For posts with no DB comments, fetch live from AKNG
+        missing_ids = [pid for pid in post_ids if pid not in comments_by_post]
+        if missing_ids:
+            client = FacebookGraphClient()
+            try:
+                for pid in missing_ids[:20]:
+                    try:
+                        raw = await client.get_post_comments(pid, limit=25)
+                        data = raw
+                        if isinstance(data, dict) and "success" in data:
+                            data = data.get("data", data)
+                        # Extract comments from field expansion response
+                        if isinstance(data, dict):
+                            comments_obj = data.get("comments", data)
+                            if isinstance(comments_obj, dict):
+                                comment_list = comments_obj.get("data", [])
+                            else:
+                                comment_list = data.get("data", [])
+                        else:
+                            comment_list = []
+                        if not isinstance(comment_list, list):
+                            continue
+                        comments_by_post[pid] = []
+                        for cm in comment_list[:10]:
+                            cid = cm.get("id", "")
+                            msg = cm.get("message", "")
+                            from_data = cm.get("from", {})
+                            if cid and msg:
+                                comments_by_post[pid].append({
+                                    "comment_id": cid,
+                                    "commenter_user_id": from_data.get("id", ""),
+                                    "commenter_name": from_data.get("name", ""),
+                                    "comment_text": msg,
+                                })
+                    except Exception as exc:
+                        logger.warning(f"[AIPlanner] Live comment fetch for {pid}: {exc}")
+            finally:
+                await client.close()
+
     try:
         planner = AIActionPlanner()
         actions = await planner.generate_actions(
