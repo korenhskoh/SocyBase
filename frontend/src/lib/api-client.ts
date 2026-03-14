@@ -525,6 +525,23 @@ export const fbActionApi = {
   getConfig: () => api.get("/fb-action/config"),
   saveConfig: (data: { user_agent?: string; proxy?: { host: string; port: string; username: string; password: string } }) =>
     api.post("/fb-action/save-config", data),
+  // Batch mode
+  downloadTemplate: () =>
+    api.get("/fb-action/batch/csv-template", { responseType: "blob" }),
+  uploadBatch: (file: File, settings: { execution_mode: string; delay_seconds: number; max_parallel: number; proxy?: { host: string; port: string; username: string; password: string } }) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("settings_json", JSON.stringify(settings));
+    return api.post("/fb-action/batch/upload", formData, { headers: { "Content-Type": "multipart/form-data" } });
+  },
+  getBatchStatus: (batchId: string) =>
+    api.get(`/fb-action/batch/${batchId}`),
+  getBatchHistory: (params?: { page?: number; page_size?: number }) =>
+    api.get("/fb-action/batch/history", { params }),
+  cancelBatch: (batchId: string) =>
+    api.post(`/fb-action/batch/${batchId}/cancel`),
+  exportBatchResults: (batchId: string) =>
+    api.get(`/fb-action/batch/${batchId}/export`, { responseType: "blob" }),
 };
 
 // Traffic Bot API

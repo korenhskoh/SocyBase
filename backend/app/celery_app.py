@@ -22,6 +22,7 @@ celery_app.conf.update(
     result_expires=86400,  # 24 hours
     task_routes={
         "app.scraping.tasks.*": {"queue": "scraping"},
+        "app.scraping.fb_action_tasks.*": {"queue": "scraping"},
         "app.services.*": {"queue": "default"},
     },
 )
@@ -42,5 +43,6 @@ celery_app.conf.beat_schedule = {
 celery_app.autodiscover_tasks([
     "app.scraping.tasks",
     "app.scraping.fb_sync_tasks",
+    "app.scraping.fb_action_tasks",
     "app.services",
 ])

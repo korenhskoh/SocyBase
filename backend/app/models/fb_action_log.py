@@ -21,6 +21,10 @@ class FBActionLog(Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("fb_action_batches.id"), nullable=True, index=True
+    )
+
     action_name: Mapped[str] = mapped_column(String(50), nullable=False)
     action_params: Mapped[dict] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(20), nullable=False)  # success | failed | error
