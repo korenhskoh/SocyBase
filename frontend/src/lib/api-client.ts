@@ -516,6 +516,17 @@ export const competitorsApi = {
     api.get("/competitors/feed/export", { params, responseType: "blob" }),
 };
 
+// FB Action Bot API
+export const fbActionApi = {
+  execute: (data: { action_name: string; params: Record<string, unknown>; user_agent?: string; proxy?: { host: string; port: string; username: string; password: string } }) =>
+    api.post("/fb-action/execute", data),
+  history: (params?: { page?: number; page_size?: number; action_name?: string }) =>
+    api.get("/fb-action/history", { params }),
+  getConfig: () => api.get("/fb-action/config"),
+  saveConfig: (data: { user_agent?: string; proxy?: { host: string; port: string; username: string; password: string } }) =>
+    api.post("/fb-action/save-config", data),
+};
+
 // Traffic Bot API
 export const trafficBotApi = {
   // Services

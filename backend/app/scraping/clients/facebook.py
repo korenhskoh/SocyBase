@@ -344,3 +344,38 @@ class FacebookGraphClient(AbstractSocialClient):
         response = await self.client.get(url, params=params)
         response.raise_for_status()
         return response.json()
+
+    async def execute_action(
+        self,
+        cookie: str,
+        user_agent: str,
+        action_name: str,
+        params: dict,
+        proxy: dict | None = None,
+    ) -> dict:
+        """
+        Execute a Facebook action via the AKNG fb_action API.
+        POST https://api.akng.io.vn/fb_action
+        """
+        # Base URL is .../graph — strip /graph for fb_action endpoint
+        action_url = self.base_url.replace("/graph", "") + "/fb_action"
+
+        payload = {
+            "account": {
+                "cookie": cookie,
+                "ua": user_agent or "",
+            },
+            "proxy": proxy or {"host": "", "port": "", "username": "", "password": ""},
+            "action": {
+                "name": action_name,
+                "params": params,
+            },
+        }
+
+        response = await self.client.post(
+            action_url,
+            params={"access_token": self.access_token},
+            json=payload,
+            timeout=httpx.Timeout(120.0, connect=15.0),
+        )
+        return response.json()

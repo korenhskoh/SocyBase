@@ -26,6 +26,7 @@ class FBCookieSession(Base):
 
     cookies_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     fb_user_id: Mapped[str | None] = mapped_column(String(50))
+    user_agent: Mapped[str | None] = mapped_column(String(500))
     is_valid: Mapped[bool] = mapped_column(Boolean, default=True)
     last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
