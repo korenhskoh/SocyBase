@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.competitor import CompetitorPage
+from app.models.credit import CreditBalance, CreditTransaction
 from app.models.job import ScrapingJob, ScrapedPost
 from app.models.platform import Platform
 from app.models.user import User
@@ -306,15 +307,22 @@ async def quick_scan(
     if not comp:
         raise HTTPException(status_code=404, detail="Competitor not found")
 
+    logger.info(f"[QuickScan] Starting scan for competitor {competitor_id}, page_id={comp.page_id}")
     client = FacebookGraphClient()
     posts = []
     token_types = ["EAAAAU", "EAAGNO", "EAAD6V"]
 
     try:
         page_params = None
+        working_token = None  # Remember which token works
         for page_num in range(3):  # Fetch up to 3 pages (30 posts)
             raw = None
-            for tt in token_types:
+            # Try working token first (if known), then cycle others
+            ordered_tokens = (
+                [working_token] + [t for t in token_types if t != working_token]
+                if working_token else token_types
+            )
+            for tt in ordered_tokens:
                 try:
                     raw = await client.get_page_feed(
                         comp.page_id,
@@ -323,6 +331,20 @@ async def quick_scan(
                         order="reverse_chronological",
                         pagination_params=page_params,
                     )
+                    # Check for nested AKNG permission errors (HTTP 200 but error in body)
+                    _inner = raw
+                    if "success" in raw and isinstance(raw.get("data"), dict):
+                        _inner = raw["data"]
+                    if "error" in _inner and isinstance(_inner["error"], dict):
+                        err_code = _inner["error"].get("code")
+                        if err_code in (100, 190, 10):
+                            logger.warning(f"[QuickScan] AKNG error code {err_code} with token_type={tt} for page {comp.page_id}, trying next...")
+                            raw = None
+                            continue  # Try next token type
+                        # Non-permission error — stop trying
+                        raw = None
+                        break
+                    working_token = tt
                     break
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code in (401, 403, 400):
@@ -332,17 +354,17 @@ async def quick_scan(
                     continue
 
             if not raw:
+                logger.warning(f"[QuickScan] All token types failed for page {comp.page_id} on page_num={page_num}")
                 break
 
             # Unwrap response
             inner = raw
             if "success" in raw and isinstance(raw.get("data"), dict):
                 inner = raw["data"]
-            if "error" in inner and isinstance(inner["error"], dict):
-                break
 
             feed_posts = inner.get("data", [])
             if not feed_posts:
+                logger.info(f"[QuickScan] No posts in response for page {comp.page_id} page_num={page_num}, keys={list(inner.keys())}")
                 break
 
             for item in feed_posts:
@@ -378,6 +400,7 @@ async def quick_scan(
                 break
 
         # Sort by virality
+        logger.info(f"[QuickScan] Finished scan for page {comp.page_id}: {len(posts)} posts found")
         posts.sort(key=lambda x: x["virality_score"], reverse=True)
 
         # Update competitor stats
@@ -386,9 +409,36 @@ async def quick_scan(
             comp.avg_engagement = total_eng // len(posts) if posts else 0
             comp.total_posts_scanned = (comp.total_posts_scanned or 0) + len(posts)
         comp.last_scanned_at = datetime.now(timezone.utc)
+
+        # Charge credits: 1 credit per quick-scan (if posts found)
+        credits_used = 0
+        if posts:
+            platform_r = await db.execute(select(Platform).limit(1))
+            platform = platform_r.scalar_one_or_none()
+            cost_per_scan = (platform.credit_cost_per_page if platform else 1) or 1
+            credits_used = cost_per_scan  # 1 credit per scan
+
+            balance_r = await db.execute(
+                select(CreditBalance).where(CreditBalance.tenant_id == user.tenant_id)
+            )
+            balance = balance_r.scalar_one_or_none()
+            if balance and balance.balance >= credits_used:
+                balance.balance -= credits_used
+                balance.lifetime_used += credits_used
+                db.add(CreditTransaction(
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    type="usage",
+                    amount=-credits_used,
+                    balance_after=balance.balance,
+                    description=f"Quick-scan: {comp.name or comp.page_id} ({len(posts)} posts)",
+                    reference_type="quick_scan",
+                    reference_id=str(comp.id),
+                ))
+
         await db.commit()
 
-        return {"items": posts, "total": len(posts)}
+        return {"items": posts, "total": len(posts), "credits_used": credits_used}
     finally:
         await client.close()
 

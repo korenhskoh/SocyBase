@@ -1405,8 +1405,9 @@ export default function FBActionBotPage() {
                           const posts = scanRes.data.items || scanRes.data.posts || [];
                           setPlannerPosts(posts);
                           setSelectedPostIds(new Set());
+                          const scanCreditNote = scanRes.data.credits_used ? ` (${scanRes.data.credits_used} credit used)` : "";
                           if (posts.length === 0) showToast("error", "No posts found for this page");
-                          else showToast("success", `Found ${posts.length} posts`);
+                          else showToast("success", `Found ${posts.length} posts${scanCreditNote}`);
                         } catch (err: any) {
                           const msg = err?.response?.data?.detail || "Failed to scan page";
                           showToast("error", msg);
@@ -1417,6 +1418,7 @@ export default function FBActionBotPage() {
                       {plannerPostsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
                       Scan
                     </button>
+                    <span className="text-[10px] text-white/20 whitespace-nowrap pb-0.5">1 credit</span>
                   </div>
                 )}
 
@@ -1446,8 +1448,9 @@ export default function FBActionBotPage() {
                             const res = await fbActionApi.aiPlanSearchPages({ prompt: aiSearchPrompt.trim() });
                             setAiSearchKeywords(res.data.keywords || []);
                             setAiSearchPages(res.data.pages || []);
+                            const creditNote = res.data.credits_used ? ` (${res.data.credits_used} credit used)` : "";
                             if ((res.data.pages || []).length === 0) showToast("error", "No pages found — try different keywords");
-                            else showToast("success", `Found ${res.data.pages.length} pages from ${res.data.keywords?.length || 0} keywords`);
+                            else showToast("success", `Found ${res.data.pages.length} pages from ${res.data.keywords?.length || 0} keywords${creditNote}`);
                           } catch { showToast("error", "AI search failed"); }
                           finally { setAiSearching(false); }
                         }}
@@ -1456,6 +1459,7 @@ export default function FBActionBotPage() {
                         {aiSearching && <div className="h-3 w-3 border-2 border-cyan-300/30 border-t-cyan-300 rounded-full animate-spin" />}
                         Search with AI
                       </button>
+                      <span className="text-[10px] text-white/20 whitespace-nowrap">1 credit</span>
                     </div>
 
                     {/* Keywords display */}
@@ -1584,6 +1588,7 @@ export default function FBActionBotPage() {
                             const selected = aiSearchPages.filter((p: any) => aiSelectedPageIds.has(p.id));
                             const allPosts: any[] = [];
                             let failCount = 0;
+                            let totalCredits = 0;
 
                             for (let i = 0; i < selected.length; i++) {
                               setAiBulkScanProgress(`Scanning page ${i + 1} of ${selected.length}... (${allPosts.length} posts found)`);
@@ -1608,7 +1613,11 @@ export default function FBActionBotPage() {
                                 const scanRes = await competitorsApi.quickScan(compId);
                                 const posts = scanRes.data.items || [];
                                 allPosts.push(...posts);
-                              } catch { failCount++; }
+                                if (scanRes.data.credits_used) totalCredits += scanRes.data.credits_used;
+                              } catch (err: any) {
+                                console.error(`[AI Bulk Scan] Failed for page ${selected[i].name} (${selected[i].id}):`, err?.response?.data || err?.message || err);
+                                failCount++;
+                              }
                             }
 
                             setPlannerPosts(allPosts);
@@ -1616,10 +1625,11 @@ export default function FBActionBotPage() {
                             setAiBulkScanProgress("");
                             setAiBulkScanning(false);
 
+                            const creditMsg = totalCredits > 0 ? ` (${totalCredits} credits used)` : "";
                             if (allPosts.length > 0) {
-                              showToast("success", `Found ${allPosts.length} posts from ${selected.length - failCount} pages`);
+                              showToast("success", `Found ${allPosts.length} posts from ${selected.length - failCount} pages${creditMsg}`);
                             } else {
-                              showToast("error", "No posts found from selected pages");
+                              showToast("error", `No posts found from selected pages${failCount > 0 ? ` (${failCount} failed)` : ""}`);
                             }
                           }}
                           className="w-full py-2.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs rounded-lg border border-cyan-500/20 transition disabled:opacity-30 flex items-center justify-center gap-2"
@@ -1627,6 +1637,9 @@ export default function FBActionBotPage() {
                           {aiBulkScanning && <div className="h-3 w-3 border-2 border-cyan-300/30 border-t-cyan-300 rounded-full animate-spin" />}
                           {aiBulkScanning ? aiBulkScanProgress : `Scan ${aiSelectedPageIds.size} Selected Pages for Posts`}
                         </button>
+                        {aiSelectedPageIds.size > 0 && !aiBulkScanning && (
+                          <p className="text-[10px] text-white/30 text-center">~{aiSelectedPageIds.size} credit{aiSelectedPageIds.size > 1 ? "s" : ""} will be used for scanning</p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1802,7 +1815,7 @@ export default function FBActionBotPage() {
                 <label className="text-xs text-white/40 block">Actions per post: {plannerActionsPerPost}</label>
                 <input type="range" min={1} max={5} value={plannerActionsPerPost} onChange={(e) => setPlannerActionsPerPost(Number(e.target.value))} className="w-full accent-violet-500" />
                 <p className="text-xs text-white/20">
-                  ~{selectedPostIds.size * plannerActionsPerPost * plannerActionTypes.size} actions will be generated
+                  ~{selectedPostIds.size * plannerActionsPerPost * plannerActionTypes.size} actions will be generated · 2 credits for AI generation
                 </p>
               </div>
 
@@ -1851,7 +1864,8 @@ export default function FBActionBotPage() {
                       // Load login batches for export dropdown
                       fbActionApi.aiPlanLoginBatches().then((r) => setLoginBatchOptions(r.data.items || [])).catch(() => {});
                       setPlannerStep(4);
-                      showToast("success", `Generated ${actions.length} actions`);
+                      const genCreditNote = res.data.credits_used ? ` (${res.data.credits_used} credits used)` : "";
+                      showToast("success", `Generated ${actions.length} actions${genCreditNote}`);
                     } catch {
                       showToast("error", "AI generation failed — check OpenAI key");
                     } finally { setGenerating(false); }

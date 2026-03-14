@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.credit import CreditBalance, CreditTransaction
 from app.models.fb_action_batch import FBActionBatch
 from app.models.fb_action_log import FBActionLog
 from app.models.fb_cookie_session import FBCookieSession
@@ -1084,7 +1085,30 @@ async def ai_plan_generate(
             page_id=req.page_id,
             group_id=req.group_id,
         )
-        return {"actions": actions, "total": len(actions)}
+
+        # Charge 2 credits for AI plan generation
+        credits_used = 0
+        if actions:
+            credits_used = 2
+            balance_r = await db.execute(
+                select(CreditBalance).where(CreditBalance.tenant_id == user.tenant_id)
+            )
+            balance = balance_r.scalar_one_or_none()
+            if balance and balance.balance >= credits_used:
+                balance.balance -= credits_used
+                balance.lifetime_used += credits_used
+                db.add(CreditTransaction(
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    type="usage",
+                    amount=-credits_used,
+                    balance_after=balance.balance,
+                    description=f"AI Plan: {len(actions)} actions for {len(posts_data)} posts",
+                    reference_type="ai_plan_generate",
+                ))
+                await db.commit()
+
+        return {"actions": actions, "total": len(actions), "credits_used": credits_used}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1174,16 +1198,19 @@ class AISearchPagesRequest(BaseModel):
 async def ai_search_pages(
     body: AISearchPagesRequest,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """AI-powered page discovery: extract keywords -> search AKNG -> deduplicated pages."""
     from app.services.ai_action_planner import AIActionPlanner
 
     # Use provided keywords or extract from prompt via AI
+    used_ai = False
     if body.keywords:
         keywords = body.keywords
     elif body.prompt.strip():
         planner = AIActionPlanner()
         keywords = await planner.extract_search_keywords(body.prompt)
+        used_ai = True
     else:
         raise HTTPException(status_code=400, detail="Provide prompt or keywords")
 
@@ -1223,7 +1250,29 @@ async def ai_search_pages(
                 logger.warning(f"[AISearch] Search failed for keyword '{kw}': {exc}")
                 continue
 
-        return {"keywords": keywords, "pages": pages, "total": len(pages)}
+        # Charge 1 credit for AI-powered search (only when AI was used for keyword extraction)
+        credits_used = 0
+        if used_ai and pages:
+            credits_used = 1
+            balance_r = await db.execute(
+                select(CreditBalance).where(CreditBalance.tenant_id == user.tenant_id)
+            )
+            balance = balance_r.scalar_one_or_none()
+            if balance and balance.balance >= credits_used:
+                balance.balance -= credits_used
+                balance.lifetime_used += credits_used
+                db.add(CreditTransaction(
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    type="usage",
+                    amount=-credits_used,
+                    balance_after=balance.balance,
+                    description=f"AI Search: {len(keywords)} keywords, {len(pages)} pages found",
+                    reference_type="ai_search",
+                ))
+                await db.commit()
+
+        return {"keywords": keywords, "pages": pages, "total": len(pages), "credits_used": credits_used}
     finally:
         await client.close()
 
