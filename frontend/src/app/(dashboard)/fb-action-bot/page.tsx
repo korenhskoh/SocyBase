@@ -232,6 +232,8 @@ export default function FBActionBotPage() {
   const [aiSelectedPageIds, setAiSelectedPageIds] = useState<Set<string>>(new Set());
   const [aiBulkScanning, setAiBulkScanning] = useState(false);
   const [aiBulkScanProgress, setAiBulkScanProgress] = useState("");
+  const [aiExtraKeyword, setAiExtraKeyword] = useState("");
+  const [aiLoadingMore, setAiLoadingMore] = useState(false);
 
   // Livestream Engagement state
   const [liveEngagePhase, setLiveEngagePhase] = useState<"setup" | "running">("setup");
@@ -1458,13 +1460,73 @@ export default function FBActionBotPage() {
 
                     {/* Keywords display */}
                     {aiSearchKeywords.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        <span className="text-[10px] text-white/30 mr-1 self-center">Keywords:</span>
-                        {aiSearchKeywords.map((kw, i) => (
-                          <span key={i} className="px-2 py-0.5 bg-cyan-500/10 text-cyan-300 text-[10px] rounded-full border border-cyan-500/20">
-                            {kw}
-                          </span>
-                        ))}
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                          <span className="text-[10px] text-white/30 mr-1">Keywords:</span>
+                          {aiSearchKeywords.map((kw, i) => (
+                            <span key={i} className="group px-2 py-0.5 bg-cyan-500/10 text-cyan-300 text-[10px] rounded-full border border-cyan-500/20 flex items-center gap-1">
+                              {kw}
+                              <button
+                                onClick={() => setAiSearchKeywords(prev => prev.filter((_, idx) => idx !== i))}
+                                className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-red-400 transition-opacity"
+                              >&times;</button>
+                            </span>
+                          ))}
+                        </div>
+                        {/* Add keyword input */}
+                        <div className="flex gap-2">
+                          <input
+                            value={aiExtraKeyword}
+                            onChange={(e) => setAiExtraKeyword(e.target.value)}
+                            placeholder="Add custom keyword..."
+                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder-white/20 focus:border-cyan-500 focus:outline-none"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && aiExtraKeyword.trim()) {
+                                setAiSearchKeywords(prev => [...prev, aiExtraKeyword.trim()]);
+                                setAiExtraKeyword("");
+                              }
+                            }}
+                          />
+                          <button
+                            disabled={!aiExtraKeyword.trim()}
+                            onClick={() => {
+                              if (aiExtraKeyword.trim()) {
+                                setAiSearchKeywords(prev => [...prev, aiExtraKeyword.trim()]);
+                                setAiExtraKeyword("");
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-[10px] rounded-lg border border-cyan-500/20 transition disabled:opacity-30"
+                          >
+                            + Add
+                          </button>
+                          <button
+                            disabled={aiLoadingMore || aiSearchKeywords.length === 0}
+                            onClick={async () => {
+                              setAiLoadingMore(true);
+                              try {
+                                const existingIds = aiSearchPages.map((p: any) => p.id);
+                                const res = await fbActionApi.aiPlanSearchPages({
+                                  prompt: "",
+                                  keywords: aiSearchKeywords,
+                                  limit_per_keyword: 15,
+                                  exclude_ids: existingIds,
+                                });
+                                const newPages = res.data.pages || [];
+                                if (newPages.length > 0) {
+                                  setAiSearchPages(prev => [...prev, ...newPages]);
+                                  showToast("success", `Found ${newPages.length} more pages`);
+                                } else {
+                                  showToast("success", "No more new pages found");
+                                }
+                              } catch { showToast("error", "Failed to load more"); }
+                              finally { setAiLoadingMore(false); }
+                            }}
+                            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/50 text-[10px] rounded-lg border border-white/10 transition disabled:opacity-30 flex items-center gap-1"
+                          >
+                            {aiLoadingMore && <div className="h-2.5 w-2.5 border border-white/30 border-t-white/70 rounded-full animate-spin" />}
+                            Load More
+                          </button>
+                        </div>
                       </div>
                     )}
 

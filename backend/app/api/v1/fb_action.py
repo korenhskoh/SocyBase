@@ -1164,8 +1164,10 @@ async def ai_plan_export_csv(
 
 
 class AISearchPagesRequest(BaseModel):
-    prompt: str
+    prompt: str = ""
+    keywords: list[str] | None = None  # Direct keywords — skip AI extraction
     limit_per_keyword: int = 10
+    exclude_ids: list[str] | None = None  # Already-loaded page IDs to skip
 
 
 @router.post("/ai-plan/search-pages")
@@ -1176,12 +1178,18 @@ async def ai_search_pages(
     """AI-powered page discovery: extract keywords -> search AKNG -> deduplicated pages."""
     from app.services.ai_action_planner import AIActionPlanner
 
-    planner = AIActionPlanner()
-    keywords = await planner.extract_search_keywords(body.prompt)
+    # Use provided keywords or extract from prompt via AI
+    if body.keywords:
+        keywords = body.keywords
+    elif body.prompt.strip():
+        planner = AIActionPlanner()
+        keywords = await planner.extract_search_keywords(body.prompt)
+    else:
+        raise HTTPException(status_code=400, detail="Provide prompt or keywords")
 
     client = FacebookGraphClient()
     try:
-        seen_ids: set[str] = set()
+        seen_ids: set[str] = set(body.exclude_ids or [])
         pages: list[dict] = []
         for kw in keywords:
             try:
