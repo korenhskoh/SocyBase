@@ -42,6 +42,36 @@ class AIActionPlanner:
             raise ValueError("OpenAI API key not configured")
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
 
+    async def extract_search_keywords(self, user_prompt: str) -> list[str]:
+        """Extract 3-5 Facebook page search keywords from user's description."""
+        system = (
+            "You help find relevant Facebook pages. Given a user's description of what they want, "
+            "extract 3-5 short search keywords/phrases optimized for Facebook page search.\n\n"
+            "Rules:\n"
+            "- Each keyword should be 1-4 words\n"
+            "- Include variations: English + local language (Malay/etc.) if relevant\n"
+            "- Focus on business/page names, product categories, location terms\n"
+            "- Think about how real businesses name their Facebook pages\n\n"
+            'Return JSON: {"keywords": ["keyword1", "keyword2", ...]}'
+        )
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3,
+                max_tokens=200,
+            )
+            parsed = _parse_json_response(response.choices[0].message.content or "{}", {})
+            keywords = parsed.get("keywords", [])
+            return keywords if keywords else [user_prompt]
+        except Exception as exc:
+            logger.warning(f"[AIPlanner] Keyword extraction failed: {exc}")
+            return [user_prompt]
+
     async def generate_actions(
         self,
         posts: list[dict],

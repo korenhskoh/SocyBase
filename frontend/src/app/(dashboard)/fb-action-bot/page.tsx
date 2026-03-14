@@ -204,7 +204,7 @@ export default function FBActionBotPage() {
   // AI Planner state
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const [plannerStep, setPlannerStep] = useState<1 | 2 | 3 | 4>(1);
-  const [plannerSource, setPlannerSource] = useState<"feed" | "quickscan">("feed");
+  const [plannerSource, setPlannerSource] = useState<"feed" | "quickscan" | "aisearch">("feed");
   const [plannerPosts, setPlannerPosts] = useState<any[]>([]);
   const [plannerPostsLoading, setPlannerPostsLoading] = useState(false);
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
@@ -224,6 +224,14 @@ export default function FBActionBotPage() {
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [plannerRefContent, setPlannerRefContent] = useState("");
   const [plannerImageUrl, setPlannerImageUrl] = useState("");
+  // AI Search state
+  const [aiSearchPrompt, setAiSearchPrompt] = useState("");
+  const [aiSearching, setAiSearching] = useState(false);
+  const [aiSearchKeywords, setAiSearchKeywords] = useState<string[]>([]);
+  const [aiSearchPages, setAiSearchPages] = useState<any[]>([]);
+  const [aiSelectedPageIds, setAiSelectedPageIds] = useState<Set<string>>(new Set());
+  const [aiBulkScanning, setAiBulkScanning] = useState(false);
+  const [aiBulkScanProgress, setAiBulkScanProgress] = useState("");
 
   // Livestream Engagement state
   const [liveEngagePhase, setLiveEngagePhase] = useState<"setup" | "running">("setup");
@@ -1315,9 +1323,12 @@ export default function FBActionBotPage() {
                   <button onClick={() => setPlannerSource("quickscan")} className={`flex-1 py-2.5 text-xs rounded-lg transition border ${plannerSource === "quickscan" ? "bg-violet-500/20 text-violet-300 border-violet-500/30" : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"}`}>
                     Quick Scan URL
                   </button>
+                  <button onClick={() => setPlannerSource("aisearch")} className={`flex-1 py-2.5 text-xs rounded-lg transition border ${plannerSource === "aisearch" ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/30" : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"}`}>
+                    AI Search
+                  </button>
                 </div>
 
-                {plannerSource === "feed" ? (
+                {plannerSource === "feed" && (
                   <div className="flex items-end gap-3">
                     <div>
                       <label className="text-xs text-white/40 block mb-1">Days</label>
@@ -1356,7 +1367,9 @@ export default function FBActionBotPage() {
                       Load Posts
                     </button>
                   </div>
-                ) : (
+                )}
+
+                {plannerSource === "quickscan" && (
                   <div className="flex items-end gap-3">
                     <div className="flex-1">
                       <label className="text-xs text-white/40 block mb-1">Page URL or ID</label>
@@ -1372,13 +1385,11 @@ export default function FBActionBotPage() {
                       onClick={async () => {
                         setPlannerPostsLoading(true);
                         try {
-                          // Add as competitor first (or reuse existing), then quick-scan
                           let compId: string;
                           try {
                             const addRes = await competitorsApi.add({ input_value: plannerScanUrl.trim(), source: "manual" });
                             compId = addRes.data.id;
                           } catch (addErr: any) {
-                            // If already tracked (409), find existing competitor
                             if (addErr?.response?.status === 409) {
                               const listRes = await competitorsApi.list();
                               const existing = listRes.data.items?.find((c: any) =>
@@ -1404,6 +1415,158 @@ export default function FBActionBotPage() {
                       {plannerPostsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
                       Scan
                     </button>
+                  </div>
+                )}
+
+                {plannerSource === "aisearch" && (
+                  <div className="space-y-3">
+                    {/* Prompt input */}
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1">
+                        <label className="text-xs text-white/40 block mb-1">Describe what you&apos;re looking for</label>
+                        <input
+                          value={aiSearchPrompt}
+                          onChange={(e) => setAiSearchPrompt(e.target.value)}
+                          placeholder="e.g. laptop sellers in Malaysia, kedai baju online..."
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-cyan-500 focus:outline-none"
+                          onKeyDown={(e) => { if (e.key === "Enter" && aiSearchPrompt.trim() && !aiSearching) document.getElementById("ai-search-btn")?.click(); }}
+                        />
+                      </div>
+                      <button
+                        id="ai-search-btn"
+                        disabled={aiSearching || !aiSearchPrompt.trim()}
+                        onClick={async () => {
+                          setAiSearching(true);
+                          setAiSearchPages([]);
+                          setAiSearchKeywords([]);
+                          setAiSelectedPageIds(new Set());
+                          try {
+                            const res = await fbActionApi.aiPlanSearchPages({ prompt: aiSearchPrompt.trim() });
+                            setAiSearchKeywords(res.data.keywords || []);
+                            setAiSearchPages(res.data.pages || []);
+                            if ((res.data.pages || []).length === 0) showToast("error", "No pages found — try different keywords");
+                            else showToast("success", `Found ${res.data.pages.length} pages from ${res.data.keywords?.length || 0} keywords`);
+                          } catch { showToast("error", "AI search failed"); }
+                          finally { setAiSearching(false); }
+                        }}
+                        className="px-5 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs rounded-lg border border-cyan-500/20 transition disabled:opacity-30 flex items-center gap-2 whitespace-nowrap"
+                      >
+                        {aiSearching && <div className="h-3 w-3 border-2 border-cyan-300/30 border-t-cyan-300 rounded-full animate-spin" />}
+                        Search with AI
+                      </button>
+                    </div>
+
+                    {/* Keywords display */}
+                    {aiSearchKeywords.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="text-[10px] text-white/30 mr-1 self-center">Keywords:</span>
+                        {aiSearchKeywords.map((kw, i) => (
+                          <span key={i} className="px-2 py-0.5 bg-cyan-500/10 text-cyan-300 text-[10px] rounded-full border border-cyan-500/20">
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Page results */}
+                    {aiSearchPages.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-white/50">{aiSearchPages.length} pages found</span>
+                          <button
+                            onClick={() => {
+                              if (aiSelectedPageIds.size === aiSearchPages.length) setAiSelectedPageIds(new Set());
+                              else setAiSelectedPageIds(new Set(aiSearchPages.map((p: any) => p.id)));
+                            }}
+                            className="text-[10px] text-cyan-400 hover:text-cyan-300"
+                          >
+                            {aiSelectedPageIds.size === aiSearchPages.length ? "Deselect All" : "Select All"}
+                          </button>
+                        </div>
+                        <div className="max-h-[280px] overflow-y-auto space-y-1 pr-1">
+                          {aiSearchPages.map((page: any) => (
+                            <label
+                              key={page.id}
+                              className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition ${
+                                aiSelectedPageIds.has(page.id) ? "bg-cyan-500/10 border-cyan-500/30" : "bg-white/[0.02] border-white/5 hover:bg-white/[0.04]"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={aiSelectedPageIds.has(page.id)}
+                                onChange={() => {
+                                  const next = new Set(aiSelectedPageIds);
+                                  if (next.has(page.id)) next.delete(page.id);
+                                  else next.add(page.id);
+                                  setAiSelectedPageIds(next);
+                                }}
+                                className="accent-cyan-500 h-3.5 w-3.5"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs text-white truncate">{page.name}</p>
+                                <p className="text-[10px] text-white/30 truncate">
+                                  {page.location || page.link}
+                                  {page.verification_status === "blue_verified" && " \u2713"}
+                                </p>
+                              </div>
+                              <span className="text-[9px] text-white/20 shrink-0">{page.matched_keyword}</span>
+                            </label>
+                          ))}
+                        </div>
+
+                        {/* Bulk scan button */}
+                        <button
+                          disabled={aiSelectedPageIds.size === 0 || aiBulkScanning}
+                          onClick={async () => {
+                            setAiBulkScanning(true);
+                            const selected = aiSearchPages.filter((p: any) => aiSelectedPageIds.has(p.id));
+                            const allPosts: any[] = [];
+                            let failCount = 0;
+
+                            for (let i = 0; i < selected.length; i++) {
+                              setAiBulkScanProgress(`Scanning page ${i + 1} of ${selected.length}... (${allPosts.length} posts found)`);
+                              try {
+                                let compId: string;
+                                try {
+                                  const addRes = await competitorsApi.add({
+                                    input_value: selected[i].id,
+                                    source: "ai_search",
+                                    name: selected[i].name,
+                                    page_url: selected[i].link,
+                                  });
+                                  compId = addRes.data.id;
+                                } catch (addErr: any) {
+                                  if (addErr?.response?.status === 409) {
+                                    const listRes = await competitorsApi.list();
+                                    const existing = listRes.data.items?.find((c: any) => c.page_id === selected[i].id);
+                                    if (existing) compId = existing.id;
+                                    else { failCount++; continue; }
+                                  } else { failCount++; continue; }
+                                }
+                                const scanRes = await competitorsApi.quickScan(compId);
+                                const posts = scanRes.data.items || [];
+                                allPosts.push(...posts);
+                              } catch { failCount++; }
+                            }
+
+                            setPlannerPosts(allPosts);
+                            setSelectedPostIds(new Set());
+                            setAiBulkScanProgress("");
+                            setAiBulkScanning(false);
+
+                            if (allPosts.length > 0) {
+                              showToast("success", `Found ${allPosts.length} posts from ${selected.length - failCount} pages`);
+                            } else {
+                              showToast("error", "No posts found from selected pages");
+                            }
+                          }}
+                          className="w-full py-2.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs rounded-lg border border-cyan-500/20 transition disabled:opacity-30 flex items-center justify-center gap-2"
+                        >
+                          {aiBulkScanning && <div className="h-3 w-3 border-2 border-cyan-300/30 border-t-cyan-300 rounded-full animate-spin" />}
+                          {aiBulkScanning ? aiBulkScanProgress : `Scan ${aiSelectedPageIds.size} Selected Pages for Posts`}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 

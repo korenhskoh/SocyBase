@@ -1121,6 +1121,66 @@ async def ai_plan_export_csv(
     )
 
 
+# ── POST /fb-action/ai-plan/search-pages ─────────────────────────────
+
+
+class AISearchPagesRequest(BaseModel):
+    prompt: str
+    limit_per_keyword: int = 10
+
+
+@router.post("/ai-plan/search-pages")
+async def ai_search_pages(
+    body: AISearchPagesRequest,
+    user: User = Depends(get_current_user),
+):
+    """AI-powered page discovery: extract keywords -> search AKNG -> deduplicated pages."""
+    from app.services.ai_action_planner import AIActionPlanner
+
+    planner = AIActionPlanner()
+    keywords = await planner.extract_search_keywords(body.prompt)
+
+    client = FacebookGraphClient()
+    try:
+        seen_ids: set[str] = set()
+        pages: list[dict] = []
+        for kw in keywords:
+            try:
+                raw = await client.search_pages(kw, limit=body.limit_per_keyword)
+                # AKNG wraps: {"success": true, "data": {"data": [...]}}
+                data = raw
+                if isinstance(data, dict) and "success" in data:
+                    data = data.get("data", data)
+                if isinstance(data, dict):
+                    data = data.get("data", [])
+                if not isinstance(data, list):
+                    continue
+                for p in data:
+                    pid = p.get("id")
+                    if pid and pid not in seen_ids:
+                        seen_ids.add(pid)
+                        loc = p.get("location")
+                        location_str = ""
+                        if isinstance(loc, dict):
+                            parts = [loc.get("city", ""), loc.get("country", "")]
+                            location_str = ", ".join(x for x in parts if x)
+                        pages.append({
+                            "id": pid,
+                            "name": p.get("name", ""),
+                            "link": p.get("link", f"https://facebook.com/{pid}"),
+                            "location": location_str,
+                            "verification_status": p.get("verification_status", ""),
+                            "matched_keyword": kw,
+                        })
+            except Exception as exc:
+                logger.warning(f"[AISearch] Search failed for keyword '{kw}': {exc}")
+                continue
+
+        return {"keywords": keywords, "pages": pages, "total": len(pages)}
+    finally:
+        await client.close()
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # LIVESTREAM ENGAGEMENT
 # ═══════════════════════════════════════════════════════════════════════

@@ -578,6 +578,8 @@ export const fbActionApi = {
     api.post("/fb-action/ai-plan/export-csv", data, { responseType: "blob" }),
   aiPlanLoginBatches: () =>
     api.get("/fb-action/ai-plan/login-batches"),
+  aiPlanSearchPages: (data: { prompt: string; limit_per_keyword?: number }) =>
+    api.post("/fb-action/ai-plan/search-pages", data),
   // Livestream Engagement
   liveEngageStart: (data: {
     post_id: string;
