@@ -1372,17 +1372,31 @@ export default function FBActionBotPage() {
                       onClick={async () => {
                         setPlannerPostsLoading(true);
                         try {
-                          // Add as competitor first, then quick-scan
-                          const addRes = await competitorsApi.add({ input_value: plannerScanUrl.trim(), source: "manual" });
-                          const compId = addRes.data.id;
+                          // Add as competitor first (or reuse existing), then quick-scan
+                          let compId: string;
+                          try {
+                            const addRes = await competitorsApi.add({ input_value: plannerScanUrl.trim(), source: "manual" });
+                            compId = addRes.data.id;
+                          } catch (addErr: any) {
+                            // If already tracked (409), find existing competitor
+                            if (addErr?.response?.status === 409) {
+                              const listRes = await competitorsApi.list();
+                              const existing = listRes.data.items?.find((c: any) =>
+                                plannerScanUrl.trim().includes(c.page_id) || c.page_url?.includes(plannerScanUrl.trim().split("/").pop() || "")
+                              );
+                              if (existing) { compId = existing.id; }
+                              else throw addErr;
+                            } else throw addErr;
+                          }
                           const scanRes = await competitorsApi.quickScan(compId);
-                          const posts = scanRes.data.posts || [];
+                          const posts = scanRes.data.items || scanRes.data.posts || [];
                           setPlannerPosts(posts);
                           setSelectedPostIds(new Set());
                           if (posts.length === 0) showToast("error", "No posts found for this page");
                           else showToast("success", `Found ${posts.length} posts`);
-                        } catch {
-                          showToast("error", "Failed to scan page");
+                        } catch (err: any) {
+                          const msg = err?.response?.data?.detail || "Failed to scan page";
+                          showToast("error", msg);
                         } finally { setPlannerPostsLoading(false); }
                       }}
                       className="px-5 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-xs rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center gap-2"

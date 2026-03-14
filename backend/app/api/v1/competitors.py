@@ -325,9 +325,11 @@ async def quick_scan(
                     )
                     break
                 except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 401:
+                    if e.response.status_code in (401, 403, 400):
                         continue
                     raise
+                except Exception:
+                    continue
 
             if not raw:
                 break
