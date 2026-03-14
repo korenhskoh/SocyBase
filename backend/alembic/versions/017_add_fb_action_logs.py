@@ -1,7 +1,7 @@
 """add fb_action_logs table and user_agent to fb_cookie_sessions
 
-Revision ID: 014
-Revises: 013
+Revision ID: 017
+Revises: 016
 Create Date: 2026-03-14
 
 """
@@ -11,8 +11,8 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 
 # revision identifiers, used by Alembic.
-revision = '014'
-down_revision = '013'
+revision = '017'
+down_revision = '016'
 branch_labels = None
 depends_on = None
 
