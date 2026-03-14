@@ -564,6 +564,39 @@ export const fbActionApi = {
     api.post(`/fb-action/login-batch/${batchId}/cancel`),
   exportLoginResults: (batchId: string) =>
     api.get(`/fb-action/login-batch/${batchId}/export`, { responseType: "blob" }),
+  // AI Planner
+  aiPlanGenerate: (data: {
+    posts: Array<{ post_id: string; message?: string | null; from_name?: string | null; reaction_count?: number; comment_count?: number; share_count?: number; attachment_type?: string | null; post_url?: string | null }>;
+    action_types: string[];
+    business_context?: string;
+    actions_per_post?: number;
+    page_id?: string;
+    group_id?: string;
+    include_comments?: boolean;
+  }) => api.post("/fb-action/ai-plan/generate", data),
+  aiPlanExportCsv: (data: { actions: Array<Record<string, unknown>>; login_batch_id?: string }) =>
+    api.post("/fb-action/ai-plan/export-csv", data, { responseType: "blob" }),
+  aiPlanLoginBatches: () =>
+    api.get("/fb-action/ai-plan/login-batches"),
+  // Livestream Engagement
+  liveEngageStart: (data: {
+    post_id: string;
+    post_url?: string;
+    title?: string;
+    login_batch_id: string;
+    role_distribution: Record<string, number>;
+    business_context?: string;
+    training_comments?: string;
+    ai_instructions?: string;
+    min_delay_seconds?: number;
+    max_delay_seconds?: number;
+  }) => api.post("/fb-action/live-engage/start", data),
+  liveEngageStatus: (sessionId: string) =>
+    api.get(`/fb-action/live-engage/${sessionId}`),
+  liveEngageStop: (sessionId: string) =>
+    api.post(`/fb-action/live-engage/${sessionId}/stop`),
+  liveEngageHistory: (params?: { page?: number; page_size?: number }) =>
+    api.get("/fb-action/live-engage/history", { params }),
 };
 
 // Traffic Bot API

@@ -4,11 +4,12 @@ import csv
 import io
 import json
 import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +18,7 @@ from app.dependencies import get_current_user
 from app.models.fb_action_batch import FBActionBatch
 from app.models.fb_action_log import FBActionLog
 from app.models.fb_cookie_session import FBCookieSession
+from app.models.fb_live_engage import FBLiveEngageSession, FBLiveEngageLog, VALID_ROLES
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
 from app.scraping.fb_action_tasks import VALID_ACTIONS
@@ -45,6 +47,32 @@ class ExecuteActionRequest(BaseModel):
 class SaveConfigRequest(BaseModel):
     user_agent: str | None = None
     proxy: ProxyConfig | None = None
+
+
+class AIPlanPost(BaseModel):
+    post_id: str
+    message: str | None = None
+    from_name: str | None = None
+    reaction_count: int = 0
+    comment_count: int = 0
+    share_count: int = 0
+    attachment_type: str | None = None
+    post_url: str | None = None
+
+
+class AIPlanGenerateRequest(BaseModel):
+    posts: list[AIPlanPost]
+    action_types: list[str]
+    business_context: str = ""
+    actions_per_post: int = Field(default=3, ge=1, le=5)
+    page_id: str | None = None
+    group_id: str | None = None
+    include_comments: bool = True
+
+
+class AIPlanExportRequest(BaseModel):
+    actions: list[dict]
+    login_batch_id: str | None = None
 
 
 # ── POST /fb-action/execute ──────────────────────────────────────────
@@ -913,3 +941,411 @@ async def export_login_results(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=login_{str(batch_id)[:8]}_action_ready.csv"},
     )
+
+
+# ── AI Action Planner Endpoints ──────────────────────────────────────
+
+# ── GET /fb-action/ai-plan/login-batches ─────────────────────────────
+
+@router.get("/ai-plan/login-batches")
+async def ai_plan_login_batches(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent completed login batches for auto-merge dropdown."""
+    from app.models.fb_login_batch import FBLoginBatch
+
+    result = await db.execute(
+        select(FBLoginBatch)
+        .where(
+            FBLoginBatch.tenant_id == user.tenant_id,
+            FBLoginBatch.status == "completed",
+            FBLoginBatch.success_count > 0,
+        )
+        .order_by(FBLoginBatch.created_at.desc())
+        .limit(10)
+    )
+    batches = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(b.id),
+                "success_count": b.success_count,
+                "total_rows": b.total_rows,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+            }
+            for b in batches
+        ]
+    }
+
+
+# ── POST /fb-action/ai-plan/generate ────────────────────────────────
+
+@router.post("/ai-plan/generate")
+async def ai_plan_generate(
+    req: AIPlanGenerateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate AI-planned actions from selected posts."""
+    from app.models.job import ExtractedComment, ScrapingJob
+    from app.services.ai_action_planner import AIActionPlanner, PLANNABLE_ACTIONS
+
+    # Validate action types
+    valid_types = [t for t in req.action_types if t in PLANNABLE_ACTIONS]
+    if not valid_types:
+        raise HTTPException(status_code=400, detail="No valid action types selected")
+
+    if len(req.posts) > 20:
+        raise HTTPException(status_code=400, detail="Maximum 20 posts per generation")
+
+    # Convert Pydantic models to dicts
+    posts_data = [p.model_dump() for p in req.posts]
+
+    # Fetch comments for selected posts if needed
+    comments_by_post: dict[str, list[dict]] = {}
+    needs_comments = req.include_comments and any(
+        t in valid_types for t in ["reply_to_comment", "add_friend"]
+    )
+
+    if needs_comments:
+        post_ids = [p.post_id for p in req.posts]
+        # Find comments from tenant's scraping jobs
+        result = await db.execute(
+            select(ExtractedComment)
+            .join(ScrapingJob, ExtractedComment.job_id == ScrapingJob.id)
+            .where(
+                ScrapingJob.tenant_id == user.tenant_id,
+                ExtractedComment.post_id.in_(post_ids),
+            )
+            .order_by(ExtractedComment.comment_time.desc())
+            .limit(200)  # cap total
+        )
+        comments = result.scalars().all()
+        for c in comments:
+            pid = c.post_id
+            if pid not in comments_by_post:
+                comments_by_post[pid] = []
+            if len(comments_by_post[pid]) < 10:  # max 10 per post
+                comments_by_post[pid].append({
+                    "comment_id": c.comment_id,
+                    "commenter_user_id": c.commenter_user_id or "",
+                    "commenter_name": c.commenter_name or "",
+                    "comment_text": c.comment_text or "",
+                })
+
+    try:
+        planner = AIActionPlanner()
+        actions = await planner.generate_actions(
+            posts=posts_data,
+            comments_by_post=comments_by_post,
+            action_types=valid_types,
+            business_context=req.business_context,
+            actions_per_post=req.actions_per_post,
+            page_id=req.page_id,
+            group_id=req.group_id,
+        )
+        return {"actions": actions, "total": len(actions)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("AI plan generation failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"AI generation failed: {str(e)}")
+
+
+# ── POST /fb-action/ai-plan/export-csv ───────────────────────────────
+
+@router.post("/ai-plan/export-csv")
+async def ai_plan_export_csv(
+    req: AIPlanExportRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export AI-planned actions as a batch-ready CSV, optionally merged with login cookies."""
+    from app.models.fb_login_batch import FBLoginBatch
+    from app.models.fb_login_result import FBLoginResult
+    from app.services.ai_action_planner import AIActionPlanner
+
+    if not req.actions:
+        raise HTTPException(status_code=400, detail="No actions to export")
+
+    if len(req.actions) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 actions per export")
+
+    login_results = None
+    meta = MetaAPIService()
+
+    if req.login_batch_id:
+        # Verify batch ownership
+        batch_result = await db.execute(
+            select(FBLoginBatch).where(
+                FBLoginBatch.id == req.login_batch_id,
+                FBLoginBatch.tenant_id == user.tenant_id,
+            )
+        )
+        batch = batch_result.scalar_one_or_none()
+        if not batch:
+            raise HTTPException(status_code=404, detail="Login batch not found")
+
+        # Fetch successful results
+        results_query = await db.execute(
+            select(FBLoginResult)
+            .where(
+                FBLoginResult.login_batch_id == req.login_batch_id,
+                FBLoginResult.status == "success",
+            )
+            .order_by(FBLoginResult.created_at)
+        )
+        login_results = list(results_query.scalars().all())
+        if not login_results:
+            raise HTTPException(status_code=400, detail="No successful logins in this batch")
+
+    planner = AIActionPlanner()
+    rows = planner.build_csv_rows(
+        actions=req.actions,
+        login_results=login_results,
+        meta_service=meta,
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(CSV_COLUMNS)
+    for row in rows:
+        writer.writerow([row.get(col, "") for col in CSV_COLUMNS])
+
+    csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=ai_plan_actions.csv"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# LIVESTREAM ENGAGEMENT
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class LiveEngageStartRequest(BaseModel):
+    post_id: str
+    post_url: str | None = None
+    title: str | None = None
+    login_batch_id: str
+    role_distribution: dict[str, int]
+    business_context: str = ""
+    training_comments: str | None = None
+    ai_instructions: str = ""
+    min_delay_seconds: int = Field(default=15, ge=5, le=120)
+    max_delay_seconds: int = Field(default=60, ge=10, le=300)
+
+
+@router.post("/live-engage/start")
+async def live_engage_start(
+    req: LiveEngageStartRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a livestream engagement session with bulk accounts."""
+    from app.models.fb_login_batch import FBLoginBatch
+
+    # Validate role distribution
+    if not req.role_distribution:
+        raise HTTPException(status_code=400, detail="role_distribution is required")
+    invalid_roles = set(req.role_distribution.keys()) - VALID_ROLES
+    if invalid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid roles: {invalid_roles}")
+    total_pct = sum(req.role_distribution.values())
+    if total_pct != 100:
+        raise HTTPException(status_code=400, detail=f"Role percentages must sum to 100, got {total_pct}")
+
+    # Validate delays
+    if req.max_delay_seconds < req.min_delay_seconds:
+        raise HTTPException(status_code=400, detail="max_delay must be >= min_delay")
+
+    # Verify login batch
+    batch_result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == req.login_batch_id,
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = batch_result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+    if (batch.success_count or 0) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 successful login accounts")
+
+    # Resolve post_id from URL if provided
+    post_id = req.post_id.strip()
+    if req.post_url and not post_id:
+        client = FacebookGraphClient()
+        parsed = client.parse_post_url(req.post_url.strip())
+        post_id = parsed.get("post_id", req.post_url.strip())
+        await client.close()
+
+    session = FBLiveEngageSession(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        login_batch_id=batch.id,
+        post_id=post_id,
+        post_url=req.post_url,
+        title=req.title,
+        role_distribution=req.role_distribution,
+        business_context=req.business_context,
+        training_comments=req.training_comments,
+        ai_instructions=req.ai_instructions,
+        min_delay_seconds=req.min_delay_seconds,
+        max_delay_seconds=req.max_delay_seconds,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    # Dispatch Celery task
+    from app.scraping.fb_live_engage_tasks import run_live_engagement
+    task = run_live_engagement.delay(str(session.id))
+    session.celery_task_id = task.id
+    await db.commit()
+
+    return {
+        "id": str(session.id),
+        "status": session.status,
+        "post_id": session.post_id,
+        "active_accounts": 0,
+        "celery_task_id": task.id,
+    }
+
+
+@router.get("/live-engage/{session_id}")
+async def live_engage_status(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get livestream engagement session status with activity logs."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Fetch last 30 logs
+    logs_result = await db.execute(
+        select(FBLiveEngageLog)
+        .where(FBLiveEngageLog.session_id == session.id)
+        .order_by(FBLiveEngageLog.created_at.desc())
+        .limit(30)
+    )
+    logs = logs_result.scalars().all()
+
+    return {
+        "id": str(session.id),
+        "status": session.status,
+        "post_id": session.post_id,
+        "post_url": session.post_url,
+        "title": session.title,
+        "role_distribution": session.role_distribution,
+        "total_comments_posted": session.total_comments_posted,
+        "total_errors": session.total_errors,
+        "comments_by_role": session.comments_by_role,
+        "comments_monitored": session.comments_monitored,
+        "active_accounts": session.active_accounts,
+        "min_delay_seconds": session.min_delay_seconds,
+        "max_delay_seconds": session.max_delay_seconds,
+        "error_message": session.error_message,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "logs": [
+            {
+                "id": str(log.id),
+                "role": log.role,
+                "content": log.content,
+                "account_email": log.account_email,
+                "reference_comment": log.reference_comment,
+                "status": log.status,
+                "error_message": log.error_message,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in logs
+        ],
+    }
+
+
+@router.post("/live-engage/{session_id}/stop")
+async def live_engage_stop(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop a running livestream engagement session."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status != "running":
+        raise HTTPException(status_code=400, detail=f"Session is not running (status: {session.status})")
+
+    session.status = "stopped"
+    session.ended_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return {"id": str(session.id), "status": "stopped"}
+
+
+@router.get("/live-engage/history")
+async def live_engage_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """List livestream engagement sessions (most recent first)."""
+    offset = (page - 1) * page_size
+
+    count_result = await db.execute(
+        select(func.count(FBLiveEngageSession.id)).where(
+            FBLiveEngageSession.tenant_id == user.tenant_id
+        )
+    )
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(FBLiveEngageSession)
+        .where(FBLiveEngageSession.tenant_id == user.tenant_id)
+        .order_by(FBLiveEngageSession.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    sessions = result.scalars().all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "sessions": [
+            {
+                "id": str(s.id),
+                "status": s.status,
+                "post_id": s.post_id,
+                "title": s.title,
+                "total_comments_posted": s.total_comments_posted,
+                "total_errors": s.total_errors,
+                "active_accounts": s.active_accounts,
+                "comments_monitored": s.comments_monitored,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in sessions
+        ],
+    }

@@ -25,6 +25,7 @@ from app.models.traffic_bot import (
     TrafficBotService, TrafficBotOrder,
 )
 from app.models.fb_live_sell import LiveSession, LiveComment
+from app.models.fb_live_engage import FBLiveEngageSession, FBLiveEngageLog
 
 __all__ = [
     "Tenant",
@@ -75,4 +76,7 @@ __all__ = [
     # Live Sell
     "LiveSession",
     "LiveComment",
+    # Live Engage
+    "FBLiveEngageSession",
+    "FBLiveEngageLog",
 ]

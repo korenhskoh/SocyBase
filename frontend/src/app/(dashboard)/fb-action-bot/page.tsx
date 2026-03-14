@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { fbActionApi } from "@/lib/api-client";
+import { fbActionApi, competitorsApi } from "@/lib/api-client";
 
 // All 13 AKNG fb_action actions
 const ACTIONS = [
@@ -151,7 +151,7 @@ interface BatchInfo {
 
 export default function FBActionBotPage() {
   // Tab state
-  const [activeTab, setActiveTab] = useState<"single" | "batch" | "login">("single");
+  const [activeTab, setActiveTab] = useState<"single" | "batch" | "login" | "ai-planner" | "livestream">("single");
 
   // Config state
   const [hasCookies, setHasCookies] = useState(false);
@@ -200,6 +200,51 @@ export default function FBActionBotPage() {
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const loginFileInputRef = useRef<HTMLInputElement>(null);
   const [autoGoToBatch, setAutoGoToBatch] = useState(true);
+
+  // AI Planner state
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const [plannerStep, setPlannerStep] = useState<1 | 2 | 3 | 4>(1);
+  const [plannerSource, setPlannerSource] = useState<"feed" | "quickscan">("feed");
+  const [plannerPosts, setPlannerPosts] = useState<any[]>([]);
+  const [plannerPostsLoading, setPlannerPostsLoading] = useState(false);
+  const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
+  const [plannerActionTypes, setPlannerActionTypes] = useState<Set<string>>(new Set(["comment_to_post"]));
+  const [plannerContext, setPlannerContext] = useState("");
+  const [plannerActionsPerPost, setPlannerActionsPerPost] = useState(3);
+  const [plannerPageId, setPlannerPageId] = useState("");
+  const [plannerGroupId, setPlannerGroupId] = useState("");
+  const [generatedActions, setGeneratedActions] = useState<any[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [loginBatchOptions, setLoginBatchOptions] = useState<any[]>([]);
+  const [selectedLoginBatchId, setSelectedLoginBatchId] = useState("");
+  const [plannerFeedDays, setPlannerFeedDays] = useState(90);
+  const [plannerFeedSort, setPlannerFeedSort] = useState("virality_score");
+  const [plannerScanUrl, setPlannerScanUrl] = useState("");
+  const [plannerActionFilter, setPlannerActionFilter] = useState("all");
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [plannerRefContent, setPlannerRefContent] = useState("");
+  const [plannerImageUrl, setPlannerImageUrl] = useState("");
+
+  // Livestream Engagement state
+  const [liveEngagePhase, setLiveEngagePhase] = useState<"setup" | "running">("setup");
+  const [liveEngageSession, setLiveEngageSession] = useState<any>(null);
+  const [liveEngageLogs, setLiveEngageLogs] = useState<any[]>([]);
+  const [lePostUrl, setLePostUrl] = useState("");
+  const [lePostId, setLePostId] = useState("");
+  const [leTitle, setLeTitle] = useState("");
+  const [leLoginBatchId, setLeLoginBatchId] = useState("");
+  const [leRoles, setLeRoles] = useState<Record<string, number>>({
+    ask_question: 10, place_order: 10, repeat_question: 20,
+    good_vibe: 30, react_comment: 15, share_experience: 15,
+  });
+  const [leContext, setLeContext] = useState("");
+  const [leTrainingComments, setLeTrainingComments] = useState("");
+  const [leInstructions, setLeInstructions] = useState("");
+  const [leMinDelay, setLeMinDelay] = useState(15);
+  const [leMaxDelay, setLeMaxDelay] = useState(60);
+  const [leStarting, setLeStarting] = useState(false);
+  const lePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // Toast
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -591,6 +636,26 @@ export default function FBActionBotPage() {
           }`}
         >
           Bulk Login
+        </button>
+        <button
+          onClick={() => setActiveTab("ai-planner")}
+          className={`px-5 py-2 text-sm rounded-lg transition font-medium ${
+            activeTab === "ai-planner"
+              ? "bg-white/10 text-white shadow-sm"
+              : "text-white/40 hover:text-white/60"
+          }`}
+        >
+          AI Planner
+        </button>
+        <button
+          onClick={() => setActiveTab("livestream")}
+          className={`px-5 py-2 text-sm rounded-lg transition font-medium ${
+            activeTab === "livestream"
+              ? "bg-red-500/20 text-red-300 shadow-sm"
+              : "text-white/40 hover:text-white/60"
+          }`}
+        >
+          Livestream
         </button>
       </div>
 
@@ -1205,6 +1270,863 @@ export default function FBActionBotPage() {
               </>
             )}
           </div>
+        </>
+      )}
+
+      {/* ═══════════════════ AI PLANNER TAB ═══════════════════ */}
+      {activeTab === "ai-planner" && (
+        <>
+          {/* Stepper bar */}
+          <div className="flex items-center gap-2">
+            {[
+              { n: 1, label: "Select Source" },
+              { n: 2, label: "Pick Posts" },
+              { n: 3, label: "Configure" },
+              { n: 4, label: "Preview & Export" },
+            ].map((s) => (
+              <button
+                key={s.n}
+                onClick={() => s.n <= plannerStep && setPlannerStep(s.n as 1 | 2 | 3 | 4)}
+                className={`flex items-center gap-2 px-4 py-2 text-xs rounded-lg transition ${
+                  plannerStep === s.n
+                    ? "bg-violet-500/20 text-violet-300 border border-violet-500/30"
+                    : plannerStep > s.n
+                    ? "bg-white/5 text-emerald-400 border border-white/10 cursor-pointer hover:bg-white/10"
+                    : "bg-white/[0.02] text-white/20 border border-white/5 cursor-default"
+                }`}
+              >
+                <span className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                  plannerStep > s.n ? "bg-emerald-500/20" : plannerStep === s.n ? "bg-violet-500/30" : "bg-white/5"
+                }`}>{plannerStep > s.n ? "✓" : s.n}</span>
+                {s.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Step 1: Select Source ─────────────────────── */}
+          {plannerStep === 1 && (
+            <div className="space-y-4">
+              <div className="glass-card p-5 space-y-4">
+                <h3 className="text-sm font-medium text-white/60">Post Source</h3>
+                <div className="flex gap-2">
+                  <button onClick={() => setPlannerSource("feed")} className={`flex-1 py-2.5 text-xs rounded-lg transition border ${plannerSource === "feed" ? "bg-violet-500/20 text-violet-300 border-violet-500/30" : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"}`}>
+                    Competitor Feed
+                  </button>
+                  <button onClick={() => setPlannerSource("quickscan")} className={`flex-1 py-2.5 text-xs rounded-lg transition border ${plannerSource === "quickscan" ? "bg-violet-500/20 text-violet-300 border-violet-500/30" : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"}`}>
+                    Quick Scan URL
+                  </button>
+                </div>
+
+                {plannerSource === "feed" ? (
+                  <div className="flex items-end gap-3">
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1">Days</label>
+                      <select value={plannerFeedDays} onChange={(e) => setPlannerFeedDays(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 focus:outline-none">
+                        <option value={30}>30</option>
+                        <option value={90}>90</option>
+                        <option value={180}>180</option>
+                        <option value={365}>365</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1">Sort</label>
+                      <select value={plannerFeedSort} onChange={(e) => setPlannerFeedSort(e.target.value)} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 focus:outline-none">
+                        <option value="virality_score">Virality</option>
+                        <option value="reaction_count">Reactions</option>
+                        <option value="comment_count">Comments</option>
+                        <option value="share_count">Shares</option>
+                        <option value="recency">Recent</option>
+                      </select>
+                    </div>
+                    <button
+                      disabled={plannerPostsLoading}
+                      onClick={async () => {
+                        setPlannerPostsLoading(true);
+                        try {
+                          const res = await competitorsApi.feed({ days: plannerFeedDays, sort_by: plannerFeedSort, page_size: 100 });
+                          setPlannerPosts(res.data.items || []);
+                          setSelectedPostIds(new Set());
+                          if ((res.data.items || []).length === 0) showToast("error", "No posts found — add competitor pages first");
+                        } catch { showToast("error", "Failed to load feed"); }
+                        finally { setPlannerPostsLoading(false); }
+                      }}
+                      className="px-5 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-xs rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center gap-2"
+                    >
+                      {plannerPostsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
+                      Load Posts
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                      <label className="text-xs text-white/40 block mb-1">Page URL or ID</label>
+                      <input
+                        value={plannerScanUrl}
+                        onChange={(e) => setPlannerScanUrl(e.target.value)}
+                        placeholder="https://facebook.com/page or page ID"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      disabled={plannerPostsLoading || !plannerScanUrl.trim()}
+                      onClick={async () => {
+                        setPlannerPostsLoading(true);
+                        try {
+                          // Add as competitor first, then quick-scan
+                          const addRes = await competitorsApi.add({ input_value: plannerScanUrl.trim(), source: "manual" });
+                          const compId = addRes.data.id;
+                          const scanRes = await competitorsApi.quickScan(compId);
+                          const posts = scanRes.data.posts || [];
+                          setPlannerPosts(posts);
+                          setSelectedPostIds(new Set());
+                          if (posts.length === 0) showToast("error", "No posts found for this page");
+                          else showToast("success", `Found ${posts.length} posts`);
+                        } catch {
+                          showToast("error", "Failed to scan page");
+                        } finally { setPlannerPostsLoading(false); }
+                      }}
+                      className="px-5 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-xs rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center gap-2"
+                    >
+                      {plannerPostsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
+                      Scan
+                    </button>
+                  </div>
+                )}
+
+                {plannerPosts.length > 0 && (
+                  <p className="text-xs text-emerald-400">{plannerPosts.length} posts loaded</p>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  disabled={plannerPosts.length === 0}
+                  onClick={() => setPlannerStep(2)}
+                  className="px-6 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-sm rounded-lg border border-violet-500/20 transition disabled:opacity-30"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Step 2: Pick Posts ────────────────────────── */}
+          {plannerStep === 2 && (
+            <div className="space-y-4">
+              <div className="glass-card p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-white/60">
+                    Select Posts
+                    <span className="ml-2 text-xs text-violet-400">{selectedPostIds.size} of {plannerPosts.length} selected</span>
+                    {selectedPostIds.size >= 20 && <span className="ml-2 text-xs text-yellow-400">(max 20)</span>}
+                  </h3>
+                  <button
+                    onClick={() => {
+                      if (selectedPostIds.size === plannerPosts.length || selectedPostIds.size >= 20) {
+                        setSelectedPostIds(new Set());
+                      } else {
+                        setSelectedPostIds(new Set(plannerPosts.slice(0, 20).map((p: any) => p.post_id)));
+                      }
+                    }}
+                    className="text-xs text-white/40 hover:text-white/60 transition"
+                  >
+                    {selectedPostIds.size > 0 ? "Deselect All" : "Select All"}
+                  </button>
+                </div>
+
+                <div className="max-h-[500px] overflow-y-auto space-y-1">
+                  {plannerPosts.map((p: any) => (
+                    <label key={p.post_id} className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition ${selectedPostIds.has(p.post_id) ? "bg-violet-500/10 border border-violet-500/20" : "hover:bg-white/[0.03] border border-transparent"}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedPostIds.has(p.post_id)}
+                        onChange={(e) => {
+                          const next = new Set(selectedPostIds);
+                          if (e.target.checked) {
+                            if (next.size >= 20) return;
+                            next.add(p.post_id);
+                          } else next.delete(p.post_id);
+                          setSelectedPostIds(next);
+                        }}
+                        className="mt-1 h-3.5 w-3.5 rounded accent-violet-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-white/70 line-clamp-2">{p.message || p.post_id}</p>
+                        <div className="flex items-center gap-3 mt-1 text-[10px] text-white/30">
+                          {p.from_name && <span>{p.from_name}</span>}
+                          <span>{p.reaction_count || 0} reactions</span>
+                          <span>{p.comment_count || 0} comments</span>
+                          <span>{p.share_count || 0} shares</span>
+                          {p.virality_score != null && <span className="text-amber-400/60">🔥 {Math.round(p.virality_score)}</span>}
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-between">
+                <button onClick={() => setPlannerStep(1)} className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white/60 text-sm rounded-lg transition">← Back</button>
+                <button
+                  disabled={selectedPostIds.size === 0}
+                  onClick={() => setPlannerStep(3)}
+                  className="px-6 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-sm rounded-lg border border-violet-500/20 transition disabled:opacity-30"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Step 3: Configure Strategy ───────────────── */}
+          {plannerStep === 3 && (
+            <div className="space-y-4">
+              <div className="glass-card p-5 space-y-4">
+                <h3 className="text-sm font-medium text-white/60">Action Types</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: "comment_to_post", label: "Comment on Post" },
+                    { id: "reply_to_comment", label: "Reply to Comment" },
+                    { id: "page_comment_to_post", label: "Comment as Page" },
+                    { id: "add_friend", label: "Add Friend" },
+                    { id: "post_to_my_feed", label: "Post to My Feed" },
+                    { id: "post_to_group", label: "Post to Group" },
+                    { id: "join_group", label: "Join Group" },
+                  ].map((t) => (
+                    <label key={t.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={plannerActionTypes.has(t.id)}
+                        onChange={(e) => {
+                          const next = new Set(plannerActionTypes);
+                          if (e.target.checked) next.add(t.id);
+                          else next.delete(t.id);
+                          setPlannerActionTypes(next);
+                        }}
+                        className="h-3.5 w-3.5 rounded accent-violet-500"
+                      />
+                      <span className="text-xs text-white/60">{t.label}</span>
+                    </label>
+                  ))}
+                </div>
+
+                {plannerActionTypes.has("page_comment_to_post") && (
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1">Page ID (for page comments)</label>
+                    <input value={plannerPageId} onChange={(e) => setPlannerPageId(e.target.value)} placeholder="Your Facebook page ID" className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none" />
+                  </div>
+                )}
+
+                {plannerActionTypes.has("post_to_group") && (
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1">Group ID (for group posts)</label>
+                    <input value={plannerGroupId} onChange={(e) => setPlannerGroupId(e.target.value)} placeholder="Target group ID" className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none" />
+                  </div>
+                )}
+              </div>
+
+              <div className="glass-card p-5 space-y-4">
+                <h3 className="text-sm font-medium text-white/60">Business Context / Tone</h3>
+                <textarea
+                  value={plannerContext}
+                  onChange={(e) => setPlannerContext(e.target.value)}
+                  placeholder="Describe your business, brand voice, and goals. E.g., 'We sell handmade jewelry. Tone: friendly and complimentary. Goal: build awareness.'"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none h-20 resize-none"
+                />
+              </div>
+
+              <div className="glass-card p-5 space-y-4">
+                <h3 className="text-sm font-medium text-white/60">Content & Media (optional)</h3>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Reference Content</label>
+                  <textarea
+                    value={plannerRefContent}
+                    onChange={(e) => setPlannerRefContent(e.target.value)}
+                    placeholder="Optional: provide example content or talking points for AI to use as reference. Leave empty for fully AI-generated content."
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none h-16 resize-none"
+                  />
+                  <p className="text-[10px] text-white/20 mt-1">AI will use this as inspiration — not copy it directly</p>
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Image URL (attached to comments/posts)</label>
+                  <input
+                    value={plannerImageUrl}
+                    onChange={(e) => setPlannerImageUrl(e.target.value)}
+                    placeholder="https://example.com/image.jpg (optional — applied to all generated actions)"
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none"
+                  />
+                  <p className="text-[10px] text-white/20 mt-1">Attached to comments and posts that support images. Editable per action in step 4.</p>
+                </div>
+              </div>
+
+              <div className="glass-card p-5 space-y-3">
+                <label className="text-xs text-white/40 block">Actions per post: {plannerActionsPerPost}</label>
+                <input type="range" min={1} max={5} value={plannerActionsPerPost} onChange={(e) => setPlannerActionsPerPost(Number(e.target.value))} className="w-full accent-violet-500" />
+                <p className="text-xs text-white/20">
+                  ~{selectedPostIds.size * plannerActionsPerPost * plannerActionTypes.size} actions will be generated
+                </p>
+              </div>
+
+              <div className="flex justify-between">
+                <button onClick={() => setPlannerStep(2)} className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white/60 text-sm rounded-lg transition">← Back</button>
+                <button
+                  disabled={generating || plannerActionTypes.size === 0}
+                  onClick={async () => {
+                    setGenerating(true);
+                    try {
+                      const selected = plannerPosts.filter((p: any) => selectedPostIds.has(p.post_id));
+                      // Build business context with reference content
+                      let fullContext = plannerContext;
+                      if (plannerRefContent.trim()) {
+                        fullContext += `\n\nReference content to use as inspiration:\n${plannerRefContent}`;
+                      }
+                      const res = await fbActionApi.aiPlanGenerate({
+                        posts: selected.map((p: any) => ({
+                          post_id: p.post_id,
+                          message: p.message || null,
+                          from_name: p.from_name || null,
+                          reaction_count: p.reaction_count || 0,
+                          comment_count: p.comment_count || 0,
+                          share_count: p.share_count || 0,
+                          attachment_type: p.attachment_type || null,
+                          post_url: p.post_url || null,
+                        })),
+                        action_types: Array.from(plannerActionTypes),
+                        business_context: fullContext,
+                        actions_per_post: plannerActionsPerPost,
+                        page_id: plannerPageId || undefined,
+                        group_id: plannerGroupId || undefined,
+                        include_comments: plannerActionTypes.has("reply_to_comment") || plannerActionTypes.has("add_friend"),
+                      });
+                      // Attach image URL to actions that support it
+                      const imgUrl = plannerImageUrl.trim();
+                      const imageActions = new Set(["comment_to_post", "page_comment_to_post", "reply_to_comment", "post_to_my_feed", "post_to_group"]);
+                      const actions = (res.data.actions || []).map((a: any, i: number) => ({
+                        ...a,
+                        _idx: i,
+                        _accepted: true,
+                        image: imgUrl && imageActions.has(a.action_name) ? imgUrl : (a.image || ""),
+                      }));
+                      setGeneratedActions(actions);
+                      setPlannerActionFilter("all");
+                      // Load login batches for export dropdown
+                      fbActionApi.aiPlanLoginBatches().then((r) => setLoginBatchOptions(r.data.items || [])).catch(() => {});
+                      setPlannerStep(4);
+                      showToast("success", `Generated ${actions.length} actions`);
+                    } catch {
+                      showToast("error", "AI generation failed — check OpenAI key");
+                    } finally { setGenerating(false); }
+                  }}
+                  className="px-6 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-sm rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center gap-2"
+                >
+                  {generating ? (
+                    <><div className="h-4 w-4 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" /> Generating...</>
+                  ) : (
+                    "Generate"
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Step 4: Preview & Export ──────────────────── */}
+          {plannerStep === 4 && (
+            <div className="space-y-4">
+              {/* Filter pills */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {(() => {
+                  const counts: Record<string, number> = {};
+                  generatedActions.forEach((a) => {
+                    counts[a.action_name] = (counts[a.action_name] || 0) + 1;
+                  });
+                  return (
+                    <>
+                      <button onClick={() => setPlannerActionFilter("all")} className={`px-3 py-1 text-xs rounded-full transition border ${plannerActionFilter === "all" ? "bg-violet-500/20 text-violet-300 border-violet-500/30" : "bg-white/5 text-white/40 border-white/10"}`}>
+                        All ({generatedActions.length})
+                      </button>
+                      {Object.entries(counts).map(([name, count]) => (
+                        <button key={name} onClick={() => setPlannerActionFilter(name)} className={`px-3 py-1 text-xs rounded-full transition border ${plannerActionFilter === name ? "bg-violet-500/20 text-violet-300 border-violet-500/30" : "bg-white/5 text-white/40 border-white/10"}`}>
+                          {name.replace(/_/g, " ")} ({count})
+                        </button>
+                      ))}
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* Actions table */}
+              <div className="glass-card p-5 space-y-2 max-h-[500px] overflow-y-auto">
+                {generatedActions
+                  .filter((a) => plannerActionFilter === "all" || a.action_name === plannerActionFilter)
+                  .map((a, idx) => (
+                    <div key={a._idx} className={`flex items-start gap-3 p-3 rounded-lg border transition ${a._accepted ? "border-white/5 bg-white/[0.02]" : "border-red-500/10 bg-red-500/[0.02] opacity-50"}`}>
+                      <input
+                        type="checkbox"
+                        checked={a._accepted}
+                        onChange={() => {
+                          const next = [...generatedActions];
+                          const realIdx = next.findIndex((x) => x._idx === a._idx);
+                          if (realIdx >= 0) next[realIdx] = { ...next[realIdx], _accepted: !next[realIdx]._accepted };
+                          setGeneratedActions(next);
+                        }}
+                        className="mt-1 h-3.5 w-3.5 rounded accent-violet-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full mb-1 ${
+                          a.action_name === "comment_to_post" ? "bg-blue-500/15 text-blue-400"
+                          : a.action_name === "add_friend" ? "bg-green-500/15 text-green-400"
+                          : a.action_name === "reply_to_comment" ? "bg-amber-500/15 text-amber-400"
+                          : a.action_name === "post_to_my_feed" || a.action_name === "post_to_group" ? "bg-purple-500/15 text-purple-400"
+                          : a.action_name === "page_comment_to_post" ? "bg-cyan-500/15 text-cyan-400"
+                          : "bg-white/10 text-white/40"
+                        }`}>{a.action_name.replace(/_/g, " ")}{a.style ? ` · ${a.style}` : ""}</span>
+
+                        {a.content ? (
+                          editingIdx === a._idx ? (
+                            <textarea
+                              autoFocus
+                              value={a.content}
+                              onChange={(e) => {
+                                const next = [...generatedActions];
+                                const realIdx = next.findIndex((x) => x._idx === a._idx);
+                                if (realIdx >= 0) next[realIdx] = { ...next[realIdx], content: e.target.value };
+                                setGeneratedActions(next);
+                              }}
+                              onBlur={() => setEditingIdx(null)}
+                              className="w-full bg-white/5 border border-violet-500/30 rounded px-2 py-1 text-xs text-white mt-1 resize-none focus:outline-none"
+                              rows={2}
+                            />
+                          ) : (
+                            <p className="text-xs text-white/60 mt-0.5 cursor-pointer hover:text-white/80" onClick={() => setEditingIdx(a._idx)}>
+                              {a.content}
+                              <span className="ml-1 text-white/20">✏</span>
+                            </p>
+                          )
+                        ) : a.uid ? (
+                          <p className="text-xs text-white/40 mt-0.5">uid: {a.uid}</p>
+                        ) : a.group_id ? (
+                          <p className="text-xs text-white/40 mt-0.5">group: {a.group_id}</p>
+                        ) : null}
+
+                        {a.post_id && <p className="text-[10px] text-white/20 mt-0.5">post: {a.post_id}</p>}
+
+                        {/* Image URL — editable per action */}
+                        {["comment_to_post", "page_comment_to_post", "reply_to_comment", "post_to_my_feed", "post_to_group"].includes(a.action_name) && (
+                          <div className="flex items-center gap-1 mt-1">
+                            <span className="text-[10px] text-white/15 shrink-0">img:</span>
+                            <input
+                              value={a.image || ""}
+                              onChange={(e) => {
+                                const next = [...generatedActions];
+                                const realIdx = next.findIndex((x) => x._idx === a._idx);
+                                if (realIdx >= 0) next[realIdx] = { ...next[realIdx], image: e.target.value };
+                                setGeneratedActions(next);
+                              }}
+                              placeholder="image URL (optional)"
+                              className="flex-1 bg-transparent border-b border-white/5 focus:border-violet-500/30 text-[10px] text-white/30 placeholder-white/10 py-0 focus:outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setGeneratedActions((prev) => prev.filter((x) => x._idx !== a._idx))}
+                        className="text-white/20 hover:text-red-400 transition text-xs mt-1"
+                        title="Remove"
+                      >✕</button>
+                    </div>
+                  ))}
+              </div>
+
+              {/* Export section */}
+              <div className="glass-card p-5 space-y-4">
+                <h3 className="text-sm font-medium text-white/60">Export</h3>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Merge with login batch</label>
+                  <select
+                    value={selectedLoginBatchId}
+                    onChange={(e) => setSelectedLoginBatchId(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 focus:outline-none"
+                  >
+                    <option value="">None (manual export)</option>
+                    {loginBatchOptions.map((b: any) => (
+                      <option key={b.id} value={b.id}>
+                        {new Date(b.created_at).toLocaleString()} — {b.success_count} accounts
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    disabled={!selectedLoginBatchId || generatedActions.filter((a) => a._accepted).length === 0}
+                    onClick={async () => {
+                      setGenerating(true);
+                      try {
+                        const accepted = generatedActions.filter((a) => a._accepted).map(({ _idx, _accepted, style, source_post_message, ...rest }) => rest);
+                        const res = await fbActionApi.aiPlanExportCsv({ actions: accepted, login_batch_id: selectedLoginBatchId });
+                        const url = window.URL.createObjectURL(new Blob([res.data]));
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = "ai_plan_with_cookies.csv";
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        showToast("success", `Exported ${accepted.length} actions with cookies — upload to Batch Mode`);
+                      } catch { showToast("error", "Export failed"); }
+                      finally { setGenerating(false); }
+                    }}
+                    className="flex-1 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs rounded-lg border border-emerald-500/20 transition disabled:opacity-30 flex items-center justify-center gap-2"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                    Export with Cookies
+                  </button>
+                  <button
+                    disabled={generatedActions.filter((a) => a._accepted).length === 0}
+                    onClick={async () => {
+                      setGenerating(true);
+                      try {
+                        const accepted = generatedActions.filter((a) => a._accepted).map(({ _idx, _accepted, style, source_post_message, ...rest }) => rest);
+                        const res = await fbActionApi.aiPlanExportCsv({ actions: accepted });
+                        const url = window.URL.createObjectURL(new Blob([res.data]));
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = "ai_plan_actions.csv";
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        showToast("success", `Exported ${accepted.length} actions — merge with login CSV manually`);
+                      } catch { showToast("error", "Export failed"); }
+                      finally { setGenerating(false); }
+                    }}
+                    className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs rounded-lg border border-white/10 transition disabled:opacity-30 flex items-center justify-center gap-2"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                    Export CSV Only
+                  </button>
+                </div>
+                <p className="text-[10px] text-white/20">
+                  {generatedActions.filter((a) => a._accepted).length} of {generatedActions.length} actions accepted
+                </p>
+              </div>
+
+              <div className="flex justify-start">
+                <button onClick={() => setPlannerStep(3)} className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white/60 text-sm rounded-lg transition">← Back</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ═══════════════════ LIVESTREAM TAB ═══════════════════ */}
+      {activeTab === "livestream" && (
+        <>
+          {liveEngagePhase === "setup" ? (
+            <div className="space-y-4 max-w-3xl">
+              {/* Target */}
+              <div className="glass-card p-5 space-y-3">
+                <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+                  <svg className="h-4 w-4 text-red-400" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>
+                  Target Livestream
+                </h3>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Livestream URL (optional — for reference)</label>
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    placeholder="https://facebook.com/page/videos/123..."
+                    value={lePostUrl}
+                    onChange={(e) => setLePostUrl(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Post ID (required — for commenting)</label>
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    placeholder="Post or video ID"
+                    value={lePostId}
+                    onChange={(e) => setLePostId(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Session Label (optional)</label>
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    placeholder="e.g. Product Launch Live"
+                    value={leTitle}
+                    onChange={(e) => setLeTitle(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Accounts */}
+              <div className="glass-card p-5 space-y-3">
+                <h3 className="text-sm font-medium text-white/60">Accounts</h3>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Login Batch</label>
+                  <select
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+                    value={leLoginBatchId}
+                    onChange={(e) => setLeLoginBatchId(e.target.value)}
+                  >
+                    <option value="">Select a login batch...</option>
+                    {loginBatchOptions.map((b: any) => (
+                      <option key={b.id} value={b.id}>
+                        {b.success_count} accounts — {b.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-white/30 mt-1">1 account monitors comments, rest post comments</p>
+                </div>
+              </div>
+
+              {/* Role Distribution */}
+              <div className="glass-card p-5 space-y-3">
+                <h3 className="text-sm font-medium text-white/60">Role Distribution (must total 100%)</h3>
+                {Object.entries(leRoles).map(([role, pct]) => (
+                  <div key={role} className="flex items-center gap-3">
+                    <label className="text-xs text-white/50 w-40 capitalize">{role.replace(/_/g, " ")}</label>
+                    <input
+                      type="range" min={0} max={100} step={5} value={pct}
+                      className="flex-1 accent-amber-400"
+                      onChange={(e) => setLeRoles((prev) => ({ ...prev, [role]: parseInt(e.target.value) }))}
+                    />
+                    <span className="text-xs text-white/60 w-10 text-right">{pct}%</span>
+                  </div>
+                ))}
+                <div className={`text-xs font-medium ${Object.values(leRoles).reduce((a, b) => a + b, 0) === 100 ? "text-emerald-400" : "text-red-400"}`}>
+                  Total: {Object.values(leRoles).reduce((a, b) => a + b, 0)}%
+                  {Object.values(leRoles).reduce((a, b) => a + b, 0) === 100 ? " ✓" : " (must be 100%)"}
+                </div>
+              </div>
+
+              {/* AI Configuration */}
+              <div className="glass-card p-5 space-y-3">
+                <h3 className="text-sm font-medium text-white/60">AI Configuration</h3>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Product / Business Context</label>
+                  <textarea
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    rows={3}
+                    placeholder="We sell handmade jewelry, currently showing our new ring collection..."
+                    value={leContext}
+                    onChange={(e) => setLeContext(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Upload Past Comments (for AI style training)</label>
+                  <textarea
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20 font-mono"
+                    rows={4}
+                    placeholder={"Paste past comments here, one per line...\nCantik sangat!\n+1 nak beli\nHow much is this ring?"}
+                    value={leTrainingComments}
+                    onChange={(e) => setLeTrainingComments(e.target.value)}
+                  />
+                  <div className="flex items-center gap-2 mt-1">
+                    <label className="text-xs text-amber-400/80 cursor-pointer hover:text-amber-300">
+                      <input
+                        type="file"
+                        accept=".txt,.csv"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              setLeTrainingComments(ev.target?.result as string || "");
+                            };
+                            reader.readAsText(file);
+                          }
+                        }}
+                      />
+                      Or upload .txt / .csv file
+                    </label>
+                    {leTrainingComments && (
+                      <span className="text-xs text-white/30">
+                        {leTrainingComments.split("\n").filter(l => l.trim()).length} lines loaded
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">AI Instructions (optional)</label>
+                  <textarea
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    rows={2}
+                    placeholder="Use Malay language, be excited about products, mention free shipping..."
+                    value={leInstructions}
+                    onChange={(e) => setLeInstructions(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Timing */}
+              <div className="glass-card p-5 space-y-3">
+                <h3 className="text-sm font-medium text-white/60">Timing</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1">Min Delay: {leMinDelay}s</label>
+                    <input
+                      type="range" min={5} max={120} step={5} value={leMinDelay}
+                      className="w-full accent-amber-400"
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value);
+                        setLeMinDelay(v);
+                        if (v > leMaxDelay) setLeMaxDelay(v);
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1">Max Delay: {leMaxDelay}s</label>
+                    <input
+                      type="range" min={10} max={300} step={5} value={leMaxDelay}
+                      className="w-full accent-amber-400"
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value);
+                        setLeMaxDelay(v);
+                        if (v < leMinDelay) setLeMinDelay(v);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Start Button */}
+              <button
+                disabled={leStarting || !lePostId.trim() || !leLoginBatchId || Object.values(leRoles).reduce((a, b) => a + b, 0) !== 100}
+                onClick={async () => {
+                  setLeStarting(true);
+                  try {
+                    // Load login batches if not loaded
+                    if (!loginBatchOptions.length) {
+                      const lbRes = await fbActionApi.aiPlanLoginBatches();
+                      setLoginBatchOptions(lbRes.data.batches || []);
+                    }
+                    const res = await fbActionApi.liveEngageStart({
+                      post_id: lePostId.trim(),
+                      post_url: lePostUrl.trim() || undefined,
+                      title: leTitle.trim() || undefined,
+                      login_batch_id: leLoginBatchId,
+                      role_distribution: leRoles,
+                      business_context: leContext,
+                      training_comments: leTrainingComments || undefined,
+                      ai_instructions: leInstructions || undefined,
+                      min_delay_seconds: leMinDelay,
+                      max_delay_seconds: leMaxDelay,
+                    });
+                    setLiveEngageSession(res.data);
+                    setLiveEngagePhase("running");
+                    showToast("success", "Livestream engagement started!");
+
+                    // Start polling
+                    const sid = res.data.id;
+                    lePollRef.current = setInterval(async () => {
+                      try {
+                        const statusRes = await fbActionApi.liveEngageStatus(sid);
+                        setLiveEngageSession(statusRes.data);
+                        setLiveEngageLogs(statusRes.data.logs || []);
+                        if (statusRes.data.status !== "running") {
+                          if (lePollRef.current) clearInterval(lePollRef.current);
+                        }
+                      } catch { /* ignore poll errors */ }
+                    }, 5000);
+                  } catch (err: any) {
+                    showToast("error", err?.response?.data?.detail || "Failed to start engagement");
+                  } finally {
+                    setLeStarting(false);
+                  }
+                }}
+                className="w-full py-3 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-xl font-medium text-sm transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {leStarting ? (
+                  <><svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Starting...</>
+                ) : (
+                  <>▶ Start Engagement</>
+                )}
+              </button>
+            </div>
+          ) : (
+            /* ── Live Dashboard ── */
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="glass-card p-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-3 h-3 rounded-full ${liveEngageSession?.status === "running" ? "bg-red-500 animate-pulse" : "bg-white/20"}`} />
+                    <div>
+                      <h3 className="text-white font-medium">
+                        {liveEngageSession?.title || "Livestream Engagement"}
+                        <span className="text-white/40 text-sm ml-2">({liveEngageSession?.status})</span>
+                      </h3>
+                      <p className="text-white/40 text-xs mt-0.5">
+                        {liveEngageSession?.total_comments_posted || 0} posted · {liveEngageSession?.total_errors || 0} errors · {liveEngageSession?.comments_monitored || 0} monitored · {liveEngageSession?.active_accounts || 0} accounts
+                      </p>
+                    </div>
+                  </div>
+                  {liveEngageSession?.status === "running" && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await fbActionApi.liveEngageStop(liveEngageSession.id);
+                          showToast("success", "Engagement stopped");
+                          setLiveEngageSession((prev: any) => prev ? { ...prev, status: "stopped" } : prev);
+                          if (lePollRef.current) clearInterval(lePollRef.current);
+                        } catch { showToast("error", "Failed to stop"); }
+                      }}
+                      className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition"
+                    >
+                      ⏹ Stop
+                    </button>
+                  )}
+                  {liveEngageSession?.status !== "running" && (
+                    <button
+                      onClick={() => {
+                        setLiveEngagePhase("setup");
+                        setLiveEngageSession(null);
+                        setLiveEngageLogs([]);
+                        if (lePollRef.current) clearInterval(lePollRef.current);
+                      }}
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/60 rounded-lg text-sm font-medium transition"
+                    >
+                      New Session
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Role Stats */}
+              <div className="glass-card p-5">
+                <h3 className="text-xs font-medium text-white/40 mb-3">Role Stats</h3>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {Object.entries(liveEngageSession?.comments_by_role || {}).map(([role, count]) => (
+                    <div key={role} className="bg-white/5 rounded-lg p-2 text-center">
+                      <div className="text-lg font-semibold text-white">{count as number}</div>
+                      <div className="text-[10px] text-white/40 capitalize">{role.replace(/_/g, " ")}</div>
+                    </div>
+                  ))}
+                  {Object.keys(liveEngageSession?.comments_by_role || {}).length === 0 && (
+                    <p className="text-white/30 text-xs col-span-full">Waiting for first comment...</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Activity Log */}
+              <div className="glass-card p-5">
+                <h3 className="text-xs font-medium text-white/40 mb-3">Activity Log</h3>
+                <div className="space-y-1.5 max-h-96 overflow-y-auto">
+                  {liveEngageLogs.length === 0 && (
+                    <p className="text-white/30 text-xs">No activity yet...</p>
+                  )}
+                  {liveEngageLogs.map((log: any) => (
+                    <div key={log.id} className="flex items-start gap-2 text-xs py-1.5 border-b border-white/5">
+                      <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${log.status === "success" ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <span className="text-amber-400/60 w-28 flex-shrink-0 capitalize">{log.role?.replace(/_/g, " ")}</span>
+                      <span className="text-white/30 w-28 flex-shrink-0 truncate">{log.account_email}</span>
+                      <span className={`flex-1 truncate ${log.status === "success" ? "text-white/60" : "text-red-400/60"}`}>
+                        {log.status === "success" ? log.content : log.error_message || "Error"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
 

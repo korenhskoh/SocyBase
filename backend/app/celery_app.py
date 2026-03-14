@@ -24,6 +24,7 @@ celery_app.conf.update(
         "app.scraping.tasks.*": {"queue": "scraping"},
         "app.scraping.fb_action_tasks.*": {"queue": "scraping"},
         "app.scraping.fb_login_tasks.*": {"queue": "scraping"},
+        "app.scraping.fb_live_engage_tasks.*": {"queue": "scraping"},
         "app.services.*": {"queue": "default"},
     },
 )
@@ -46,5 +47,6 @@ celery_app.autodiscover_tasks([
     "app.scraping.fb_sync_tasks",
     "app.scraping.fb_action_tasks",
     "app.scraping.fb_login_tasks",
+    "app.scraping.fb_live_engage_tasks",
     "app.services",
 ])
