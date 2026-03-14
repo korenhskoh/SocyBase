@@ -585,3 +585,331 @@ async def export_batch_results(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=batch_{batch_id}_results.csv"},
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Bulk Login — login multiple accounts, capture cookies, export CSV
+# ══════════════════════════════════════════════════════════════════════
+
+LOGIN_CSV_COLUMNS = [
+    "email", "password", "2fa_secret",
+    "proxy_host", "proxy_port", "proxy_username", "proxy_password",
+]
+
+
+# ── GET /fb-action/login-batch/accounts-template ─────────────────────
+
+@router.get("/login-batch/accounts-template")
+async def download_login_template():
+    """Download CSV template for bulk login."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(LOGIN_CSV_COLUMNS)
+    writer.writerow(["user@example.com", "password123", "JBSWY3DPEHPK3PXP", "", "", "", ""])
+    writer.writerow(["user2@example.com", "pass456", "", "proxy.host.com", "8080", "proxyuser", "proxypass"])
+
+    csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=fb_login_accounts_template.csv"},
+    )
+
+
+# ── GET /fb-action/login-batch/history ───────────────────────────────
+
+@router.get("/login-batch/history")
+async def get_login_batch_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+):
+    """Get paginated login batch history."""
+    from app.models.fb_login_batch import FBLoginBatch
+
+    filters = [FBLoginBatch.tenant_id == user.tenant_id]
+
+    count_q = select(func.count(FBLoginBatch.id)).where(*filters)
+    total = (await db.execute(count_q)).scalar() or 0
+
+    q = (
+        select(FBLoginBatch)
+        .where(*filters)
+        .order_by(FBLoginBatch.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await db.execute(q)
+    batches = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": str(b.id),
+                "status": b.status,
+                "total_rows": b.total_rows,
+                "completed_rows": b.completed_rows,
+                "success_count": b.success_count,
+                "failed_count": b.failed_count,
+                "execution_mode": b.execution_mode,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+                "completed_at": b.completed_at.isoformat() if b.completed_at else None,
+            }
+            for b in batches
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+# ── POST /fb-action/login-batch/upload ───────────────────────────────
+
+@router.post("/login-batch/upload")
+async def upload_login_batch(
+    file: UploadFile = File(...),
+    settings_json: str = Form("{}"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload accounts CSV and start bulk login."""
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a .csv file")
+
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+
+    # Parse settings
+    try:
+        batch_settings = json.loads(settings_json)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid settings JSON")
+
+    execution_mode = batch_settings.get("execution_mode", "sequential")
+    if execution_mode not in ("sequential", "concurrent"):
+        execution_mode = "sequential"
+    delay_seconds = max(3.0, min(60.0, float(batch_settings.get("delay_seconds", 10.0))))
+    max_parallel = max(1, min(5, int(batch_settings.get("max_parallel", 2))))
+
+    # Parse proxy pool
+    proxy_pool_raw = batch_settings.get("proxy_pool", [])
+    proxy_pool = []
+    for p in proxy_pool_raw:
+        if isinstance(p, dict) and p.get("host"):
+            proxy_pool.append({
+                "host": p["host"],
+                "port": str(p.get("port", "")),
+                "username": p.get("username", ""),
+                "password": p.get("password", ""),
+            })
+
+    # Parse CSV
+    try:
+        text = contents.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = contents.decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV is empty")
+
+    fields_lower = {f.strip().lower() for f in reader.fieldnames}
+    if "email" not in fields_lower or "password" not in fields_lower:
+        raise HTTPException(status_code=400, detail="CSV must have 'email' and 'password' columns")
+
+    rows = []
+    errors = []
+    for i, raw_row in enumerate(reader, start=2):
+        row = {k.strip().lower(): (v or "").strip() for k, v in raw_row.items() if k}
+        if not row.get("email"):
+            errors.append(f"Row {i}: missing email")
+            continue
+        if not row.get("password"):
+            errors.append(f"Row {i}: missing password")
+            continue
+        rows.append(row)
+
+    if errors and not rows:
+        raise HTTPException(status_code=400, detail=f"All rows invalid: {'; '.join(errors[:5])}")
+
+    if len(rows) > 200:
+        raise HTTPException(status_code=400, detail=f"Too many accounts ({len(rows)}). Max 200 per batch.")
+
+    # Encrypt CSV data
+    meta = MetaAPIService()
+    encrypted = meta.encrypt_token(json.dumps(rows))
+
+    # Create batch
+    from app.models.fb_login_batch import FBLoginBatch
+
+    batch = FBLoginBatch(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        status="pending",
+        total_rows=len(rows),
+        execution_mode=execution_mode,
+        delay_seconds=delay_seconds,
+        max_parallel=max_parallel,
+        csv_data_encrypted=encrypted,
+        proxy_pool=proxy_pool if proxy_pool else None,
+    )
+    db.add(batch)
+    await db.commit()
+    await db.refresh(batch)
+
+    # Dispatch Celery task
+    from app.scraping.fb_login_tasks import run_fb_login_batch
+    task = run_fb_login_batch.delay(str(batch.id))
+    batch.celery_task_id = task.id
+    await db.commit()
+
+    return {
+        "batch_id": str(batch.id),
+        "total_rows": len(rows),
+        "errors": errors[:10] if errors else [],
+    }
+
+
+# ── GET /fb-action/login-batch/{batch_id} ────────────────────────────
+
+@router.get("/login-batch/{batch_id}")
+async def get_login_batch_status(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get login batch status and progress."""
+    from app.models.fb_login_batch import FBLoginBatch
+
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == batch_id,
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+
+    return {
+        "id": str(batch.id),
+        "status": batch.status,
+        "total_rows": batch.total_rows,
+        "completed_rows": batch.completed_rows,
+        "success_count": batch.success_count,
+        "failed_count": batch.failed_count,
+        "execution_mode": batch.execution_mode,
+        "delay_seconds": batch.delay_seconds,
+        "max_parallel": batch.max_parallel,
+        "error_message": batch.error_message,
+        "created_at": batch.created_at.isoformat() if batch.created_at else None,
+        "started_at": batch.started_at.isoformat() if batch.started_at else None,
+        "completed_at": batch.completed_at.isoformat() if batch.completed_at else None,
+    }
+
+
+# ── POST /fb-action/login-batch/{batch_id}/cancel ────────────────────
+
+@router.post("/login-batch/{batch_id}/cancel")
+async def cancel_login_batch(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a running login batch."""
+    from app.models.fb_login_batch import FBLoginBatch
+
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == batch_id,
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+    if batch.status not in ("pending", "running"):
+        raise HTTPException(status_code=400, detail=f"Cannot cancel batch with status '{batch.status}'")
+
+    batch.status = "cancelled"
+    await db.commit()
+    return {"success": True}
+
+
+# ── GET /fb-action/login-batch/{batch_id}/export ─────────────────────
+
+@router.get("/login-batch/{batch_id}/export")
+async def export_login_results(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export successful logins as action-ready CSV for batch mode."""
+    from app.models.fb_login_batch import FBLoginBatch
+    from app.models.fb_login_result import FBLoginResult
+
+    # Verify ownership
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == batch_id,
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+
+    # Fetch successful results
+    result = await db.execute(
+        select(FBLoginResult)
+        .where(
+            FBLoginResult.login_batch_id == batch_id,
+            FBLoginResult.status == "success",
+        )
+        .order_by(FBLoginResult.created_at)
+    )
+    results = result.scalars().all()
+
+    if not results:
+        raise HTTPException(status_code=400, detail="No successful logins to export")
+
+    meta = MetaAPIService()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(CSV_COLUMNS)
+
+    for r in results:
+        try:
+            cookie_str = meta.decrypt_token(r.cookie_encrypted)
+        except Exception:
+            continue
+
+        proxy_host = ""
+        proxy_port = ""
+        proxy_user = ""
+        proxy_pass = ""
+        if r.proxy_used and isinstance(r.proxy_used, dict):
+            proxy_host = r.proxy_used.get("host", "")
+            proxy_port = r.proxy_used.get("port", "")
+            proxy_user = r.proxy_used.get("username", "")
+            proxy_pass = r.proxy_used.get("password", "")
+
+        writer.writerow([
+            cookie_str,            # cookie
+            r.user_agent or "",    # user_agent
+            "",                    # action_name (user fills)
+            "1",                   # repeat_count
+            "", "", "", "", "", "",  # input, content, images, image, video_url, preset_id
+            "", "", "", "", "",    # page_id, group_id, post_id, comment_id, parent_post_id
+            "", "", "", "", "",    # first, last, middle, bio, uid
+            proxy_host, proxy_port, proxy_user, proxy_pass,
+        ])
+
+    csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=login_{str(batch_id)[:8]}_action_ready.csv"},
+    )

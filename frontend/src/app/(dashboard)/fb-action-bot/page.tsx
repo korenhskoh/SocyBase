@@ -151,7 +151,7 @@ interface BatchInfo {
 
 export default function FBActionBotPage() {
   // Tab state
-  const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
+  const [activeTab, setActiveTab] = useState<"single" | "batch" | "login">("single");
 
   // Config state
   const [hasCookies, setHasCookies] = useState(false);
@@ -185,6 +185,20 @@ export default function FBActionBotPage() {
   const [batchHistoryPage, setBatchHistoryPage] = useState(1);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Login batch state
+  const [loginFile, setLoginFile] = useState<File | null>(null);
+  const [loginMode, setLoginMode] = useState<"sequential" | "concurrent">("sequential");
+  const [loginDelay, setLoginDelay] = useState(10);
+  const [loginParallel, setLoginParallel] = useState(2);
+  const [loginProxyPool, setLoginProxyPool] = useState("");
+  const [loginUploading, setLoginUploading] = useState(false);
+  const [activeLoginBatch, setActiveLoginBatch] = useState<BatchInfo | null>(null);
+  const [loginHistory, setLoginHistory] = useState<BatchInfo[]>([]);
+  const [loginHistoryTotal, setLoginHistoryTotal] = useState(0);
+  const [loginHistoryPage, setLoginHistoryPage] = useState(1);
+  const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const loginFileInputRef = useRef<HTMLInputElement>(null);
 
   // Toast
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -243,6 +257,32 @@ export default function FBActionBotPage() {
       return () => { if (pollRef.current) clearInterval(pollRef.current); };
     }
   }, [activeBatch?.id, activeBatch?.status, loadBatchHistory]);
+
+  // Load login batch history
+  const loadLoginHistory = useCallback(() => {
+    fbActionApi.getLoginBatchHistory({ page: loginHistoryPage, page_size: 10 }).then((res) => {
+      setLoginHistory(res.data.items || []);
+      setLoginHistoryTotal(res.data.total || 0);
+    }).catch(() => {});
+  }, [loginHistoryPage]);
+
+  useEffect(() => { if (activeTab === "login") loadLoginHistory(); }, [activeTab, loadLoginHistory]);
+
+  // Poll active login batch
+  useEffect(() => {
+    if (activeLoginBatch && (activeLoginBatch.status === "pending" || activeLoginBatch.status === "running")) {
+      loginPollRef.current = setInterval(() => {
+        fbActionApi.getLoginBatchStatus(activeLoginBatch.id).then((res) => {
+          setActiveLoginBatch(res.data);
+          if (res.data.status !== "pending" && res.data.status !== "running") {
+            if (loginPollRef.current) clearInterval(loginPollRef.current);
+            loadLoginHistory();
+          }
+        }).catch(() => {});
+      }, 3000);
+      return () => { if (loginPollRef.current) clearInterval(loginPollRef.current); };
+    }
+  }, [activeLoginBatch?.id, activeLoginBatch?.status, loadLoginHistory]);
 
   // Save config
   const handleSaveConfig = async () => {
@@ -384,6 +424,99 @@ export default function FBActionBotPage() {
     }
   };
 
+  // Login: parse proxy pool textarea
+  const parseProxyPool = (text: string) => {
+    return text.split("\n").map(l => l.trim()).filter(Boolean).map(line => {
+      const parts = line.split(":");
+      return { host: parts[0] || "", port: parts[1] || "", username: parts[2] || "", password: parts[3] || "" };
+    });
+  };
+
+  // Login: download template
+  const handleDownloadLoginTemplate = async () => {
+    try {
+      const res = await fbActionApi.downloadLoginTemplate();
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "fb_login_accounts_template.csv";
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      showToast("error", "Failed to download template");
+    }
+  };
+
+  // Login: start batch
+  const handleStartLoginBatch = async () => {
+    if (!loginFile) return;
+    setLoginUploading(true);
+    try {
+      const proxyPool = parseProxyPool(loginProxyPool);
+      const res = await fbActionApi.uploadLoginBatch(loginFile, {
+        execution_mode: loginMode,
+        delay_seconds: loginDelay,
+        max_parallel: loginParallel,
+        proxy_pool: proxyPool.length > 0 ? proxyPool : undefined,
+      });
+      setActiveLoginBatch({
+        id: res.data.batch_id,
+        status: "pending",
+        total_rows: res.data.total_rows,
+        completed_rows: 0,
+        success_count: 0,
+        failed_count: 0,
+        execution_mode: loginMode,
+        delay_seconds: loginDelay,
+        max_parallel: loginParallel,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        completed_at: null,
+      });
+      setLoginFile(null);
+      if (loginFileInputRef.current) loginFileInputRef.current.value = "";
+      const errs = res.data.errors as string[];
+      if (errs && errs.length > 0) {
+        showToast("error", `Login started with ${errs.length} skipped rows`);
+      } else {
+        showToast("success", `Login batch started: ${res.data.total_rows} accounts`);
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Upload failed";
+      showToast("error", msg);
+    } finally {
+      setLoginUploading(false);
+    }
+  };
+
+  // Login: cancel
+  const handleCancelLoginBatch = async () => {
+    if (!activeLoginBatch) return;
+    try {
+      await fbActionApi.cancelLoginBatch(activeLoginBatch.id);
+      setActiveLoginBatch({ ...activeLoginBatch, status: "cancelled" });
+      showToast("success", "Login batch cancelled");
+      loadLoginHistory();
+    } catch {
+      showToast("error", "Failed to cancel");
+    }
+  };
+
+  // Login: export action-ready CSV
+  const handleExportLoginResults = async (batchId: string) => {
+    try {
+      const res = await fbActionApi.exportLoginResults(batchId);
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `login_${batchId.slice(0, 8)}_action_ready.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      showToast("error", "Failed to export");
+    }
+  };
+
   const timeAgo = (iso: string | null) => {
     if (!iso) return "";
     const diff = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -429,6 +562,16 @@ export default function FBActionBotPage() {
           }`}
         >
           Batch Mode
+        </button>
+        <button
+          onClick={() => setActiveTab("login")}
+          className={`px-5 py-2 text-sm rounded-lg transition font-medium ${
+            activeTab === "login"
+              ? "bg-white/10 text-white shadow-sm"
+              : "text-white/40 hover:text-white/60"
+          }`}
+        >
+          Bulk Login
         </button>
       </div>
 
@@ -799,6 +942,235 @@ export default function FBActionBotPage() {
                     <div className="flex gap-2">
                       <button onClick={() => setBatchHistoryPage((p) => Math.max(1, p - 1))} disabled={batchHistoryPage <= 1} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs rounded-lg transition disabled:opacity-30">Previous</button>
                       <button onClick={() => setBatchHistoryPage((p) => p + 1)} disabled={batchHistoryPage * 10 >= batchHistoryTotal} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs rounded-lg transition disabled:opacity-30">Next</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ═══════════════════ BULK LOGIN TAB ═══════════════════ */}
+      {activeTab === "login" && (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Upload Card */}
+            <div className="glass-card p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0" /></svg>
+                  Upload Accounts CSV
+                </h3>
+                <button onClick={handleDownloadLoginTemplate} className="text-xs text-primary-400 hover:text-primary-300 transition flex items-center gap-1">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                  Template
+                </button>
+              </div>
+              <div
+                className="border-2 border-dashed border-white/10 rounded-xl p-6 text-center hover:border-white/20 transition cursor-pointer"
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const f = e.dataTransfer.files[0]; if (f) setLoginFile(f); }}
+                onClick={() => loginFileInputRef.current?.click()}
+              >
+                <input
+                  ref={loginFileInputRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) setLoginFile(f); }}
+                />
+                {loginFile ? (
+                  <div className="text-sm text-white/70">
+                    <span className="text-primary-400 font-medium">{loginFile.name}</span>
+                    <span className="text-white/30 ml-2">({(loginFile.size / 1024).toFixed(1)} KB)</span>
+                  </div>
+                ) : (
+                  <div className="text-white/30 text-sm">
+                    Drop accounts CSV here or click to browse
+                    <div className="text-xs mt-1 text-white/20">Columns: email, password, 2fa_secret, proxy_*</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Proxy Pool */}
+            <div className="glass-card p-5 space-y-3">
+              <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" /></svg>
+                Shared Proxy Pool (optional)
+              </h3>
+              <textarea
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-primary-500 focus:outline-none h-28 resize-none font-mono"
+                placeholder={"host:port:username:password\nproxy1.com:8080:user1:pass1\nproxy2.com:8080:user2:pass2"}
+                value={loginProxyPool}
+                onChange={(e) => setLoginProxyPool(e.target.value)}
+              />
+              <p className="text-xs text-white/20">One proxy per line. Per-row proxies in CSV take priority.</p>
+            </div>
+          </div>
+
+          {/* Execution Settings */}
+          <div className="glass-card p-5 space-y-4">
+            <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+              Settings
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="text-xs text-white/40 block mb-2">Mode</label>
+                <div className="flex gap-2">
+                  <button onClick={() => setLoginMode("sequential")} className={`flex-1 py-2 text-xs rounded-lg transition ${loginMode === "sequential" ? "bg-primary-500/20 text-primary-300 border border-primary-500/30" : "bg-white/5 text-white/40 border border-white/10 hover:bg-white/10"}`}>Sequential</button>
+                  <button onClick={() => setLoginMode("concurrent")} className={`flex-1 py-2 text-xs rounded-lg transition ${loginMode === "concurrent" ? "bg-primary-500/20 text-primary-300 border border-primary-500/30" : "bg-white/5 text-white/40 border border-white/10 hover:bg-white/10"}`}>Concurrent</button>
+                </div>
+              </div>
+              {loginMode === "sequential" ? (
+                <div>
+                  <label className="text-xs text-white/40 block mb-2">Delay: {loginDelay}s</label>
+                  <input type="range" min={3} max={60} value={loginDelay} onChange={(e) => setLoginDelay(Number(e.target.value))} className="w-full accent-primary-500" />
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs text-white/40 block mb-2">Workers: {loginParallel}</label>
+                  <input type="range" min={1} max={5} value={loginParallel} onChange={(e) => setLoginParallel(Number(e.target.value))} className="w-full accent-primary-500" />
+                </div>
+              )}
+              <div className="flex items-end">
+                <button
+                  onClick={handleStartLoginBatch}
+                  disabled={!loginFile || loginUploading}
+                  className="w-full py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-sm font-medium rounded-xl border border-amber-500/20 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {loginUploading ? (
+                    <div className="h-4 w-4 border-2 border-amber-300/30 border-t-amber-300 rounded-full animate-spin" />
+                  ) : (
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
+                  )}
+                  {loginUploading ? "Starting..." : "Start Bulk Login"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Active Login Progress */}
+          {activeLoginBatch && (activeLoginBatch.status === "pending" || activeLoginBatch.status === "running") && (
+            <div className="glass-card p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-white/60">Login Progress</h3>
+                <button onClick={handleCancelLoginBatch} className="text-xs text-red-400 hover:text-red-300 transition px-3 py-1 rounded-lg border border-red-500/20 hover:border-red-500/30">
+                  Cancel
+                </button>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-white/40">
+                    {activeLoginBatch.completed_rows} / {activeLoginBatch.total_rows}
+                    <span className="ml-3 text-emerald-400">{activeLoginBatch.success_count} ok</span>
+                    <span className="ml-2 text-red-400">{activeLoginBatch.failed_count} fail</span>
+                  </span>
+                  <span className="text-xs text-white/30">
+                    {activeLoginBatch.total_rows > 0 ? Math.round((activeLoginBatch.completed_rows / activeLoginBatch.total_rows) * 100) : 0}%
+                  </span>
+                </div>
+                <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-500"
+                    style={{ width: `${activeLoginBatch.total_rows > 0 ? (activeLoginBatch.completed_rows / activeLoginBatch.total_rows) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Completed Login Batch Result */}
+          {activeLoginBatch && activeLoginBatch.status !== "pending" && activeLoginBatch.status !== "running" && (
+            <div className="glass-card p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-white/60">Login Complete</h3>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                  activeLoginBatch.status === "completed" ? "bg-emerald-500/15 text-emerald-400"
+                  : activeLoginBatch.status === "failed" ? "bg-red-500/15 text-red-400"
+                  : "bg-yellow-500/15 text-yellow-400"
+                }`}>{activeLoginBatch.status}</span>
+              </div>
+              <div className="flex items-center gap-4 text-sm">
+                <span className="text-emerald-400">{activeLoginBatch.success_count} successful</span>
+                <span className="text-red-400">{activeLoginBatch.failed_count} failed</span>
+                <span className="text-white/30">of {activeLoginBatch.total_rows} accounts</span>
+              </div>
+              {activeLoginBatch.success_count > 0 && (
+                <button
+                  onClick={() => handleExportLoginResults(activeLoginBatch.id)}
+                  className="px-4 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 text-xs rounded-lg transition border border-emerald-500/20 flex items-center gap-2"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                  Export Action-Ready CSV
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Login History */}
+          <div className="glass-card p-5 space-y-4">
+            <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              Login History
+            </h3>
+
+            {loginHistory.length === 0 ? (
+              <p className="text-white/30 text-xs text-center py-6">No login batches yet</p>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/5 text-white/40 text-xs">
+                        <th className="text-left py-2 px-3 font-medium">Time</th>
+                        <th className="text-left py-2 px-3 font-medium">Accounts</th>
+                        <th className="text-left py-2 px-3 font-medium">Success</th>
+                        <th className="text-left py-2 px-3 font-medium">Failed</th>
+                        <th className="text-left py-2 px-3 font-medium">Mode</th>
+                        <th className="text-left py-2 px-3 font-medium">Status</th>
+                        <th className="text-left py-2 px-3 font-medium"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loginHistory.map((b) => (
+                        <tr key={b.id} className="border-b border-white/5 hover:bg-white/[0.02]">
+                          <td className="py-2 px-3 text-white/40 text-xs whitespace-nowrap">{timeAgo(b.created_at)}</td>
+                          <td className="py-2 px-3 text-xs text-white/70">{b.total_rows}</td>
+                          <td className="py-2 px-3 text-xs text-emerald-400">{b.success_count}</td>
+                          <td className="py-2 px-3 text-xs text-red-400">{b.failed_count}</td>
+                          <td className="py-2 px-3 text-xs text-white/50">{b.execution_mode === "sequential" ? "seq" : "par"}</td>
+                          <td className="py-2 px-3">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              b.status === "completed" ? "bg-emerald-500/15 text-emerald-400"
+                              : b.status === "failed" ? "bg-red-500/15 text-red-400"
+                              : b.status === "cancelled" ? "bg-yellow-500/15 text-yellow-400"
+                              : b.status === "running" ? "bg-blue-500/15 text-blue-400"
+                              : "bg-white/10 text-white/40"
+                            }`}>{b.status}</span>
+                          </td>
+                          <td className="py-2 px-3">
+                            {b.success_count > 0 ? (
+                              <button onClick={() => handleExportLoginResults(b.id)} className="text-xs text-amber-400/60 hover:text-amber-400 transition flex items-center gap-1" title="Export Action CSV">
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                              </button>
+                            ) : (
+                              <span className="text-xs text-white/10">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {loginHistoryTotal > 10 && (
+                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/5">
+                    <span className="text-xs text-white/30">Page {loginHistoryPage} of {Math.ceil(loginHistoryTotal / 10)}</span>
+                    <div className="flex gap-2">
+                      <button onClick={() => setLoginHistoryPage((p) => Math.max(1, p - 1))} disabled={loginHistoryPage <= 1} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs rounded-lg transition disabled:opacity-30">Previous</button>
+                      <button onClick={() => setLoginHistoryPage((p) => p + 1)} disabled={loginHistoryPage * 10 >= loginHistoryTotal} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs rounded-lg transition disabled:opacity-30">Next</button>
                     </div>
                   </div>
                 )}

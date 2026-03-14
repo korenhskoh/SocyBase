@@ -360,12 +360,22 @@ class FacebookGraphClient(AbstractSocialClient):
         # Base URL is .../graph — strip /graph for fb_action endpoint
         action_url = self.base_url.replace("/graph", "") + "/fb_action"
 
+        proxy_payload = None
+        if proxy and proxy.get("host"):
+            proxy_payload = {
+                "host": proxy["host"],
+                "port": str(proxy.get("port", "")),
+                "username": proxy.get("username", ""),
+                "password": proxy.get("password", ""),
+            }
+
         payload = {
             "account": {
                 "cookie": cookie,
                 "ua": user_agent or "",
+                "code2fa": "",
             },
-            "proxy": proxy or {"host": "", "port": "", "username": "", "password": ""},
+            "proxy": proxy_payload,
             "action": {
                 "name": action_name,
                 "params": params,

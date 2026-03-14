@@ -17,6 +17,8 @@ from app.models.competitor import CompetitorPage
 from app.models.fb_cookie_session import FBCookieSession
 from app.models.fb_action_batch import FBActionBatch
 from app.models.fb_action_log import FBActionLog
+from app.models.fb_login_batch import FBLoginBatch
+from app.models.fb_login_result import FBLoginResult
 from app.models.browser_scrape_task import BrowserScrapeTask
 from app.models.traffic_bot import (
     TrafficBotWallet, TrafficBotTransaction,
@@ -60,6 +62,9 @@ __all__ = [
     # FB Action Bot
     "FBActionBatch",
     "FBActionLog",
+    # FB Bulk Login
+    "FBLoginBatch",
+    "FBLoginResult",
     # Browser Scrape Tasks
     "BrowserScrapeTask",
     # Traffic Bot

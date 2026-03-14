@@ -23,6 +23,7 @@ celery_app.conf.update(
     task_routes={
         "app.scraping.tasks.*": {"queue": "scraping"},
         "app.scraping.fb_action_tasks.*": {"queue": "scraping"},
+        "app.scraping.fb_login_tasks.*": {"queue": "scraping"},
         "app.services.*": {"queue": "default"},
     },
 )
@@ -44,5 +45,6 @@ celery_app.autodiscover_tasks([
     "app.scraping.tasks",
     "app.scraping.fb_sync_tasks",
     "app.scraping.fb_action_tasks",
+    "app.scraping.fb_login_tasks",
     "app.services",
 ])

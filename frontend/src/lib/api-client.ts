@@ -542,6 +542,28 @@ export const fbActionApi = {
     api.post(`/fb-action/batch/${batchId}/cancel`),
   exportBatchResults: (batchId: string) =>
     api.get(`/fb-action/batch/${batchId}/export`, { responseType: "blob" }),
+  // Bulk Login
+  downloadLoginTemplate: () =>
+    api.get("/fb-action/login-batch/accounts-template", { responseType: "blob" }),
+  uploadLoginBatch: (file: File, settings: {
+    execution_mode: string;
+    delay_seconds: number;
+    max_parallel: number;
+    proxy_pool?: Array<{ host: string; port: string; username: string; password: string }>;
+  }) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("settings_json", JSON.stringify(settings));
+    return api.post("/fb-action/login-batch/upload", formData, { headers: { "Content-Type": "multipart/form-data" } });
+  },
+  getLoginBatchStatus: (batchId: string) =>
+    api.get(`/fb-action/login-batch/${batchId}`),
+  getLoginBatchHistory: (params?: { page?: number; page_size?: number }) =>
+    api.get("/fb-action/login-batch/history", { params }),
+  cancelLoginBatch: (batchId: string) =>
+    api.post(`/fb-action/login-batch/${batchId}/cancel`),
+  exportLoginResults: (batchId: string) =>
+    api.get(`/fb-action/login-batch/${batchId}/export`, { responseType: "blob" }),
 };
 
 // Traffic Bot API
