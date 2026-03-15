@@ -1228,6 +1228,20 @@ export default function FBActionBotPage() {
                 <span className="text-red-400">{activeLoginBatch.failed_count} failed</span>
                 <span className="text-white/30">of {activeLoginBatch.total_rows} accounts</span>
               </div>
+              {/* Per-account results with errors */}
+              {(activeLoginBatch.results?.length ?? 0) > 0 && (
+                <div className="max-h-48 overflow-y-auto space-y-1">
+                  {(activeLoginBatch.results || []).map((r, i) => (
+                    <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs ${r.status === "success" ? "bg-emerald-500/5 text-emerald-400" : "bg-red-500/5 text-red-400"}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.status === "success" ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <span className="truncate">{r.email}</span>
+                      {r.status === "success" && r.fb_user_id && <span className="text-white/20 ml-auto shrink-0">uid: {r.fb_user_id}</span>}
+                      {r.status !== "success" && r.error_message && <span className="text-red-300/60 ml-auto shrink-0 truncate max-w-[60%]">{r.error_message}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {activeLoginBatch.success_count > 0 && (
                 <button
                   onClick={() => handleExportLoginResults(activeLoginBatch.id)}
