@@ -147,6 +147,12 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
         headers={"Referer": f"{MBASIC_BASE}/login/", "Origin": MBASIC_BASE},
     )
 
+    logger.info(
+        "Login POST result: status=%s url=%s",
+        resp.status_code,
+        resp.url,
+    )
+
     # ── Step 3: Determine outcome ────────────────────────────────────
     # Follow redirect chain (up to 5 hops)
     for _ in range(5):
@@ -162,7 +168,8 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
             resp = await client.get(next_url)
             return _extract_cookies(client, ua)
 
-        # Check if it's a checkpoint (2FA)
+        # Check if it's a checkpoint (2FA) — must check BEFORE /login
+        # because checkpoint URLs can contain /login (e.g. /login/checkpoint/)
         if "/checkpoint" in next_url:
             resp = await client.get(next_url)
             return await _handle_checkpoint(client, resp, totp_secret, ua)
@@ -173,12 +180,22 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
     if _has_c_user(client):
         return _extract_cookies(client, ua)
 
-    # Still on login page or unknown state
-    if "/login" in str(resp.url):
-        return _fail(ua, "Invalid credentials")
+    url_str = str(resp.url)
+    body = resp.text
 
-    if "/checkpoint" in str(resp.url):
+    # Check for checkpoint FIRST — URL may contain both /login and /checkpoint
+    if "/checkpoint" in url_str:
         return await _handle_checkpoint(client, resp, totp_secret, ua)
+
+    # Also detect checkpoint/2FA from response body (Facebook sometimes
+    # shows 2FA inline without a /checkpoint URL redirect)
+    if _body_has_checkpoint(body):
+        logger.info("Detected checkpoint/2FA from response body (url=%s)", url_str)
+        return await _handle_checkpoint(client, resp, totp_secret, ua)
+
+    # Still on login page = invalid credentials
+    if "/login" in url_str:
+        return _fail(ua, "Invalid credentials")
 
     return _fail(ua, f"Unexpected state: url={resp.url}, status={resp.status_code}")
 
@@ -249,6 +266,22 @@ def _abs_url(url: str) -> str:
     if url.startswith("http"):
         return url
     return MBASIC_BASE + (url if url.startswith("/") else "/" + url)
+
+
+def _body_has_checkpoint(body: str) -> bool:
+    """Detect 2FA / checkpoint page from response body content."""
+    indicators = [
+        "approvals_code",          # 2FA code input field name
+        "checkpoint",              # generic checkpoint reference
+        "two-factor",              # English 2FA text
+        "login_approvals",         # FB's internal 2FA flow name
+        "Enter the code",          # English prompt for 2FA
+        "verify your identity",    # identity verification
+        "submit[Submit Code]",     # 2FA submit button
+        "pengesahan",              # Malay: "verification"
+    ]
+    body_lower = body.lower()
+    return any(ind.lower() in body_lower for ind in indicators)
 
 
 def _is_home_url(url: str) -> bool:
