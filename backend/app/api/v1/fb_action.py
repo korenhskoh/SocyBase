@@ -1272,9 +1272,166 @@ async def ai_search_pages(
                 ))
                 await db.commit()
 
+        # Auto-save search history (only for prompt-based searches with results)
+        if body.prompt.strip() and pages:
+            try:
+                from app.models.ai_search_history import AISearchHistory
+                db.add(AISearchHistory(
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    prompt=body.prompt.strip(),
+                    keywords=keywords,
+                    pages=pages,
+                    pages_count=len(pages),
+                ))
+                await db.commit()
+            except Exception as exc:
+                logger.warning(f"[AISearch] Failed to save search history: {exc}")
+
         return {"keywords": keywords, "pages": pages, "total": len(pages), "credits_used": credits_used}
     finally:
         await client.close()
+
+
+# ── GET /fb-action/ai-plan/search-history ──────────────────────────────
+
+@router.get("/ai-plan/search-history")
+async def ai_plan_search_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent AI search history for retrieval."""
+    from app.models.ai_search_history import AISearchHistory
+
+    result = await db.execute(
+        select(AISearchHistory)
+        .where(AISearchHistory.tenant_id == user.tenant_id)
+        .order_by(AISearchHistory.created_at.desc())
+        .limit(20)
+    )
+    items = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(h.id),
+                "prompt": h.prompt,
+                "keywords": h.keywords,
+                "pages": h.pages,
+                "pages_count": h.pages_count,
+                "created_at": h.created_at.isoformat() if h.created_at else None,
+            }
+            for h in items
+        ]
+    }
+
+
+# ── GET /fb-action/ai-plan/my-jobs ────────────────────────────────────
+
+@router.get("/ai-plan/my-jobs")
+async def ai_plan_my_jobs(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List completed post_discovery jobs for 'My Posts' source tab."""
+    from app.models.job import ScrapingJob
+
+    result = await db.execute(
+        select(ScrapingJob)
+        .where(
+            ScrapingJob.tenant_id == user.tenant_id,
+            ScrapingJob.job_type == "post_discovery",
+            ScrapingJob.status == "completed",
+            ScrapingJob.result_row_count > 0,
+        )
+        .order_by(ScrapingJob.completed_at.desc().nulls_last())
+        .limit(50)
+    )
+    jobs = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(j.id),
+                "input_value": j.input_value,
+                "result_row_count": j.result_row_count,
+                "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+            }
+            for j in jobs
+        ]
+    }
+
+
+# ── POST /fb-action/ai-plan/my-posts ──────────────────────────────────
+
+class MyPostsRequest(BaseModel):
+    job_ids: list[str] = Field(..., min_length=1, max_length=20)
+
+
+@router.post("/ai-plan/my-posts")
+async def ai_plan_my_posts(
+    req: MyPostsRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Load aggregated, deduplicated posts from selected post_discovery jobs."""
+    from app.models.job import ScrapedPost, ScrapingJob
+
+    job_uuids = [UUID(jid) for jid in req.job_ids]
+
+    # Verify all jobs belong to tenant
+    result = await db.execute(
+        select(ScrapingJob.id).where(
+            ScrapingJob.id.in_(job_uuids),
+            ScrapingJob.tenant_id == user.tenant_id,
+        )
+    )
+    valid_ids = [r[0] for r in result.all()]
+    if not valid_ids:
+        raise HTTPException(status_code=404, detail="No valid jobs found")
+
+    # Deduplicate posts by post_id (keep most recent)
+    dedup_subq = (
+        select(
+            ScrapedPost.id,
+            func.row_number()
+            .over(
+                partition_by=ScrapedPost.post_id,
+                order_by=ScrapedPost.created_time.desc().nulls_last(),
+            )
+            .label("rn"),
+        )
+        .where(ScrapedPost.job_id.in_(valid_ids))
+    ).subquery()
+
+    result = await db.execute(
+        select(ScrapedPost)
+        .join(dedup_subq, ScrapedPost.id == dedup_subq.c.id)
+        .where(dedup_subq.c.rn == 1)
+        .order_by(ScrapedPost.reaction_count.desc().nulls_last())
+        .limit(200)
+    )
+    posts = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "post_id": p.post_id,
+                "message": p.message,
+                "created_time": p.created_time.isoformat() if p.created_time else None,
+                "from_name": p.from_name,
+                "from_id": getattr(p, "from_id", None),
+                "comment_count": p.comment_count or 0,
+                "reaction_count": p.reaction_count or 0,
+                "share_count": p.share_count or 0,
+                "attachment_type": p.attachment_type,
+                "post_url": p.post_url,
+                "is_livestream": getattr(p, "is_livestream", False),
+                "video_views": getattr(p, "video_views", None),
+            }
+            for p in posts
+        ],
+        "total": len(posts),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════

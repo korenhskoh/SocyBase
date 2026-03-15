@@ -581,6 +581,12 @@ export const fbActionApi = {
     api.get("/fb-action/ai-plan/login-batches"),
   aiPlanSearchPages: (data: { prompt?: string; keywords?: string[]; limit_per_keyword?: number; exclude_ids?: string[] }) =>
     api.post("/fb-action/ai-plan/search-pages", data),
+  aiPlanSearchHistory: () =>
+    api.get("/fb-action/ai-plan/search-history"),
+  aiPlanMyJobs: () =>
+    api.get("/fb-action/ai-plan/my-jobs"),
+  aiPlanMyPosts: (data: { job_ids: string[] }) =>
+    api.post("/fb-action/ai-plan/my-posts", data),
   // Livestream Engagement
   liveEngageStart: (data: {
     post_id: string;

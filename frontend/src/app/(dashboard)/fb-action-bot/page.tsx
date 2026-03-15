@@ -204,7 +204,7 @@ export default function FBActionBotPage() {
   // AI Planner state
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const [plannerStep, setPlannerStep] = useState<1 | 2 | 3 | 4>(1);
-  const [plannerSource, setPlannerSource] = useState<"feed" | "quickscan" | "aisearch">("feed");
+  const [plannerSource, setPlannerSource] = useState<"myposts" | "quickscan" | "aisearch">("myposts");
   const [plannerPosts, setPlannerPosts] = useState<any[]>([]);
   const [plannerPostsLoading, setPlannerPostsLoading] = useState(false);
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
@@ -217,9 +217,11 @@ export default function FBActionBotPage() {
   const [generating, setGenerating] = useState(false);
   const [loginBatchOptions, setLoginBatchOptions] = useState<any[]>([]);
   const [selectedLoginBatchId, setSelectedLoginBatchId] = useState("");
-  const [plannerFeedDays, setPlannerFeedDays] = useState(90);
-  const [plannerFeedSort, setPlannerFeedSort] = useState("virality_score");
   const [plannerScanUrl, setPlannerScanUrl] = useState("");
+  // My Posts (scraped jobs) state
+  const [myJobsList, setMyJobsList] = useState<any[]>([]);
+  const [myJobsLoading, setMyJobsLoading] = useState(false);
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
   const [plannerActionFilter, setPlannerActionFilter] = useState("all");
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [plannerRefContent, setPlannerRefContent] = useState("");
@@ -234,6 +236,8 @@ export default function FBActionBotPage() {
   const [aiBulkScanProgress, setAiBulkScanProgress] = useState("");
   const [aiExtraKeyword, setAiExtraKeyword] = useState("");
   const [aiLoadingMore, setAiLoadingMore] = useState(false);
+  const [aiSearchHistoryList, setAiSearchHistoryList] = useState<any[]>([]);
+  const [aiSearchHistoryOpen, setAiSearchHistoryOpen] = useState(false);
   const [creditCostPerAction, setCreditCostPerAction] = useState(3);
 
   // Livestream Engagement state
@@ -1324,8 +1328,8 @@ export default function FBActionBotPage() {
               <div className="glass-card p-5 space-y-4">
                 <h3 className="text-sm font-medium text-white/60">Post Source</h3>
                 <div className="flex gap-2">
-                  <button onClick={() => setPlannerSource("feed")} className={`flex-1 py-2.5 text-xs rounded-lg transition border ${plannerSource === "feed" ? "bg-violet-500/20 text-violet-300 border-violet-500/30" : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"}`}>
-                    Competitor Feed
+                  <button onClick={() => setPlannerSource("myposts")} className={`flex-1 py-2.5 text-xs rounded-lg transition border ${plannerSource === "myposts" ? "bg-violet-500/20 text-violet-300 border-violet-500/30" : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"}`}>
+                    My Posts
                   </button>
                   <button onClick={() => setPlannerSource("quickscan")} className={`flex-1 py-2.5 text-xs rounded-lg transition border ${plannerSource === "quickscan" ? "bg-violet-500/20 text-violet-300 border-violet-500/30" : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"}`}>
                     Quick Scan URL
@@ -1335,44 +1339,89 @@ export default function FBActionBotPage() {
                   </button>
                 </div>
 
-                {plannerSource === "feed" && (
-                  <div className="flex items-end gap-3">
-                    <div>
-                      <label className="text-xs text-white/40 block mb-1">Days</label>
-                      <select value={plannerFeedDays} onChange={(e) => setPlannerFeedDays(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 focus:outline-none">
-                        <option value={30}>30</option>
-                        <option value={90}>90</option>
-                        <option value={180}>180</option>
-                        <option value={365}>365</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs text-white/40 block mb-1">Sort</label>
-                      <select value={plannerFeedSort} onChange={(e) => setPlannerFeedSort(e.target.value)} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 focus:outline-none">
-                        <option value="virality_score">Virality</option>
-                        <option value="reaction_count">Reactions</option>
-                        <option value="comment_count">Comments</option>
-                        <option value="share_count">Shares</option>
-                        <option value="recency">Recent</option>
-                      </select>
-                    </div>
+                {plannerSource === "myposts" && (
+                  <div className="space-y-3">
                     <button
-                      disabled={plannerPostsLoading}
+                      disabled={myJobsLoading}
                       onClick={async () => {
-                        setPlannerPostsLoading(true);
+                        setMyJobsLoading(true);
                         try {
-                          const res = await competitorsApi.feed({ days: plannerFeedDays, sort_by: plannerFeedSort, page_size: 100 });
-                          setPlannerPosts(res.data.items || []);
-                          setSelectedPostIds(new Set());
-                          if ((res.data.items || []).length === 0) showToast("error", "No posts found — add competitor pages first");
-                        } catch { showToast("error", "Failed to load feed"); }
-                        finally { setPlannerPostsLoading(false); }
+                          const res = await fbActionApi.aiPlanMyJobs();
+                          setMyJobsList(res.data.items || []);
+                          if ((res.data.items || []).length === 0) showToast("error", "No completed post discovery jobs found — run a scrape first");
+                        } catch { showToast("error", "Failed to load jobs"); }
+                        finally { setMyJobsLoading(false); }
                       }}
                       className="px-5 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-xs rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center gap-2"
                     >
-                      {plannerPostsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
-                      Load Posts
+                      {myJobsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
+                      Load My Scraping Jobs
                     </button>
+
+                    {myJobsList.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-white/50">{myJobsList.length} jobs · {selectedJobIds.size} selected</span>
+                          <button
+                            onClick={() => {
+                              if (selectedJobIds.size === myJobsList.length) setSelectedJobIds(new Set());
+                              else setSelectedJobIds(new Set(myJobsList.map((j: any) => j.id)));
+                            }}
+                            className="text-[10px] text-violet-400 hover:text-violet-300"
+                          >
+                            {selectedJobIds.size === myJobsList.length ? "Deselect All" : "Select All"}
+                          </button>
+                        </div>
+                        <div className="max-h-[250px] overflow-y-auto space-y-1 pr-1">
+                          {myJobsList.map((job: any) => (
+                            <label
+                              key={job.id}
+                              className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition ${
+                                selectedJobIds.has(job.id)
+                                  ? "bg-violet-500/10 border-violet-500/30"
+                                  : "bg-white/[0.02] border-white/5 hover:bg-white/[0.04]"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedJobIds.has(job.id)}
+                                onChange={() => {
+                                  const next = new Set(selectedJobIds);
+                                  if (next.has(job.id)) next.delete(job.id);
+                                  else next.add(job.id);
+                                  setSelectedJobIds(next);
+                                }}
+                                className="accent-violet-500 h-3.5 w-3.5"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs text-white truncate">{job.input_value}</p>
+                                <p className="text-[10px] text-white/30">
+                                  {job.result_row_count} posts · {job.completed_at ? new Date(job.completed_at).toLocaleDateString() : ""}
+                                </p>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                        <button
+                          disabled={selectedJobIds.size === 0 || plannerPostsLoading}
+                          onClick={async () => {
+                            setPlannerPostsLoading(true);
+                            try {
+                              const res = await fbActionApi.aiPlanMyPosts({ job_ids: Array.from(selectedJobIds) });
+                              setPlannerPosts(res.data.items || []);
+                              setSelectedPostIds(new Set());
+                              if ((res.data.items || []).length === 0) showToast("error", "No posts found in selected jobs");
+                              else showToast("success", `Loaded ${res.data.items.length} posts from ${selectedJobIds.size} job${selectedJobIds.size !== 1 ? "s" : ""}`);
+                            } catch { showToast("error", "Failed to load posts"); }
+                            finally { setPlannerPostsLoading(false); }
+                          }}
+                          className="w-full py-2.5 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-xs rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center justify-center gap-2"
+                        >
+                          {plannerPostsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
+                          Load Posts from {selectedJobIds.size} Selected Job{selectedJobIds.size !== 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1429,6 +1478,50 @@ export default function FBActionBotPage() {
 
                 {plannerSource === "aisearch" && (
                   <div className="space-y-3">
+                    {/* Recent Searches */}
+                    <div>
+                      <button
+                        onClick={async () => {
+                          setAiSearchHistoryOpen(!aiSearchHistoryOpen);
+                          if (!aiSearchHistoryOpen && aiSearchHistoryList.length === 0) {
+                            try {
+                              const res = await fbActionApi.aiPlanSearchHistory();
+                              setAiSearchHistoryList(res.data.items || []);
+                            } catch { /* ignore */ }
+                          }
+                        }}
+                        className="text-[11px] text-cyan-400/70 hover:text-cyan-300 flex items-center gap-1"
+                      >
+                        <span>{aiSearchHistoryOpen ? "\u25BE" : "\u25B8"}</span>
+                        Recent Searches{aiSearchHistoryList.length > 0 ? ` (${aiSearchHistoryList.length})` : ""}
+                      </button>
+                      {aiSearchHistoryOpen && aiSearchHistoryList.length > 0 && (
+                        <div className="mt-1.5 max-h-[160px] overflow-y-auto space-y-1">
+                          {aiSearchHistoryList.map((h: any) => (
+                            <button
+                              key={h.id}
+                              onClick={() => {
+                                setAiSearchPrompt(h.prompt);
+                                setAiSearchKeywords(h.keywords || []);
+                                setAiSearchPages(h.pages || []);
+                                setAiSelectedPageIds(new Set());
+                                setAiSearchHistoryOpen(false);
+                                showToast("success", `Loaded search: "${h.prompt}" (${h.pages_count} pages)`);
+                              }}
+                              className="w-full text-left px-3 py-2 rounded-lg bg-white/[0.02] hover:bg-cyan-500/10 border border-white/5 hover:border-cyan-500/20 transition"
+                            >
+                              <p className="text-xs text-white/70 truncate">{h.prompt}</p>
+                              <p className="text-[10px] text-white/30">
+                                {h.pages_count} pages · {h.keywords?.length || 0} keywords · {new Date(h.created_at).toLocaleDateString()}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {aiSearchHistoryOpen && aiSearchHistoryList.length === 0 && (
+                        <p className="text-[10px] text-white/20 mt-1 ml-3">No previous searches</p>
+                      )}
+                    </div>
                     {/* Prompt input */}
                     <div className="flex items-end gap-3">
                       <div className="flex-1">
@@ -1455,7 +1548,11 @@ export default function FBActionBotPage() {
                             setAiSearchPages(res.data.pages || []);
                             const creditNote = res.data.credits_used ? ` (${res.data.credits_used} credit used)` : "";
                             if ((res.data.pages || []).length === 0) showToast("error", "No pages found — try different keywords");
-                            else showToast("success", `Found ${res.data.pages.length} pages from ${res.data.keywords?.length || 0} keywords${creditNote}`);
+                            else {
+                              showToast("success", `Found ${res.data.pages.length} pages from ${res.data.keywords?.length || 0} keywords${creditNote}`);
+                              // Refresh search history
+                              fbActionApi.aiPlanSearchHistory().then((r) => setAiSearchHistoryList(r.data.items || [])).catch(() => {});
+                            }
                           } catch { showToast("error", "AI search failed"); }
                           finally { setAiSearching(false); }
                         }}
@@ -1867,7 +1964,11 @@ export default function FBActionBotPage() {
                       setGeneratedActions(actions);
                       setPlannerActionFilter("all");
                       // Load login batches for export dropdown
-                      fbActionApi.aiPlanLoginBatches().then((r) => setLoginBatchOptions(r.data.items || [])).catch(() => {});
+                      fbActionApi.aiPlanLoginBatches().then((r) => {
+                        const items = r.data.items || [];
+                        setLoginBatchOptions(items);
+                        if (items.length > 0 && !selectedLoginBatchId) setSelectedLoginBatchId(items[0].id);
+                      }).catch(() => {});
                       setPlannerStep(4);
                       const genCreditNote = res.data.credits_used ? ` (${res.data.credits_used} credits used)` : "";
                       showToast("success", `Generated ${actions.length} actions${genCreditNote}`);
@@ -1998,20 +2099,40 @@ export default function FBActionBotPage() {
               {/* Export section */}
               <div className="glass-card p-5 space-y-4">
                 <h3 className="text-sm font-medium text-white/60">Export</h3>
-                <div>
-                  <label className="text-xs text-white/40 block mb-1">Merge with login batch</label>
-                  <select
-                    value={selectedLoginBatchId}
-                    onChange={(e) => setSelectedLoginBatchId(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 focus:outline-none"
-                  >
-                    <option value="">None (manual export)</option>
-                    {loginBatchOptions.map((b: any) => (
-                      <option key={b.id} value={b.id}>
-                        {new Date(b.created_at).toLocaleString()} — {b.success_count} accounts
-                      </option>
-                    ))}
-                  </select>
+
+                {/* Login batch selector — prominent */}
+                <div className={`p-3 rounded-lg border ${
+                  loginBatchOptions.length === 0
+                    ? "border-amber-500/30 bg-amber-500/5"
+                    : selectedLoginBatchId
+                      ? "border-emerald-500/20 bg-emerald-500/5"
+                      : "border-white/10 bg-white/[0.02]"
+                }`}>
+                  <label className="text-xs text-white/60 font-medium block mb-1.5">Login Batch (required for cookie-merged export)</label>
+                  {loginBatchOptions.length === 0 ? (
+                    <div className="text-xs text-amber-300/80 space-y-1">
+                      <p>No login batches found. You need completed bulk logins to export with cookies.</p>
+                      <button
+                        onClick={() => setActiveTab("login")}
+                        className="text-amber-400 underline hover:text-amber-300"
+                      >
+                        Go to Bulk Login tab to create one
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedLoginBatchId}
+                      onChange={(e) => setSelectedLoginBatchId(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 focus:outline-none"
+                    >
+                      <option value="">Select a login batch...</option>
+                      {loginBatchOptions.map((b: any) => (
+                        <option key={b.id} value={b.id}>
+                          {new Date(b.created_at).toLocaleString()} — {b.success_count} accounts
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 <div className="flex gap-3">
@@ -2060,6 +2181,9 @@ export default function FBActionBotPage() {
                     Export CSV Only
                   </button>
                 </div>
+                {!selectedLoginBatchId && loginBatchOptions.length > 0 && (
+                  <p className="text-[10px] text-amber-400/60">Select a login batch above to enable &quot;Export with Cookies&quot;</p>
+                )}
                 <p className="text-[10px] text-white/20">
                   {generatedActions.filter((a) => a._accepted).length} of {generatedActions.length} actions accepted · Execution cost: ~{generatedActions.filter((a) => a._accepted).length * creditCostPerAction} credits ({creditCostPerAction}/action)
                 </p>

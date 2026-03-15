@@ -26,6 +26,7 @@ from app.models.traffic_bot import (
 )
 from app.models.fb_live_sell import LiveSession, LiveComment
 from app.models.fb_live_engage import FBLiveEngageSession, FBLiveEngageLog
+from app.models.ai_search_history import AISearchHistory
 
 __all__ = [
     "Tenant",
@@ -79,4 +80,6 @@ __all__ = [
     # Live Engage
     "FBLiveEngageSession",
     "FBLiveEngageLog",
+    # AI Search History
+    "AISearchHistory",
 ]
