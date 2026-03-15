@@ -155,6 +155,7 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
 
     # ── Step 3: Determine outcome ────────────────────────────────────
     # Follow redirect chain (up to 5 hops)
+    redirect_urls = []
     for _ in range(5):
         if resp.status_code not in (301, 302, 303, 307):
             break
@@ -162,6 +163,8 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
         if not loc:
             break
         next_url = _abs_url(loc)
+        redirect_urls.append(next_url)
+        logger.info("Login redirect hop: %s", next_url)
 
         # Check if we landed on home = success
         if _is_home_url(next_url):
@@ -183,6 +186,11 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
     url_str = str(resp.url)
     body = resp.text
 
+    logger.info(
+        "Login post-redirect: url=%s status=%s body_len=%d redirects=%s",
+        url_str, resp.status_code, len(body), redirect_urls,
+    )
+
     # Check for checkpoint FIRST — URL may contain both /login and /checkpoint
     if "/checkpoint" in url_str:
         return await _handle_checkpoint(client, resp, totp_secret, ua)
@@ -193,11 +201,18 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
         logger.info("Detected checkpoint/2FA from response body (url=%s)", url_str)
         return await _handle_checkpoint(client, resp, totp_secret, ua)
 
+    # Extract a short diagnostic snippet from the body for debugging
+    # Look for error messages in the page
+    diag = _extract_error_snippet(body)
+
     # Still on login page = invalid credentials
     if "/login" in url_str:
-        return _fail(ua, "Invalid credentials")
+        msg = "Invalid credentials"
+        if diag:
+            msg += f" ({diag})"
+        return _fail(ua, msg)
 
-    return _fail(ua, f"Unexpected state: url={resp.url}, status={resp.status_code}")
+    return _fail(ua, f"Unexpected state: url={url_str}, status={resp.status_code}")
 
 
 async def _handle_checkpoint(client: httpx.AsyncClient, resp: httpx.Response, totp_secret: str | None, ua: str) -> dict:
@@ -268,6 +283,24 @@ def _abs_url(url: str) -> str:
     return MBASIC_BASE + (url if url.startswith("/") else "/" + url)
 
 
+def _extract_error_snippet(body: str) -> str:
+    """Extract error/status text from Facebook response for diagnostics."""
+    # Look for common error divs / messages
+    # mbasic uses <div class="...error..."> or <div id="login_error">
+    patterns = [
+        r'id="login_error"[^>]*>(.*?)</div>',
+        r'class="[^"]*error[^"]*"[^>]*>(.*?)</div>',
+        r'<title>(.*?)</title>',
+    ]
+    for pat in patterns:
+        m = re.search(pat, body, re.DOTALL | re.IGNORECASE)
+        if m:
+            text = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+            if text:
+                return text[:120]
+    return ""
+
+
 def _body_has_checkpoint(body: str) -> bool:
     """Detect 2FA / checkpoint page from response body content."""
     indicators = [
@@ -276,9 +309,14 @@ def _body_has_checkpoint(body: str) -> bool:
         "two-factor",              # English 2FA text
         "login_approvals",         # FB's internal 2FA flow name
         "Enter the code",          # English prompt for 2FA
+        "enter the login code",    # alternative prompt
         "verify your identity",    # identity verification
         "submit[Submit Code]",     # 2FA submit button
         "pengesahan",              # Malay: "verification"
+        "code generator",          # code generator mention
+        "security code",           # security code prompt
+        "authentication code",     # authentication code prompt
+        "/checkpoint/",            # checkpoint in form action
     ]
     body_lower = body.lower()
     return any(ind.lower() in body_lower for ind in indicators)
