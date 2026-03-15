@@ -228,6 +228,7 @@ export default function FBActionBotPage() {
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [plannerRefContent, setPlannerRefContent] = useState("");
   const [plannerImageUrl, setPlannerImageUrl] = useState("");
+  const [useContentDirectly, setUseContentDirectly] = useState(false);
   // AI Search state
   const [aiSearchPrompt, setAiSearchPrompt] = useState("");
   const [aiSearching, setAiSearching] = useState(false);
@@ -1945,11 +1946,20 @@ export default function FBActionBotPage() {
                   <textarea
                     value={plannerRefContent}
                     onChange={(e) => setPlannerRefContent(e.target.value)}
-                    placeholder="Optional: provide example content or talking points for AI to use as reference. Leave empty for fully AI-generated content."
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none h-16 resize-none"
+                    placeholder={useContentDirectly ? "Enter exact content to use for all actions (required when using direct mode)" : "Optional: provide example content or talking points for AI to use as reference. Leave empty for fully AI-generated content."}
+                    className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none h-16 resize-none ${useContentDirectly ? "border-amber-500/40" : "border-white/10"}`}
                   />
-                  <p className="text-[10px] text-white/20 mt-1">AI will use this as inspiration — not copy it directly</p>
+                  <p className="text-[10px] text-white/20 mt-1">{useContentDirectly ? "This exact content will be used for all actions — no AI generation" : "AI will use this as inspiration — not copy it directly"}</p>
                 </div>
+                <label className="flex items-center gap-2 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={useContentDirectly}
+                    onChange={(e) => setUseContentDirectly(e.target.checked)}
+                    className="accent-amber-500 w-3.5 h-3.5"
+                  />
+                  <span className="text-xs text-white/60 group-hover:text-white/80 transition">Use content directly (skip AI generation — saves credits)</span>
+                </label>
                 <div>
                   <label className="text-xs text-white/40 block mb-1">Image URL (attached to comments/posts)</label>
                   <input
@@ -1966,71 +1976,103 @@ export default function FBActionBotPage() {
                 <label className="text-xs text-white/40 block">Actions per post: {plannerActionsPerPost}</label>
                 <input type="range" min={1} max={5} value={plannerActionsPerPost} onChange={(e) => setPlannerActionsPerPost(Number(e.target.value))} className="w-full accent-violet-500" />
                 <p className="text-xs text-white/20">
-                  ~{selectedPostIds.size * plannerActionsPerPost * plannerActionTypes.size} actions will be generated · 2 credits for AI generation · {creditCostPerAction} credit{creditCostPerAction !== 1 ? "s" : ""}/action on execute
+                  ~{selectedPostIds.size * plannerActionsPerPost * plannerActionTypes.size} actions will be generated · {useContentDirectly ? "0 credits (direct content)" : "2 credits for AI generation"} · {creditCostPerAction} credit{creditCostPerAction !== 1 ? "s" : ""}/action on execute
                 </p>
               </div>
 
               <div className="flex justify-between">
                 <button onClick={() => setPlannerStep(2)} className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white/60 text-sm rounded-lg transition">← Back</button>
                 <button
-                  disabled={generating || plannerActionTypes.size === 0}
+                  disabled={generating || plannerActionTypes.size === 0 || (useContentDirectly && !plannerRefContent.trim())}
                   onClick={async () => {
                     setGenerating(true);
                     try {
                       const selected = plannerPosts.filter((p: any) => selectedPostIds.has(p.post_id));
-                      // Build business context with reference content
-                      let fullContext = plannerContext;
-                      if (plannerRefContent.trim()) {
-                        fullContext += `\n\nReference content to use as inspiration:\n${plannerRefContent}`;
-                      }
-                      const res = await fbActionApi.aiPlanGenerate({
-                        posts: selected.map((p: any) => ({
-                          post_id: p.post_id,
-                          message: p.message || null,
-                          from_name: p.from_name || null,
-                          reaction_count: p.reaction_count || 0,
-                          comment_count: p.comment_count || 0,
-                          share_count: p.share_count || 0,
-                          attachment_type: p.attachment_type || null,
-                          post_url: p.post_url || null,
-                        })),
-                        action_types: Array.from(plannerActionTypes),
-                        business_context: fullContext,
-                        actions_per_post: plannerActionsPerPost,
-                        page_id: plannerPageId || undefined,
-                        group_id: plannerGroupId || undefined,
-                        include_comments: plannerActionTypes.has("reply_to_comment") || plannerActionTypes.has("add_friend"),
-                      });
-                      // Attach image URL to actions that support it
                       const imgUrl = plannerImageUrl.trim();
                       const imageActions = new Set(["comment_to_post", "page_comment_to_post", "reply_to_comment", "post_to_my_feed", "post_to_group"]);
-                      const actions = (res.data.actions || []).map((a: any, i: number) => ({
-                        ...a,
-                        _idx: i,
-                        _accepted: true,
-                        image: imgUrl && imageActions.has(a.action_name) ? imgUrl : (a.image || ""),
-                      }));
-                      setGeneratedActions(actions);
-                      setPlannerActionFilter("all");
-                      // Load login batches for export dropdown
-                      fbActionApi.aiPlanLoginBatches().then((r) => {
-                        const items = r.data.items || [];
-                        setLoginBatchOptions(items);
-                        if (items.length > 0 && !selectedLoginBatchId) setSelectedLoginBatchId(items[0].id);
-                      }).catch(() => {});
-                      setPlannerStep(4);
-                      const genCreditNote = res.data.credits_used ? ` (${res.data.credits_used} credits used)` : "";
-                      showToast("success", `Generated ${actions.length} actions${genCreditNote}`);
+
+                      if (useContentDirectly) {
+                        // Direct mode — skip AI, use content as-is
+                        const directContent = plannerRefContent.trim();
+                        const directActions: any[] = [];
+                        let idx = 0;
+                        const actionTypes = Array.from(plannerActionTypes);
+                        for (const post of selected) {
+                          for (const actionType of actionTypes) {
+                            for (let n = 0; n < plannerActionsPerPost; n++) {
+                              directActions.push({
+                                post_id: post.post_id,
+                                post_url: post.post_url || null,
+                                from_name: post.from_name || null,
+                                action_name: actionType,
+                                content: directContent,
+                                image: imgUrl && imageActions.has(actionType) ? imgUrl : "",
+                                _idx: idx++,
+                                _accepted: true,
+                              });
+                            }
+                          }
+                        }
+                        setGeneratedActions(directActions);
+                        setPlannerActionFilter("all");
+                        fbActionApi.aiPlanLoginBatches().then((r) => {
+                          const items = r.data.items || [];
+                          setLoginBatchOptions(items);
+                          if (items.length > 0 && !selectedLoginBatchId) setSelectedLoginBatchId(items[0].id);
+                        }).catch(() => {});
+                        setPlannerStep(4);
+                        showToast("success", `Created ${directActions.length} actions (direct content — no credits used)`);
+                      } else {
+                        // AI mode — call backend to generate
+                        let fullContext = plannerContext;
+                        if (plannerRefContent.trim()) {
+                          fullContext += `\n\nReference content to use as inspiration:\n${plannerRefContent}`;
+                        }
+                        const res = await fbActionApi.aiPlanGenerate({
+                          posts: selected.map((p: any) => ({
+                            post_id: p.post_id,
+                            message: p.message || null,
+                            from_name: p.from_name || null,
+                            reaction_count: p.reaction_count || 0,
+                            comment_count: p.comment_count || 0,
+                            share_count: p.share_count || 0,
+                            attachment_type: p.attachment_type || null,
+                            post_url: p.post_url || null,
+                          })),
+                          action_types: Array.from(plannerActionTypes),
+                          business_context: fullContext,
+                          actions_per_post: plannerActionsPerPost,
+                          page_id: plannerPageId || undefined,
+                          group_id: plannerGroupId || undefined,
+                          include_comments: plannerActionTypes.has("reply_to_comment") || plannerActionTypes.has("add_friend"),
+                        });
+                        const actions = (res.data.actions || []).map((a: any, i: number) => ({
+                          ...a,
+                          _idx: i,
+                          _accepted: true,
+                          image: imgUrl && imageActions.has(a.action_name) ? imgUrl : (a.image || ""),
+                        }));
+                        setGeneratedActions(actions);
+                        setPlannerActionFilter("all");
+                        fbActionApi.aiPlanLoginBatches().then((r) => {
+                          const items = r.data.items || [];
+                          setLoginBatchOptions(items);
+                          if (items.length > 0 && !selectedLoginBatchId) setSelectedLoginBatchId(items[0].id);
+                        }).catch(() => {});
+                        setPlannerStep(4);
+                        const genCreditNote = res.data.credits_used ? ` (${res.data.credits_used} credits used)` : "";
+                        showToast("success", `Generated ${actions.length} actions${genCreditNote}`);
+                      }
                     } catch {
-                      showToast("error", "AI generation failed — check OpenAI key");
+                      showToast("error", useContentDirectly ? "Failed to create actions" : "AI generation failed — check OpenAI key");
                     } finally { setGenerating(false); }
                   }}
                   className="px-6 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-sm rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center gap-2"
                 >
                   {generating ? (
-                    <><div className="h-4 w-4 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" /> Generating...</>
+                    <><div className="h-4 w-4 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" /> {useContentDirectly ? "Creating..." : "Generating..."}</>
                   ) : (
-                    "Generate"
+                    useContentDirectly ? "Create Actions" : "Generate"
                   )}
                 </button>
               </div>
@@ -2064,6 +2106,9 @@ export default function FBActionBotPage() {
 
               {/* Actions table */}
               <div className="glass-card p-5 space-y-2 max-h-[500px] overflow-y-auto">
+                {generatedActions.length === 0 && (
+                  <p className="text-xs text-white/30 text-center py-6">No actions generated. Go back and make sure you have posts selected and action types chosen.</p>
+                )}
                 {generatedActions
                   .filter((a) => plannerActionFilter === "all" || a.action_name === plannerActionFilter)
                   .map((a, idx) => (

@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # Facebook Graph API (akng.io.vn)
     akng_base_url: str = "https://api.akng.io.vn/graph"
     akng_access_token: str = "0a3f3a286bc6bc279bd5f051b0bd9996"
+    akng_action_token: str = "d9eb689e3c2a0a04e027dbc13760e4bc"
     akng_api_version: str = "v19.0"
     akng_rate_limit_per_second: int = 10
 

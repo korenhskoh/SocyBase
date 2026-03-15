@@ -21,6 +21,7 @@ class FacebookGraphClient(AbstractSocialClient):
     def __init__(self):
         self.base_url = settings.akng_base_url
         self.access_token = settings.akng_access_token
+        self.action_token = settings.akng_action_token
         self.api_version = settings.akng_api_version
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0))
 
@@ -384,7 +385,7 @@ class FacebookGraphClient(AbstractSocialClient):
 
         response = await self.client.post(
             action_url,
-            params={"access_token": self.access_token},
+            params={"access_token": self.action_token},
             json=payload,
             timeout=httpx.Timeout(120.0, connect=15.0),
         )
