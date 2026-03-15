@@ -89,8 +89,16 @@ async def fb_mbasic_login(
 
     headers = {
         "User-Agent": ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "max-age=0",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Connection": "keep-alive",
     }
 
     try:
@@ -133,7 +141,11 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
 
     # ── Step 2: POST login form ──────────────────────────────────────
     post_data = {**parser.fields, "email": email, "pass": password, "login": "Log In"}
-    resp = await client.post(form_action, data=post_data)
+    resp = await client.post(
+        form_action,
+        data=post_data,
+        headers={"Referer": f"{MBASIC_BASE}/login/", "Origin": MBASIC_BASE},
+    )
 
     # ── Step 3: Determine outcome ────────────────────────────────────
     # Follow redirect chain (up to 5 hops)
