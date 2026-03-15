@@ -310,7 +310,20 @@ export default function BusinessProfilePage() {
                   {aiSuggestions.suggested_pages.map((page, i) => (
                     <div key={i} className="p-3 rounded-lg bg-white/[0.03] border border-white/10 flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white">{page.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-white">{page.name}</p>
+                          {(page as any).language && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                              (page as any).language === "Mandarin" || (page as any).language === "Chinese"
+                                ? "bg-red-500/15 text-red-300"
+                                : (page as any).language === "Malay"
+                                  ? "bg-emerald-500/15 text-emerald-300"
+                                  : "bg-blue-500/15 text-blue-300"
+                            }`}>
+                              {(page as any).language}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-white/40 mt-0.5">{page.reason}</p>
                         <div className="flex items-center gap-2 mt-1.5">
                           {page.facebook_url ? (

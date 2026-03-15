@@ -74,7 +74,16 @@ class OpenAIService:
             "You are a social media marketing strategist. Based on the business profile "
             "provided, suggest Facebook pages that this business should monitor and scrape "
             "for audience insights. Pay special attention to the country/region — suggest "
-            "pages that are relevant to the local market and language when a country is specified.\n\n"
+            "pages that are relevant to the local market.\n\n"
+            "MULTILINGUAL REQUIREMENT: You MUST include competitors across ALL relevant "
+            "languages for the target market. For Southeast Asian markets (Malaysia, "
+            "Singapore, etc.), include pages in:\n"
+            "- English (international and local English-language pages)\n"
+            "- Malay / Bahasa Malaysia (e.g. kedai, produk, jualan pages)\n"
+            "- Mandarin / Chinese (e.g. pages targeting Chinese-speaking communities)\n"
+            "For other regions, include pages in the local language(s) plus English.\n"
+            "Mix languages across your suggestions — do NOT only suggest English pages. "
+            "Local-language pages often have the most engaged audiences.\n\n"
             "CRITICAL: Only suggest REAL, well-known brands and businesses that you are confident "
             "actually have Facebook pages. Do NOT guess or fabricate Facebook URLs. "
             "For the facebook_url field, ONLY provide a URL if you are highly confident the exact "
@@ -84,8 +93,9 @@ class OpenAIService:
             "https://www.facebook.com/search/pages?q=PAGE+NAME so the user can find the real page.\n\n"
             "Return a JSON object with:\n"
             '  "business_fit_analysis": 2-3 sentence analysis of the business positioning,\n'
-            '  "suggested_pages": list of 5-10 objects with:\n'
-            '    "name": the real business/brand name,\n'
+            '  "suggested_pages": list of 8-15 objects with:\n'
+            '    "name": the real business/brand name (in its original language),\n'
+            '    "language": the primary language of the page (e.g. "English", "Malay", "Mandarin"),\n'
             '    "facebook_url": ONLY if you are confident this exact URL exists, otherwise null,\n'
             '    "facebook_search_url": Facebook search URL to find the page (always provide this),\n'
             '    "reason": why this competitor is relevant (1 sentence),\n'
@@ -113,7 +123,7 @@ class OpenAIService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.3,
-                max_tokens=1500,
+                max_tokens=2500,
             )
             result = json.loads(response.choices[0].message.content)
             result["token_cost"] = response.usage.total_tokens if response.usage else 0
