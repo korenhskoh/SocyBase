@@ -436,11 +436,63 @@ async def quick_scan(
                     reference_id=str(comp.id),
                 ))
 
+        # Save to quick scan history
+        if posts:
+            try:
+                from app.models.quick_scan_history import QuickScanHistory
+                db.add(QuickScanHistory(
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    competitor_id=comp.id,
+                    page_id=comp.page_id,
+                    page_name=comp.name or comp.page_id,
+                    posts=posts,
+                    posts_count=len(posts),
+                    credits_used=credits_used,
+                ))
+            except Exception as exc:
+                logger.warning(f"[QuickScan] Failed to save scan history: {exc}")
+
         await db.commit()
 
         return {"items": posts, "total": len(posts), "credits_used": credits_used}
     finally:
         await client.close()
+
+
+# ---------------------------------------------------------------------------
+# GET /competitors/scan-history — Recent quick scan history
+# ---------------------------------------------------------------------------
+
+@router.get("/scan-history")
+async def get_scan_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent quick scan history for this tenant."""
+    from app.models.quick_scan_history import QuickScanHistory
+
+    result = await db.execute(
+        select(QuickScanHistory)
+        .where(QuickScanHistory.tenant_id == user.tenant_id)
+        .order_by(QuickScanHistory.created_at.desc())
+        .limit(20)
+    )
+    items = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(h.id),
+                "page_id": h.page_id,
+                "page_name": h.page_name,
+                "posts": h.posts,
+                "posts_count": h.posts_count,
+                "credits_used": h.credits_used,
+                "created_at": h.created_at.isoformat() if h.created_at else None,
+            }
+            for h in items
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------

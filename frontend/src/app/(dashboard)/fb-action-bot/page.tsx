@@ -218,6 +218,8 @@ export default function FBActionBotPage() {
   const [loginBatchOptions, setLoginBatchOptions] = useState<any[]>([]);
   const [selectedLoginBatchId, setSelectedLoginBatchId] = useState("");
   const [plannerScanUrl, setPlannerScanUrl] = useState("");
+  const [scanHistoryList, setScanHistoryList] = useState<any[]>([]);
+  const [scanHistoryOpen, setScanHistoryOpen] = useState(false);
   // My Posts (scraped jobs) state
   const [myJobsList, setMyJobsList] = useState<any[]>([]);
   const [myJobsLoading, setMyJobsLoading] = useState(false);
@@ -1426,53 +1428,100 @@ export default function FBActionBotPage() {
                 )}
 
                 {plannerSource === "quickscan" && (
-                  <div className="flex items-end gap-3">
-                    <div className="flex-1">
-                      <label className="text-xs text-white/40 block mb-1">Page URL or ID</label>
-                      <input
-                        value={plannerScanUrl}
-                        onChange={(e) => setPlannerScanUrl(e.target.value)}
-                        placeholder="https://facebook.com/page or page ID"
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none"
-                      />
-                    </div>
-                    <button
-                      disabled={plannerPostsLoading || !plannerScanUrl.trim()}
-                      onClick={async () => {
-                        setPlannerPostsLoading(true);
-                        try {
-                          let compId: string;
-                          try {
-                            const addRes = await competitorsApi.add({ input_value: plannerScanUrl.trim(), source: "manual" });
-                            compId = addRes.data.id;
-                          } catch (addErr: any) {
-                            if (addErr?.response?.status === 409) {
-                              const listRes = await competitorsApi.list();
-                              const existing = listRes.data.items?.find((c: any) =>
-                                plannerScanUrl.trim().includes(c.page_id) || c.page_url?.includes(plannerScanUrl.trim().split("/").pop() || "")
-                              );
-                              if (existing) { compId = existing.id; }
-                              else throw addErr;
-                            } else throw addErr;
+                  <div className="space-y-3">
+                    {/* Recent Scans */}
+                    <div>
+                      <button
+                        onClick={async () => {
+                          setScanHistoryOpen(!scanHistoryOpen);
+                          if (!scanHistoryOpen && scanHistoryList.length === 0) {
+                            try {
+                              const res = await competitorsApi.scanHistory();
+                              setScanHistoryList(res.data.items || []);
+                            } catch { /* ignore */ }
                           }
-                          const scanRes = await competitorsApi.quickScan(compId);
-                          const posts = scanRes.data.items || scanRes.data.posts || [];
-                          setPlannerPosts(posts);
-                          setSelectedPostIds(new Set());
-                          const scanCreditNote = scanRes.data.credits_used ? ` (${scanRes.data.credits_used} credit used)` : "";
-                          if (posts.length === 0) showToast("error", "No posts found for this page");
-                          else showToast("success", `Found ${posts.length} posts${scanCreditNote}`);
-                        } catch (err: any) {
-                          const msg = err?.response?.data?.detail || "Failed to scan page";
-                          showToast("error", msg);
-                        } finally { setPlannerPostsLoading(false); }
-                      }}
-                      className="px-5 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-xs rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center gap-2"
-                    >
-                      {plannerPostsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
-                      Scan
-                    </button>
-                    <span className="text-[10px] text-white/20 whitespace-nowrap pb-0.5">1 credit</span>
+                        }}
+                        className="text-[11px] text-violet-400/70 hover:text-violet-300 flex items-center gap-1"
+                      >
+                        <span>{scanHistoryOpen ? "\u25BE" : "\u25B8"}</span>
+                        Recent Scans{scanHistoryList.length > 0 ? ` (${scanHistoryList.length})` : ""}
+                      </button>
+                      {scanHistoryOpen && scanHistoryList.length > 0 && (
+                        <div className="mt-1.5 max-h-[160px] overflow-y-auto space-y-1">
+                          {scanHistoryList.map((h: any) => (
+                            <button
+                              key={h.id}
+                              onClick={() => {
+                                setPlannerPosts(h.posts || []);
+                                setSelectedPostIds(new Set());
+                                setScanHistoryOpen(false);
+                                showToast("success", `Loaded scan: ${h.page_name} (${h.posts_count} posts)`);
+                              }}
+                              className="w-full text-left px-3 py-2 rounded-lg bg-white/[0.02] hover:bg-violet-500/10 border border-white/5 hover:border-violet-500/20 transition"
+                            >
+                              <p className="text-xs text-white/70 truncate">{h.page_name || h.page_id}</p>
+                              <p className="text-[10px] text-white/30">
+                                {h.posts_count} posts · {h.credits_used > 0 ? `${h.credits_used} credit · ` : ""}{new Date(h.created_at).toLocaleString()}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {scanHistoryOpen && scanHistoryList.length === 0 && (
+                        <p className="text-[10px] text-white/20 mt-1 ml-3">No previous scans</p>
+                      )}
+                    </div>
+                    {/* URL input */}
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1">
+                        <label className="text-xs text-white/40 block mb-1">Page URL or ID</label>
+                        <input
+                          value={plannerScanUrl}
+                          onChange={(e) => setPlannerScanUrl(e.target.value)}
+                          placeholder="https://facebook.com/page or page ID"
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:border-violet-500 focus:outline-none"
+                        />
+                      </div>
+                      <button
+                        disabled={plannerPostsLoading || !plannerScanUrl.trim()}
+                        onClick={async () => {
+                          setPlannerPostsLoading(true);
+                          try {
+                            let compId: string;
+                            try {
+                              const addRes = await competitorsApi.add({ input_value: plannerScanUrl.trim(), source: "manual" });
+                              compId = addRes.data.id;
+                            } catch (addErr: any) {
+                              if (addErr?.response?.status === 409) {
+                                const listRes = await competitorsApi.list();
+                                const existing = listRes.data.items?.find((c: any) =>
+                                  plannerScanUrl.trim().includes(c.page_id) || c.page_url?.includes(plannerScanUrl.trim().split("/").pop() || "")
+                                );
+                                if (existing) { compId = existing.id; }
+                                else throw addErr;
+                              } else throw addErr;
+                            }
+                            const scanRes = await competitorsApi.quickScan(compId);
+                            const posts = scanRes.data.items || scanRes.data.posts || [];
+                            setPlannerPosts(posts);
+                            setSelectedPostIds(new Set());
+                            const scanCreditNote = scanRes.data.credits_used ? ` (${scanRes.data.credits_used} credit used)` : "";
+                            if (posts.length === 0) showToast("error", "No posts found for this page");
+                            else showToast("success", `Found ${posts.length} posts${scanCreditNote}`);
+                            // Refresh scan history
+                            competitorsApi.scanHistory().then((r) => setScanHistoryList(r.data.items || [])).catch(() => {});
+                          } catch (err: any) {
+                            const msg = err?.response?.data?.detail || "Failed to scan page";
+                            showToast("error", msg);
+                          } finally { setPlannerPostsLoading(false); }
+                        }}
+                        className="px-5 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-xs rounded-lg border border-violet-500/20 transition disabled:opacity-30 flex items-center gap-2"
+                      >
+                        {plannerPostsLoading && <div className="h-3 w-3 border-2 border-violet-300/30 border-t-violet-300 rounded-full animate-spin" />}
+                        Scan
+                      </button>
+                      <span className="text-[10px] text-white/20 whitespace-nowrap pb-0.5">1 credit</span>
+                    </div>
                   </div>
                 )}
 

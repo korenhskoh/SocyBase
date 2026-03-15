@@ -39,6 +39,10 @@ export default function CompetitorsPage() {
   const [scanResults, setScanResults] = useState<CompetitorPost[]>([]);
   const [scanCompName, setScanCompName] = useState("");
 
+  // Scan history
+  const [scanHistoryList, setScanHistoryList] = useState<any[]>([]);
+  const [scanHistoryOpen, setScanHistoryOpen] = useState(false);
+
   // Feed
   const [feedTab, setFeedTab] = useState<"all" | "livestream">("all");
   const [feedPosts, setFeedPosts] = useState<CompetitorPost[]>([]);
@@ -186,8 +190,14 @@ export default function CompetitorsPage() {
     setScanResults([]);
     try {
       const res = await competitorsApi.quickScan(comp.id);
-      setScanResults(res.data.items || []);
+      const posts = res.data.items || [];
+      setScanResults(posts);
       loadCompetitors(); // refresh stats
+      const creditNote = res.data.credits_used ? ` (${res.data.credits_used} credit used)` : "";
+      if (posts.length > 0) showToast("success", `Found ${posts.length} posts for ${comp.name || comp.page_id}${creditNote}`);
+      else showToast("error", "No posts found for this page");
+      // Refresh scan history if open
+      if (scanHistoryOpen) competitorsApi.scanHistory().then((r) => setScanHistoryList(r.data.items || [])).catch(() => {});
     } catch {
       showToast("error", "Quick scan failed");
     } finally {
@@ -199,7 +209,7 @@ export default function CompetitorsPage() {
   const handleScrape = async (comp: CompetitorPage) => {
     try {
       await competitorsApi.scrape(comp.id);
-      showToast("success", `Full scrape started for ${comp.name || comp.page_id}`);
+      showToast("success", `Full scrape started for ${comp.name || comp.page_id} (credits charged per page fetched)`);
       loadCompetitors();
     } catch {
       showToast("error", "Failed to start scrape");
@@ -380,6 +390,51 @@ export default function CompetitorsPage() {
           ))}
         </div>
       )}
+
+      {/* Recent Scans History */}
+      <div className="glass-card p-4">
+        <button
+          onClick={async () => {
+            setScanHistoryOpen(!scanHistoryOpen);
+            if (!scanHistoryOpen && scanHistoryList.length === 0) {
+              try {
+                const res = await competitorsApi.scanHistory();
+                setScanHistoryList(res.data.items || []);
+              } catch { /* ignore */ }
+            }
+          }}
+          className="text-xs text-primary-400/80 hover:text-primary-300 flex items-center gap-1.5 w-full"
+        >
+          <span>{scanHistoryOpen ? "\u25BE" : "\u25B8"}</span>
+          Recent Scans{scanHistoryList.length > 0 ? ` (${scanHistoryList.length})` : ""}
+        </button>
+        {scanHistoryOpen && scanHistoryList.length > 0 && (
+          <div className="mt-3 space-y-1.5 max-h-[240px] overflow-y-auto">
+            {scanHistoryList.map((h: any) => (
+              <button
+                key={h.id}
+                onClick={() => {
+                  setScanResults(h.posts || []);
+                  setScanCompName(h.page_name || h.page_id);
+                  setScanHistoryOpen(false);
+                }}
+                className="w-full text-left px-3 py-2.5 rounded-lg bg-white/[0.02] hover:bg-primary-500/10 border border-white/5 hover:border-primary-500/20 transition flex items-center justify-between gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-white/70 truncate">{h.page_name || h.page_id}</p>
+                  <p className="text-[10px] text-white/30">
+                    {h.posts_count} posts · {h.credits_used > 0 ? `${h.credits_used} credit · ` : ""}{new Date(h.created_at).toLocaleString()}
+                  </p>
+                </div>
+                <span className="text-[10px] text-primary-400/60 shrink-0">Load</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {scanHistoryOpen && scanHistoryList.length === 0 && (
+          <p className="text-[10px] text-white/20 mt-2 ml-3">No scan history yet — use Quick Scan on a page above</p>
+        )}
+      </div>
 
       {/* Quick Scan Results */}
       {scanResults.length > 0 && (

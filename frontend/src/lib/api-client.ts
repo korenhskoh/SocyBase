@@ -515,6 +515,7 @@ export const competitorsApi = {
   scrape: (id: string) => api.post(`/competitors/${id}/scrape`),
   exportFeed: (params?: { livestream_only?: boolean; sort_by?: string; days?: number }) =>
     api.get("/competitors/feed/export", { params, responseType: "blob" }),
+  scanHistory: () => api.get("/competitors/scan-history"),
 };
 
 // FB Action Bot API
