@@ -4,8 +4,6 @@ import logging
 import random
 import re
 from html.parser import HTMLParser
-from urllib.parse import quote
-
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -35,10 +33,7 @@ def build_proxy_url(proxy: dict) -> str | None:
     username = proxy.get("username", "")
     password = proxy.get("password", "")
     if username and password:
-        # URL-encode credentials to handle special chars (+, @, etc.)
-        enc_user = quote(username, safe="")
-        enc_pass = quote(password, safe="")
-        return f"http://{enc_user}:{enc_pass}@{host}:{port}"
+        return f"http://{username}:{password}@{host}:{port}"
     return f"http://{host}:{port}"
 
 
