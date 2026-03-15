@@ -114,7 +114,7 @@ async def fb_mbasic_login(
             follow_redirects=False,
             timeout=httpx.Timeout(30.0, connect=15.0),
         ) as client:
-            return await _do_login(client, email, password, totp_secret, ua)
+            return await _do_login(client, email, password, totp_secret, ua, bool(proxy_url))
     except httpx.ProxyError as exc:
         return _fail(ua, f"Proxy error: {exc}")
     except httpx.ConnectError as exc:
@@ -125,7 +125,7 @@ async def fb_mbasic_login(
         return _fail(ua, f"Unexpected error: {exc}")
 
 
-async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_secret: str | None, ua: str) -> dict:
+async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_secret: str | None, ua: str, has_proxy: bool = False) -> dict:
     """Internal login flow."""
 
     # ── Step 1: GET login page ───────────────────────────────────────
@@ -161,7 +161,7 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
 
     # 400 = Facebook blocked the request (datacenter IP / bot detection)
     if resp.status_code == 400:
-        proxy_info = f"proxy={'yes' if proxy_url else 'NO'}"
+        proxy_info = f"proxy={'yes' if has_proxy else 'NO'}"
         return _fail(ua, f"Login blocked by Facebook (HTTP 400) — {proxy_info}")
 
     # ── Step 3: Determine outcome ────────────────────────────────────
