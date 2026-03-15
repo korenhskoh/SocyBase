@@ -161,7 +161,8 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
 
     # 400 = Facebook blocked the request (datacenter IP / bot detection)
     if resp.status_code == 400:
-        return _fail(ua, "Login blocked by Facebook (HTTP 400) — check proxy")
+        proxy_info = f"proxy={'yes' if proxy_url else 'NO'}"
+        return _fail(ua, f"Login blocked by Facebook (HTTP 400) — {proxy_info}")
 
     # ── Step 3: Determine outcome ────────────────────────────────────
     # Follow redirect chain (up to 5 hops)
