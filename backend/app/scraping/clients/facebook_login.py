@@ -4,6 +4,7 @@ import logging
 import random
 import re
 from html.parser import HTMLParser
+from urllib.parse import quote
 
 import httpx
 
@@ -34,7 +35,10 @@ def build_proxy_url(proxy: dict) -> str | None:
     username = proxy.get("username", "")
     password = proxy.get("password", "")
     if username and password:
-        return f"http://{username}:{password}@{host}:{port}"
+        # URL-encode credentials to handle special chars (+, @, etc.)
+        enc_user = quote(username, safe="")
+        enc_pass = quote(password, safe="")
+        return f"http://{enc_user}:{enc_pass}@{host}:{port}"
     return f"http://{host}:{port}"
 
 
@@ -86,6 +90,13 @@ async def fb_mbasic_login(
     """
     ua = user_agent or random_user_agent()
     proxy_url = build_proxy_url(proxy)
+
+    logger.info(
+        "fb_mbasic_login: email=%s proxy=%s proxy_url=%s",
+        email,
+        bool(proxy),
+        proxy_url[:50] + "..." if proxy_url and len(proxy_url) > 50 else proxy_url,
+    )
 
     headers = {
         "User-Agent": ua,
@@ -152,6 +163,10 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
         resp.status_code,
         resp.url,
     )
+
+    # 400 = Facebook blocked the request (datacenter IP / bot detection)
+    if resp.status_code == 400:
+        return _fail(ua, "Login blocked by Facebook (HTTP 400) — check proxy")
 
     # ── Step 3: Determine outcome ────────────────────────────────────
     # Follow redirect chain (up to 5 hops)
