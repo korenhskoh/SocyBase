@@ -144,6 +144,7 @@ interface BatchInfo {
   delay_seconds: number;
   max_parallel: number;
   error_message?: string;
+  results?: Array<{ email: string; status: string; fb_user_id?: string; error_message?: string }>;
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -973,6 +974,20 @@ export default function FBActionBotPage() {
 
               {activeBatch.error_message && (
                 <p className="text-xs text-red-400 mb-3">{activeBatch.error_message}</p>
+              )}
+
+              {/* Per-account results with errors */}
+              {(activeBatch.results?.length ?? 0) > 0 && (
+                <div className="mb-3 max-h-40 overflow-y-auto space-y-1">
+                  {(activeBatch.results || []).map((r: any, i: number) => (
+                    <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs ${r.status === "success" ? "bg-emerald-500/5 text-emerald-400" : "bg-red-500/5 text-red-400"}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.status === "success" ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <span className="truncate">{r.email}</span>
+                      {r.status === "success" && r.fb_user_id && <span className="text-white/20 ml-auto shrink-0">uid: {r.fb_user_id}</span>}
+                      {r.status !== "success" && r.error_message && <span className="text-red-300/60 ml-auto shrink-0 truncate max-w-[50%]">{r.error_message}</span>}
+                    </div>
+                  ))}
+                </div>
               )}
 
               <div className="flex gap-2">

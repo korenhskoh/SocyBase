@@ -811,6 +811,7 @@ async def get_login_batch_status(
 ):
     """Get login batch status and progress."""
     from app.models.fb_login_batch import FBLoginBatch
+    from app.models.fb_login_result import FBLoginResult
 
     result = await db.execute(
         select(FBLoginBatch).where(
@@ -821,6 +822,22 @@ async def get_login_batch_status(
     batch = result.scalar_one_or_none()
     if not batch:
         raise HTTPException(status_code=404, detail="Login batch not found")
+
+    # Include per-account results when batch is done
+    results_list = []
+    if batch.status in ("completed", "failed", "cancelled"):
+        res = await db.execute(
+            select(FBLoginResult)
+            .where(FBLoginResult.login_batch_id == batch_id)
+            .order_by(FBLoginResult.created_at)
+        )
+        for r in res.scalars().all():
+            results_list.append({
+                "email": r.email,
+                "status": r.status,
+                "fb_user_id": r.fb_user_id,
+                "error_message": r.error_message,
+            })
 
     return {
         "id": str(batch.id),
@@ -833,6 +850,7 @@ async def get_login_batch_status(
         "delay_seconds": batch.delay_seconds,
         "max_parallel": batch.max_parallel,
         "error_message": batch.error_message,
+        "results": results_list,
         "created_at": batch.created_at.isoformat() if batch.created_at else None,
         "started_at": batch.started_at.isoformat() if batch.started_at else None,
         "completed_at": batch.completed_at.isoformat() if batch.completed_at else None,
