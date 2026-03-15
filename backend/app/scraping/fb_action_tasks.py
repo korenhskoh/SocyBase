@@ -38,6 +38,8 @@ async def _execute_batch(batch_id: str):
 
     from app.models.fb_action_batch import FBActionBatch
     from app.models.fb_action_log import FBActionLog
+    from app.models.credit import CreditBalance, CreditTransaction
+    from app.models.platform import Platform
     from app.scraping.clients.facebook import FacebookGraphClient
     from app.services.meta_api import MetaAPIService
 
@@ -84,12 +86,17 @@ async def _execute_batch(batch_id: str):
             batch.total_rows = len(tasks)
             await db.commit()
 
+            # Load credit cost per action from platform settings
+            platform_r = await db.execute(select(Platform).limit(1))
+            platform = platform_r.scalar_one_or_none()
+            credit_cost_per_action = getattr(platform, "credit_cost_per_action", 3) if platform else 3
+
             client = FacebookGraphClient()
             try:
                 if batch.execution_mode == "concurrent":
-                    await _run_concurrent(db, batch, tasks, client, meta)
+                    await _run_concurrent(db, batch, tasks, client, meta, credit_cost_per_action, local_session)
                 else:
-                    await _run_sequential(db, batch, tasks, client, meta)
+                    await _run_sequential(db, batch, tasks, client, meta, credit_cost_per_action)
             finally:
                 await client.close()
 
@@ -125,7 +132,7 @@ async def _execute_batch(batch_id: str):
         await local_engine.dispose()
 
 
-async def _run_sequential(db, batch, tasks, client, meta):
+async def _run_sequential(db, batch, tasks, client, meta, credit_cost_per_action=3):
     """Execute tasks one by one with a delay between each."""
     from sqlalchemy import select
     from app.models.fb_action_batch import FBActionBatch
@@ -136,7 +143,11 @@ async def _run_sequential(db, batch, tasks, client, meta):
         if batch.status == "cancelled":
             break
 
-        await _execute_single(db, batch, row, client)
+        success = await _execute_single(db, batch, row, client)
+
+        # Charge credits for successful actions
+        if success and credit_cost_per_action > 0:
+            await _charge_action_credit(db, batch.tenant_id, batch.user_id, credit_cost_per_action, batch.id)
 
         # Update progress
         batch.completed_rows = i + 1
@@ -147,7 +158,7 @@ async def _run_sequential(db, batch, tasks, client, meta):
             await asyncio.sleep(batch.delay_seconds)
 
 
-async def _run_concurrent(db, batch, tasks, client, meta):
+async def _run_concurrent(db, batch, tasks, client, meta, credit_cost_per_action=3, _parent_session=None):
     """Execute tasks concurrently with a semaphore limit."""
     import uuid
     from sqlalchemy import select
@@ -178,9 +189,13 @@ async def _run_concurrent(db, batch, tasks, client, meta):
                 if status == "cancelled":
                     return
 
-                await _execute_single_concurrent(
+                success = await _execute_single_concurrent(
                     task_db, batch_id, tenant_id, user_id, row, client
                 )
+
+                # Charge credits for successful actions
+                if success and credit_cost_per_action > 0:
+                    await _charge_action_credit(task_db, tenant_id, user_id, credit_cost_per_action, batch_id)
 
             # Update progress
             async with counter_lock:
@@ -201,8 +216,11 @@ async def _run_concurrent(db, batch, tasks, client, meta):
         await local_engine.dispose()
 
 
-async def _execute_single(db, batch, row, client):
-    """Execute a single action and log it (sequential mode — shared DB session)."""
+async def _execute_single(db, batch, row, client) -> bool:
+    """Execute a single action and log it (sequential mode — shared DB session).
+
+    Returns True if the action succeeded, False otherwise.
+    """
     from app.models.fb_action_log import FBActionLog
 
     action_name = row.get("action_name", "")
@@ -232,7 +250,7 @@ async def _execute_single(db, batch, row, client):
         db.add(log)
         batch.failed_count += 1
         await db.commit()
-        return
+        return False
 
     success, status_msg = _parse_response(resp)
     log = FBActionLog(
@@ -251,10 +269,14 @@ async def _execute_single(db, batch, row, client):
     else:
         batch.failed_count += 1
     await db.commit()
+    return success
 
 
-async def _execute_single_concurrent(db, batch_id, tenant_id, user_id, row, client):
-    """Execute a single action and log it (concurrent mode — own DB session)."""
+async def _execute_single_concurrent(db, batch_id, tenant_id, user_id, row, client) -> bool:
+    """Execute a single action and log it (concurrent mode — own DB session).
+
+    Returns True if the action succeeded, False otherwise.
+    """
     from app.models.fb_action_log import FBActionLog
     from app.models.fb_action_batch import FBActionBatch
 
@@ -297,7 +319,7 @@ async def _execute_single_concurrent(db, batch_id, tenant_id, user_id, row, clie
         b = result.scalar_one()
         b.failed_count += 1
         await db.commit()
-        return
+        return False
 
     success, status_msg = _parse_response(resp)
     log = FBActionLog(
@@ -321,6 +343,35 @@ async def _execute_single_concurrent(db, batch_id, tenant_id, user_id, row, clie
     else:
         b.failed_count += 1
     await db.commit()
+    return success
+
+
+async def _charge_action_credit(db, tenant_id, user_id, cost: int, batch_id):
+    """Deduct credits for a successful action execution."""
+    from sqlalchemy import select
+    from app.models.credit import CreditBalance, CreditTransaction
+
+    try:
+        result = await db.execute(
+            select(CreditBalance).where(CreditBalance.tenant_id == tenant_id)
+        )
+        balance = result.scalar_one_or_none()
+        if balance and balance.balance >= cost:
+            balance.balance -= cost
+            balance.lifetime_used += cost
+            db.add(CreditTransaction(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                type="usage",
+                amount=-cost,
+                balance_after=balance.balance,
+                description=f"Action executed ({cost} credits)",
+                reference_type="fb_action",
+                reference_id=str(batch_id),
+            ))
+            await db.commit()
+    except Exception as exc:
+        logger.warning(f"[FBAction] Credit charge failed: {exc}")
 
 
 def _build_params(row: dict) -> dict:

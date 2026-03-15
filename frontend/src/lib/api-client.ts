@@ -130,6 +130,7 @@ export const creditsApi = {
   getTutorialVideos: () => api.get("/credits/tutorial-videos"),
   getPromoBanners: () => api.get("/credits/promo-banners"),
   getMessengerTemplates: () => api.get("/credits/messenger-templates"),
+  getCosts: () => api.get("/credits/costs"),
 };
 
 // Payments API

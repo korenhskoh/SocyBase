@@ -90,6 +90,23 @@ async def get_payment_info(
     }
 
 
+@router.get("/costs")
+async def get_credit_costs(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns configurable credit costs from platform settings."""
+    from app.models.platform import Platform
+
+    result = await db.execute(select(Platform).limit(1))
+    platform = result.scalar_one_or_none()
+    return {
+        "credit_cost_per_profile": platform.credit_cost_per_profile if platform else 1,
+        "credit_cost_per_page": platform.credit_cost_per_page if platform else 1,
+        "credit_cost_per_action": getattr(platform, "credit_cost_per_action", 3) if platform else 3,
+    }
+
+
 @router.get("/public-config")
 async def get_public_config(db: AsyncSession = Depends(get_db)):
     """Public endpoint: returns payment model setting for landing page."""

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { fbActionApi, competitorsApi } from "@/lib/api-client";
+import { fbActionApi, competitorsApi, creditsApi } from "@/lib/api-client";
 
 // All 13 AKNG fb_action actions
 const ACTIONS = [
@@ -234,6 +234,7 @@ export default function FBActionBotPage() {
   const [aiBulkScanProgress, setAiBulkScanProgress] = useState("");
   const [aiExtraKeyword, setAiExtraKeyword] = useState("");
   const [aiLoadingMore, setAiLoadingMore] = useState(false);
+  const [creditCostPerAction, setCreditCostPerAction] = useState(3);
 
   // Livestream Engagement state
   const [liveEngagePhase, setLiveEngagePhase] = useState<"setup" | "running">("setup");
@@ -273,6 +274,9 @@ export default function FBActionBotPage() {
       setUserAgent(res.data.user_agent || "");
       if (res.data.proxy) setProxy(res.data.proxy);
     }).catch(() => {}).finally(() => setConfigLoading(false));
+    creditsApi.getCosts().then((res) => {
+      if (res.data.credit_cost_per_action) setCreditCostPerAction(res.data.credit_cost_per_action);
+    }).catch(() => {});
   }, []);
 
   // Load history
@@ -926,6 +930,7 @@ export default function FBActionBotPage() {
                 <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>Start Batch Execution</>
               )}
             </button>
+            <p className="text-xs text-white/30 mt-2">{creditCostPerAction} credit{creditCostPerAction !== 1 ? "s" : ""} per successful action</p>
           </div>
 
           {/* Active Batch Progress */}
@@ -1815,7 +1820,7 @@ export default function FBActionBotPage() {
                 <label className="text-xs text-white/40 block">Actions per post: {plannerActionsPerPost}</label>
                 <input type="range" min={1} max={5} value={plannerActionsPerPost} onChange={(e) => setPlannerActionsPerPost(Number(e.target.value))} className="w-full accent-violet-500" />
                 <p className="text-xs text-white/20">
-                  ~{selectedPostIds.size * plannerActionsPerPost * plannerActionTypes.size} actions will be generated · 2 credits for AI generation
+                  ~{selectedPostIds.size * plannerActionsPerPost * plannerActionTypes.size} actions will be generated · 2 credits for AI generation · {creditCostPerAction} credit{creditCostPerAction !== 1 ? "s" : ""}/action on execute
                 </p>
               </div>
 
@@ -2056,7 +2061,7 @@ export default function FBActionBotPage() {
                   </button>
                 </div>
                 <p className="text-[10px] text-white/20">
-                  {generatedActions.filter((a) => a._accepted).length} of {generatedActions.length} actions accepted
+                  {generatedActions.filter((a) => a._accepted).length} of {generatedActions.length} actions accepted · Execution cost: ~{generatedActions.filter((a) => a._accepted).length * creditCostPerAction} credits ({creditCostPerAction}/action)
                 </p>
               </div>
 

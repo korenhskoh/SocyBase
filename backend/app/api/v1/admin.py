@@ -1081,6 +1081,7 @@ class CreatePlatformRequest(BaseModel):
     credit_cost_per_profile: int = Field(1, ge=0)
     credit_cost_per_comment_page: int = Field(1, ge=0)
     credit_cost_per_page: int = Field(1, ge=0)
+    credit_cost_per_action: int = Field(3, ge=0)
 
 
 class UpdatePlatformRequest(BaseModel):
@@ -1089,6 +1090,7 @@ class UpdatePlatformRequest(BaseModel):
     credit_cost_per_profile: int | None = Field(None, ge=0)
     credit_cost_per_comment_page: int | None = Field(None, ge=0)
     credit_cost_per_page: int | None = Field(None, ge=0)
+    credit_cost_per_action: int | None = Field(None, ge=0)
 
 
 @router.get("/platforms")
@@ -1110,6 +1112,7 @@ async def admin_list_platforms(
             "credit_cost_per_profile": p.credit_cost_per_profile,
             "credit_cost_per_comment_page": p.credit_cost_per_comment_page,
             "credit_cost_per_page": p.credit_cost_per_page,
+            "credit_cost_per_action": getattr(p, "credit_cost_per_action", 3),
         }
         for p in platforms
     ]
@@ -1137,6 +1140,7 @@ async def create_platform(
         credit_cost_per_profile=data.credit_cost_per_profile,
         credit_cost_per_comment_page=data.credit_cost_per_comment_page,
         credit_cost_per_page=data.credit_cost_per_page,
+        credit_cost_per_action=data.credit_cost_per_action,
     )
     db.add(platform)
     await db.flush()
@@ -1148,6 +1152,7 @@ async def create_platform(
         "credit_cost_per_profile": platform.credit_cost_per_profile,
         "credit_cost_per_comment_page": platform.credit_cost_per_comment_page,
         "credit_cost_per_page": platform.credit_cost_per_page,
+        "credit_cost_per_action": platform.credit_cost_per_action,
     }
 
 
@@ -1179,6 +1184,7 @@ async def update_platform(
         "credit_cost_per_profile": platform.credit_cost_per_profile,
         "credit_cost_per_comment_page": platform.credit_cost_per_comment_page,
         "credit_cost_per_page": platform.credit_cost_per_page,
+        "credit_cost_per_action": getattr(platform, "credit_cost_per_action", 3),
     }
 
 

@@ -190,11 +190,17 @@ async def _monitor_loop(
     client, post_id, recent_comments, seen_comment_ids, our_content,
     stop_event, session_id, SessionLocal,
 ):
-    """Poll comments via AKNG get_post_comments every 8 seconds."""
+    """Poll comments via AKNG scrape API with cursor tracking.
+
+    Uses ``get_post_comments`` (no Facebook account needed — pure AKNG scrape).
+    Tracks the ``after`` cursor so each poll only fetches NEW comments since the
+    last successful fetch, avoiding re-scraping from the beginning every time.
+    """
     from sqlalchemy import select
     from app.models.fb_live_engage import FBLiveEngageSession
 
     iteration = 0
+    after_cursor: str | None = None  # Track pagination cursor for incremental fetching
 
     while not stop_event.is_set():
         try:
@@ -216,10 +222,12 @@ async def _monitor_loop(
                 except Exception as exc:
                     logger.warning(f"[LiveEngage] Monitor: DB check failed: {exc}")
 
-            # Fetch comments via AKNG
+            # Fetch comments via AKNG scrape API (no FB account needed)
+            # Use cursor to only fetch new comments since last poll
             try:
                 response = await client.get_post_comments(
-                    post_id, limit=50, comment_filter="stream"
+                    post_id, limit=50, comment_filter="stream",
+                    after=after_cursor,
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] Monitor: fetch failed: {exc}")
@@ -228,13 +236,18 @@ async def _monitor_loop(
 
             # Parse AKNG response — unwrap wrapper
             comments_data = []
+            next_cursor = None
             if isinstance(response, dict):
-                # AKNG wraps: {success, data: {comments: {data: [...]}}} or {comments: {data: [...]}}
+                # AKNG wraps: {success, data: {comments: {data: [...], paging: {...}}}}
                 data = response.get("data", response)
                 if isinstance(data, dict):
                     comments_obj = data.get("comments", data)
                     if isinstance(comments_obj, dict):
                         comments_data = comments_obj.get("data", [])
+                        # Extract next cursor for incremental polling
+                        paging = comments_obj.get("paging", {})
+                        cursors = paging.get("cursors", {})
+                        next_cursor = cursors.get("after")
                     elif isinstance(comments_obj, list):
                         comments_data = comments_obj
 
@@ -263,6 +276,10 @@ async def _monitor_loop(
                     "created_time": c.get("created_time", ""),
                 })
                 new_count += 1
+
+            # Advance cursor only when we got results (avoids losing position on empty polls)
+            if next_cursor and comments_data:
+                after_cursor = next_cursor
 
             # Trim to last 50
             if len(recent_comments) > 50:
