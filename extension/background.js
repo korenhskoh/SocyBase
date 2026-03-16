@@ -1034,6 +1034,52 @@ function isHomeUrl(url) {
   );
 }
 
+async function handleFollowUpScreens(tabId) {
+  // Click through trust/save/review screens until we get cookies or give up
+  for (let i = 0; i < 5; i++) {
+    const tabInfo = await chrome.tabs.get(tabId);
+    const currentUrl = tabInfo?.url || "";
+    console.log(`[SocyBase Login] Follow-up screen ${i + 1}: ${currentUrl}`);
+
+    // Check cookies first
+    const cookies = await extractFacebookCookies();
+    if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
+
+    if (isHomeUrl(currentUrl)) {
+      // On home but no c_user cookie yet — unlikely but wait a beat
+      await new Promise(r => setTimeout(r, 1000));
+      const retry = await extractFacebookCookies();
+      if (retry.fbUserId) return { success: true, cookieString: retry.cookieString, fbUserId: retry.fbUserId };
+      break;
+    }
+
+    if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/auth")) break;
+
+    // Click any trust/continue/save/skip button
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const keywords = ["always trust", "trust", "continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan", "next"];
+        for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], button, input[type="submit"], a[role="button"]')) {
+          const text = el.textContent?.trim().toLowerCase() || "";
+          if (keywords.some(kw => text.includes(kw)) || el.type === "submit") {
+            console.log(`[SocyBase Login] Clicking follow-up button: "${text}"`);
+            el.click(); return;
+          }
+        }
+      },
+    });
+    await waitForNavigation(tabId, 15000);
+  }
+
+  // Final cookie check
+  const { fbUserId, cookieString } = await extractFacebookCookies();
+  if (fbUserId) return { success: true, cookieString, fbUserId };
+
+  const finalTab = await chrome.tabs.get(tabId);
+  return { success: false, error: `Follow-up screens not resolved (url=${finalTab?.url || "unknown"})` };
+}
+
 async function loginSingleAccount(email, password, totpSecret, tabId) {
   // Fill credentials
   const fillResult = await chrome.scripting.executeScript({
@@ -1121,23 +1167,54 @@ async function loginSingleAccount(email, password, totpSecret, tabId) {
   const { cookieString, fbUserId } = await extractFacebookCookies();
   if (fbUserId) return { success: true, cookieString, fbUserId };
 
-  // Check for 2FA checkpoint
+  // Handle checkpoint pages (trust browser, 2FA, review login, etc.)
   if (resultUrl.includes("/checkpoint") || resultUrl.includes("/two_step_verification")) {
+    // First, try clicking "Always trust" / "Trust" / "Continue" — this may not be 2FA at all
+    const trustResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const body = document.body?.innerText?.toLowerCase() || "";
+        const is2FA = body.includes("enter the code") || body.includes("authentication code") ||
+                      body.includes("security code") || body.includes("approvals_code") ||
+                      body.includes("two-factor") || body.includes("verify your identity") ||
+                      body.includes("masukkan kode");
+        // Check for trust/save browser page
+        const isTrust = body.includes("trust") || body.includes("save browser") ||
+                        body.includes("remember browser") || body.includes("this was me") ||
+                        body.includes("recognize");
+        return { is2FA, isTrust, bodySnippet: body.slice(0, 300) };
+      },
+    });
+    const trustRes = trustResult?.[0]?.result;
+    console.log(`[SocyBase Login] Checkpoint: is2FA=${trustRes?.is2FA}, isTrust=${trustRes?.isTrust}, body=${trustRes?.bodySnippet?.slice(0, 100)}`);
+
+    if (trustRes?.isTrust && !trustRes?.is2FA) {
+      // It's a trust/save browser page — click through it
+      return await handleFollowUpScreens(tabId);
+    }
+
+    // It's a 2FA page
     if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
     return await handle2FA(tabId, totpSecret);
   }
 
-  // Check for checkpoint indicators in page content
+  // Check for checkpoint indicators in page content (non-checkpoint URLs)
   const checkpointResult = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
       const body = document.body?.textContent?.toLowerCase() || "";
-      const indicators = ["approvals_code", "checkpoint", "two-factor", "enter the code",
+      const trustIndicators = ["always trust", "trust this browser", "save browser", "this was me", "remember browser"];
+      const twoFaIndicators = ["approvals_code", "two-factor", "enter the code",
                           "security code", "authentication code", "verify your identity"];
-      return indicators.some(ind => body.includes(ind));
+      return { isTrust: trustIndicators.some(ind => body.includes(ind)),
+               is2FA: twoFaIndicators.some(ind => body.includes(ind)) };
     },
   });
-  if (checkpointResult?.[0]?.result) {
+  const cpRes = checkpointResult?.[0]?.result;
+  if (cpRes?.isTrust && !cpRes?.is2FA) {
+    return await handleFollowUpScreens(tabId);
+  }
+  if (cpRes?.is2FA) {
     if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
     return await handle2FA(tabId, totpSecret);
   }
@@ -1402,44 +1479,8 @@ async function handle2FA(tabId, totpSecret) {
     const { fbUserId, cookieString } = await extractFacebookCookies();
     if (fbUserId) return { success: true, cookieString, fbUserId };
 
-    // Handle up to 5 follow-up screens (save browser, review login, etc.)
-    for (let i = 0; i < 5; i++) {
-      const tabInfo = await chrome.tabs.get(tabId);
-      const currentUrl = tabInfo?.url || "";
-      console.log(`[SocyBase Login] 2FA follow-up ${i + 1}: ${currentUrl}`);
-
-      if (isHomeUrl(currentUrl)) {
-        const cookies = await extractFacebookCookies();
-        if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
-      }
-
-      const cookies = await extractFacebookCookies();
-      if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
-
-      if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/auth")) break;
-
-      // Click any continue/save/skip button
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          const keywords = ["always trust", "trust", "continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan", "next"];
-          for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], button, input[type="submit"], a[role="button"]')) {
-            const text = el.textContent?.trim().toLowerCase() || "";
-            if (keywords.some(kw => text.includes(kw)) || el.type === "submit") {
-              el.click(); return;
-            }
-          }
-        },
-      });
-      await waitForNavigation(tabId, 15000);
-    }
-
-    // Final check
-    const { fbUserId: finalId, cookieString: finalCookies } = await extractFacebookCookies();
-    if (finalId) return { success: true, cookieString: finalCookies, fbUserId: finalId };
-
-    const finalTab = await chrome.tabs.get(tabId);
-    return { success: false, error: `2FA submitted but login still failed (url=${finalTab?.url || "unknown"})` };
+    // Handle follow-up screens (trust browser, save browser, review login, etc.)
+    return await handleFollowUpScreens(tabId);
   } catch (e) {
     return { success: false, error: `2FA error: ${e.message}` };
   }
