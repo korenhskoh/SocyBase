@@ -1163,56 +1163,78 @@ async function loginSingleAccount(email, password, totpSecret, tabId) {
 
 async function handle2FA(tabId, totpSecret) {
   try {
-    const code = await generateTOTP(totpSecret);
-    console.log(`[SocyBase Login] Generated 2FA code: ${code}`);
+    console.log(`[SocyBase Login] Entering 2FA flow`);
 
     // Wait for initial 2FA page render
     await new Promise(r => setTimeout(r, 2000));
 
-    // Step 1: Scan the page — maybe Facebook is showing "check your phone" or
-    //         "try another way" first, and we need to click to get to code entry.
-    //         Also the React app might still be hydrating. Retry up to 5 times.
+    // Step 1: Handle "Choose a way to confirm" dialog.
+    // Facebook shows a selection screen first (Authentication app / Text message).
+    // We need to: select "Authentication app" → click "Continue" → wait for code input page.
+    for (let navAttempt = 0; navAttempt < 3; navAttempt++) {
+      const dialogResult = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          // Check if this is the method selection page (has radio buttons or method options)
+          const bodyText = document.body?.innerText || "";
+          const isSelectionPage = bodyText.includes("Choose a way") || bodyText.includes("confirmation method") ||
+                                  bodyText.includes("Pilih cara");
+
+          if (!isSelectionPage) return { isSelectionPage: false };
+
+          // Click "Authentication app" option (it's usually a radio/div)
+          let clickedOption = false;
+          for (const el of document.querySelectorAll('div[role="radio"], input[type="radio"], div[role="listitem"], div[role="option"], label, div')) {
+            const text = el.textContent?.trim().toLowerCase() || "";
+            if (text.includes("authentication app") || text.includes("authenticator") ||
+                text.includes("aplikasi autentikasi") || text.includes("code generator")) {
+              el.click();
+              clickedOption = true;
+              break;
+            }
+          }
+
+          // Click "Continue" button
+          let clickedContinue = false;
+          for (const el of document.querySelectorAll('div[role="button"], button, input[type="submit"]')) {
+            const text = el.textContent?.trim().toLowerCase() || "";
+            if (text === "continue" || text === "lanjutkan" || text === "next") {
+              el.click();
+              clickedContinue = true;
+              break;
+            }
+          }
+
+          return { isSelectionPage: true, clickedOption, clickedContinue };
+        },
+      });
+
+      const dialogRes = dialogResult?.[0]?.result;
+      if (dialogRes?.isSelectionPage) {
+        console.log(`[SocyBase Login] Selection page detected: clickedOption=${dialogRes.clickedOption}, clickedContinue=${dialogRes.clickedContinue}`);
+        // Wait for navigation to code entry page
+        await waitForNavigation(tabId, 15000);
+        await new Promise(r => setTimeout(r, 2000)); // Extra wait for React
+      } else {
+        console.log(`[SocyBase Login] Not a selection page, proceeding to code entry`);
+        break;
+      }
+    }
+
+    // Step 2: Now we should be on the code entry page.
+    // Generate TOTP code FRESH right before filling — so it won't be stale.
+    // Retry up to 6 times to find the input (page may still be loading).
     let fillRes = null;
     for (let attempt = 0; attempt < 6; attempt++) {
       if (attempt > 0) {
-        console.log(`[SocyBase Login] 2FA attempt ${attempt + 1}/6 — waiting 3s for inputs...`);
+        console.log(`[SocyBase Login] 2FA code input scan ${attempt + 1}/6 — waiting 3s...`);
         await new Promise(r => setTimeout(r, 3000));
       }
 
-      // First: check if we need to click "Try another way" / "Enter code" link
-      const switchResult = await chrome.scripting.executeScript({
+      // Check if there's a code input on the page
+      const scanResult = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
-          // Look for links/buttons to switch to code entry
-          const switchKeywords = [
-            "try another way", "another way", "enter code", "use code",
-            "authentication app", "text message", "coba cara lain",
-            "masukkan kode", "gunakan kode", "code generator",
-          ];
-          for (const el of document.querySelectorAll('a, span[role="link"], div[role="link"], div[role="button"], button')) {
-            const text = el.textContent?.trim().toLowerCase() || "";
-            if (switchKeywords.some(kw => text.includes(kw))) {
-              el.click();
-              return { clicked: true, text };
-            }
-          }
-          return { clicked: false };
-        },
-      });
-      const switchRes = switchResult?.[0]?.result;
-      if (switchRes?.clicked) {
-        console.log(`[SocyBase Login] Clicked switch link: "${switchRes.text}"`);
-        await new Promise(r => setTimeout(r, 2000)); // Wait for new form
-        // After clicking "try another way", wait for page to update
-        await waitForTabLoad(tabId, 10000).catch(() => {});
-        await new Promise(r => setTimeout(r, 1500));
-      }
-
-      // Try to find and fill the code input
-      const fillResult = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: (code) => {
-          // Try multiple selectors for the 2FA input field
           const selectors = [
             'input[name="approvals_code"]',
             'input[name="code"]',
@@ -1227,111 +1249,121 @@ async function handle2FA(tabId, totpSecret) {
             'input[type="text"][placeholder*="kode" i]',
           ];
 
-          let input = null;
-          let matchedSelector = "";
           for (const sel of selectors) {
-            input = document.querySelector(sel);
-            if (input) { matchedSelector = sel; break; }
+            if (document.querySelector(sel)) return { found: true, selector: sel };
           }
 
           // Fallback: any visible text/tel/number input not email/password
-          if (!input) {
-            for (const el of document.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input:not([type])')) {
-              if (el.offsetParent !== null && !el.name.includes("email") && !el.name.includes("pass")) {
-                input = el;
-                matchedSelector = `fallback: ${el.tagName}[name="${el.name}"][type="${el.type}"][id="${el.id}"]`;
-                break;
-              }
+          for (const el of document.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input:not([type])')) {
+            if (el.offsetParent !== null && !el.name.includes("email") && !el.name.includes("pass")) {
+              return { found: true, selector: `fallback: ${el.tagName}[name="${el.name}"][type="${el.type}"][id="${el.id}"]` };
             }
           }
 
-          if (!input) {
-            // Comprehensive DOM dump for debugging
-            const allInputs = Array.from(document.querySelectorAll("input")).map(i =>
-              `<input type="${i.type}" name="${i.name}" id="${i.id}" visible=${i.offsetParent !== null}>`
-            );
-            const allTextboxes = Array.from(document.querySelectorAll('[role="textbox"], [contenteditable="true"]')).map(el =>
-              `<${el.tagName} role="${el.getAttribute("role")}" contenteditable="${el.contentEditable}">`
-            );
-            const allButtons = Array.from(document.querySelectorAll('div[role="button"], button, a[role="button"]')).map(el =>
-              `<${el.tagName} role="${el.getAttribute("role")}">${el.textContent?.trim().slice(0, 50)}</${el.tagName}>`
-            );
-            const bodyText = document.body?.innerText?.slice(0, 500) || "";
-            return {
-              notFound: true,
-              inputs: allInputs.join(" | "),
-              textboxes: allTextboxes.join(" | "),
-              buttons: allButtons.join(" | "),
-              bodySnippet: bodyText,
-            };
-          }
-
-          // Fill the code
-          input.focus();
-          const setter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype, "value"
-          ).set;
-          setter.call(input, code);
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-          // Also dispatch keyboard events for React
-          input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }));
-          input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
-
-          return { ok: true, selector: matchedSelector, value: input.value };
+          // Dump DOM for debugging
+          const allInputs = Array.from(document.querySelectorAll("input")).map(i =>
+            `<input type="${i.type}" name="${i.name}" id="${i.id}" visible=${i.offsetParent !== null}>`
+          );
+          const allButtons = Array.from(document.querySelectorAll('div[role="button"], button, a[role="button"]')).map(el =>
+            `<${el.tagName}>${el.textContent?.trim().slice(0, 40)}</${el.tagName}>`
+          );
+          const bodyText = document.body?.innerText?.slice(0, 400) || "";
+          return { found: false, inputs: allInputs.join(" | "), buttons: allButtons.join(" | "), bodySnippet: bodyText };
         },
-        args: [code],
       });
 
-      fillRes = fillResult?.[0]?.result;
+      const scanRes = scanResult?.[0]?.result;
+      if (scanRes?.found) {
+        // Input found! Generate FRESH TOTP code right now and fill it immediately
+        const code = await generateTOTP(totpSecret);
+        console.log(`[SocyBase Login] Generated fresh 2FA code: ${code} (attempt ${attempt + 1})`);
 
-      if (fillRes?.ok) {
-        console.log(`[SocyBase Login] 2FA code filled via: ${fillRes.selector}, value=${fillRes.value}`);
-        break; // Success — proceed to submit
-      }
+        const fillResult = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: (code) => {
+            const selectors = [
+              'input[name="approvals_code"]', 'input[name="code"]',
+              'input[type="tel"]', 'input[type="number"]',
+              'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
+              'input[type="text"][id*="code"]', 'input[type="text"][name*="code"]',
+              'input[type="text"][aria-label*="code" i]', 'input[type="text"][placeholder*="code" i]',
+              'input[type="text"][placeholder*="kode" i]',
+            ];
 
-      if (fillRes?.notFound) {
-        console.log(`[SocyBase Login] 2FA scan #${attempt + 1}: no input found`);
-        console.log(`[SocyBase Login]   Inputs: ${fillRes.inputs || "(none)"}`);
-        console.log(`[SocyBase Login]   Textboxes: ${fillRes.textboxes || "(none)"}`);
-        console.log(`[SocyBase Login]   Buttons: ${fillRes.buttons || "(none)"}`);
-        console.log(`[SocyBase Login]   Body: ${fillRes.bodySnippet?.slice(0, 300)}`);
-
-        // If there are contenteditable / role=textbox elements, try filling those
-        if (fillRes.textboxes) {
-          const ceResult = await chrome.scripting.executeScript({
-            target: { tabId },
-            func: (code) => {
-              const el = document.querySelector('[role="textbox"], [contenteditable="true"]');
-              if (el) {
-                el.focus();
-                el.textContent = code;
-                el.dispatchEvent(new Event("input", { bubbles: true }));
-                return { ok: true, selector: "contenteditable/textbox" };
+            let input = null;
+            let matchedSelector = "";
+            for (const sel of selectors) {
+              input = document.querySelector(sel);
+              if (input) { matchedSelector = sel; break; }
+            }
+            if (!input) {
+              for (const el of document.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input:not([type])')) {
+                if (el.offsetParent !== null && !el.name.includes("email") && !el.name.includes("pass")) {
+                  input = el; matchedSelector = "fallback"; break;
+                }
               }
-              return { notFound: true };
-            },
-            args: [code],
-          });
-          const ceRes = ceResult?.[0]?.result;
-          if (ceRes?.ok) {
-            fillRes = ceRes;
-            console.log(`[SocyBase Login] 2FA code filled via contenteditable`);
-            break;
-          }
+            }
+            if (!input) return { error: "Input disappeared" };
+
+            // Clear any existing value first
+            input.focus();
+            input.value = "";
+            const setter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype, "value"
+            ).set;
+            setter.call(input, code);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }));
+            input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
+
+            return { ok: true, selector: matchedSelector, value: input.value };
+          },
+          args: [code],
+        });
+
+        fillRes = fillResult?.[0]?.result;
+        if (fillRes?.ok) {
+          console.log(`[SocyBase Login] 2FA code filled via: ${fillRes.selector}, value=${fillRes.value}`);
+          break;
         }
-        // Continue retrying — page may still be loading
+      } else {
+        console.log(`[SocyBase Login] 2FA scan #${attempt + 1}: no input found`);
+        console.log(`[SocyBase Login]   Inputs: ${scanRes?.inputs || "(none)"}`);
+        console.log(`[SocyBase Login]   Buttons: ${scanRes?.buttons || "(none)"}`);
+        console.log(`[SocyBase Login]   Body: ${scanRes?.bodySnippet?.slice(0, 200)}`);
+
+        // Maybe there's still a "Continue" or "Authentication app" button to click
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            // Try clicking authentication app option + continue
+            for (const el of document.querySelectorAll('div[role="radio"], div[role="listitem"], label, div')) {
+              const text = el.textContent?.trim().toLowerCase() || "";
+              if (text.includes("authentication app") || text.includes("authenticator")) {
+                el.click(); break;
+              }
+            }
+            // Then click continue
+            for (const el of document.querySelectorAll('div[role="button"], button')) {
+              const text = el.textContent?.trim().toLowerCase() || "";
+              if (text === "continue" || text === "lanjutkan") {
+                el.click(); break;
+              }
+            }
+          },
+        });
       }
     }
 
-    // If we never found an input after all retries
+    // If we never found an input
     if (!fillRes?.ok) {
-      const errMsg = `2FA input not found after 6 attempts. Last scan — Inputs: ${fillRes?.inputs || "(none)"}, Buttons: ${fillRes?.buttons || "(none)"}, Body: ${fillRes?.bodySnippet?.slice(0, 200) || "(empty)"}`;
+      const errMsg = `2FA input not found after 6 attempts`;
       console.error(`[SocyBase Login] ${errMsg}`);
       return { success: false, error: errMsg };
     }
 
-    // Step 2: Click submit button
+    // Step 3: Click submit button
     await new Promise(r => setTimeout(r, 500));
 
     const clickResult = await chrome.scripting.executeScript({
@@ -1345,7 +1377,6 @@ async function handle2FA(tabId, totpSecret) {
             return { ok: true, text };
           }
         }
-        // Fallback: submit form
         const form = document.querySelector("form");
         if (form) { form.submit(); return { ok: true, text: "form-submit" }; }
         return { error: "No submit button found" };
@@ -1355,7 +1386,7 @@ async function handle2FA(tabId, totpSecret) {
     const clickRes = clickResult?.[0]?.result;
     console.log(`[SocyBase Login] 2FA submit: ${JSON.stringify(clickRes)}`);
 
-    // Step 3: Wait for navigation after 2FA submit
+    // Step 4: Wait for navigation after 2FA submit
     const url = await waitForNavigation(tabId, 30000);
     console.log(`[SocyBase Login] Post-2FA URL: ${url}`);
 
@@ -1363,26 +1394,23 @@ async function handle2FA(tabId, totpSecret) {
     const { fbUserId, cookieString } = await extractFacebookCookies();
     if (fbUserId) return { success: true, cookieString, fbUserId };
 
-    // Handle up to 5 follow-up screens (Facebook often has "save browser" etc.)
+    // Handle up to 5 follow-up screens (save browser, review login, etc.)
     for (let i = 0; i < 5; i++) {
       const tabInfo = await chrome.tabs.get(tabId);
       const currentUrl = tabInfo?.url || "";
       console.log(`[SocyBase Login] 2FA follow-up ${i + 1}: ${currentUrl}`);
 
-      // Check if we made it home
       if (isHomeUrl(currentUrl)) {
         const cookies = await extractFacebookCookies();
         if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
       }
 
-      // Check cookies regardless of URL
       const cookies = await extractFacebookCookies();
       if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
 
-      // If not on checkpoint/verification page, stop
       if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/auth")) break;
 
-      // Click any continue/next/save/skip button
+      // Click any continue/save/skip button
       await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
@@ -1402,7 +1430,6 @@ async function handle2FA(tabId, totpSecret) {
     const { fbUserId: finalId, cookieString: finalCookies } = await extractFacebookCookies();
     if (finalId) return { success: true, cookieString: finalCookies, fbUserId: finalId };
 
-    // Get final URL for error context
     const finalTab = await chrome.tabs.get(tabId);
     return { success: false, error: `2FA submitted but login still failed (url=${finalTab?.url || "unknown"})` };
   } catch (e) {
