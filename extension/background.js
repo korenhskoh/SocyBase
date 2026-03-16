@@ -1174,29 +1174,107 @@ async function loginSingleAccount(email, password, totpSecret, tabId) {
   const { cookieString, fbUserId } = await extractFacebookCookies();
   if (fbUserId) return { success: true, cookieString, fbUserId };
 
-  // Handle checkpoint pages (trust browser, 2FA, review login, etc.)
+  // Handle checkpoint pages (trust browser, 2FA, security checks, etc.)
   if (resultUrl.includes("/checkpoint") || resultUrl.includes("/two_step_verification")) {
-    // First, try clicking "Always trust" / "Trust" / "Continue" — this may not be 2FA at all
+    // Detect page type
     const trustResult = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
         const body = document.body?.innerText?.toLowerCase() || "";
         const is2FA = body.includes("enter the code") || body.includes("authentication code") ||
-                      body.includes("security code") || body.includes("approvals_code") ||
-                      body.includes("two-factor") || body.includes("verify your identity") ||
-                      body.includes("masukkan kode");
-        // Check for trust/save browser page
+                      body.includes("approvals_code") || body.includes("two-factor") ||
+                      body.includes("verify your identity") || body.includes("masukkan kode");
         const isTrust = body.includes("trust") || body.includes("save browser") ||
                         body.includes("remember browser") || body.includes("this was me") ||
                         body.includes("recognize");
-        return { is2FA, isTrust, bodySnippet: body.slice(0, 300) };
+        const isSecurityCheck = body.includes("running security checks") ||
+                                body.includes("please wait while we verify") ||
+                                body.includes("automatically redirected");
+        return { is2FA, isTrust, isSecurityCheck, bodySnippet: body.slice(0, 300) };
       },
     });
     const trustRes = trustResult?.[0]?.result;
-    console.log(`[SocyBase Login] Checkpoint: is2FA=${trustRes?.is2FA}, isTrust=${trustRes?.isTrust}, body=${trustRes?.bodySnippet?.slice(0, 100)}`);
+    console.log(`[SocyBase Login] Checkpoint: is2FA=${trustRes?.is2FA}, isTrust=${trustRes?.isTrust}, isSecurityCheck=${trustRes?.isSecurityCheck}, body=${trustRes?.bodySnippet?.slice(0, 100)}`);
+
+    // "Running security checks" — wait for auto-redirect, then re-evaluate
+    if (trustRes?.isSecurityCheck) {
+      console.log(`[SocyBase Login] Security check page detected — waiting for redirect...`);
+      for (let wait = 0; wait < 10; wait++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const tab = await chrome.tabs.get(tabId);
+        const url = tab?.url || "";
+        console.log(`[SocyBase Login] Security check wait ${wait + 1}/10: ${url}`);
+
+        // Check if we left the security check page
+        const bodyCheck = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const body = document.body?.innerText?.toLowerCase() || "";
+            return { stillChecking: body.includes("running security checks") || body.includes("please wait while we verify"),
+                     bodySnippet: body.slice(0, 200) };
+          },
+        });
+        if (!bodyCheck?.[0]?.result?.stillChecking) {
+          console.log(`[SocyBase Login] Security check completed, new page: ${bodyCheck?.[0]?.result?.bodySnippet?.slice(0, 100)}`);
+          break;
+        }
+      }
+
+      // After security check, re-evaluate: check cookies, URL, page content
+      const postCheckCookies = await extractFacebookCookies();
+      if (postCheckCookies.fbUserId) return { success: true, cookieString: postCheckCookies.cookieString, fbUserId: postCheckCookies.fbUserId };
+
+      const postCheckTab = await chrome.tabs.get(tabId);
+      const postCheckUrl = postCheckTab?.url || "";
+      console.log(`[SocyBase Login] Post-security-check URL: ${postCheckUrl}`);
+
+      if (isHomeUrl(postCheckUrl)) {
+        const cookies = await extractFacebookCookies();
+        if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
+        return { success: false, error: "Home page reached after security check but no c_user cookie" };
+      }
+
+      if (postCheckUrl.includes("/login")) {
+        const errorResult = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            for (const sel of ["#login_error", '[data-testid="login_error"]', ".login_error_box", "._9ay7"]) {
+              const el = document.querySelector(sel);
+              if (el) return el.textContent.trim().slice(0, 120);
+            }
+            const body = document.body?.innerText || "";
+            if (body.includes("incorrect")) return "The login information you entered is incorrect";
+            return "";
+          },
+        });
+        const errorText = errorResult?.[0]?.result || "";
+        return { success: false, error: `Login rejected after security check${errorText ? ` (${errorText})` : ""}` };
+      }
+
+      // Maybe redirected to actual 2FA or trust page — check again
+      const recheck = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const body = document.body?.innerText?.toLowerCase() || "";
+          const is2FA = body.includes("enter the code") || body.includes("authentication code") ||
+                        body.includes("approvals_code") || body.includes("two-factor") ||
+                        body.includes("verify your identity") || body.includes("masukkan kode");
+          const isTrust = body.includes("trust") || body.includes("save browser") ||
+                          body.includes("remember browser") || body.includes("this was me");
+          return { is2FA, isTrust };
+        },
+      });
+      const recheckRes = recheck?.[0]?.result;
+      if (recheckRes?.isTrust && !recheckRes?.is2FA) return await handleFollowUpScreens(tabId);
+      if (recheckRes?.is2FA) {
+        if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
+        return await handle2FA(tabId, totpSecret);
+      }
+
+      return { success: false, error: `Unexpected state after security check: url=${postCheckUrl}` };
+    }
 
     if (trustRes?.isTrust && !trustRes?.is2FA) {
-      // It's a trust/save browser page — click through it
       return await handleFollowUpScreens(tabId);
     }
 
