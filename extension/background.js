@@ -1385,11 +1385,11 @@ async function handle2FA(tabId, totpSecret) {
 
     // Step 2: Now we should be on the code entry page.
     // Generate TOTP code FRESH right before filling — so it won't be stale.
-    // Retry up to 6 times to find the input (page may still be loading).
+    // Retry up to 10 times to find the input (page may still be loading).
     let fillRes = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < 10; attempt++) {
       if (attempt > 0) {
-        console.log(`[SocyBase Login] 2FA code input scan ${attempt + 1}/6 — waiting 3s...`);
+        console.log(`[SocyBase Login] 2FA code input scan ${attempt + 1}/10 — waiting 3s...`);
         await new Promise(r => setTimeout(r, 3000));
       }
 
@@ -1525,7 +1525,7 @@ async function handle2FA(tabId, totpSecret) {
 
     // If we never found an input
     if (!fillRes?.ok) {
-      const errMsg = `2FA input not found after 6 attempts`;
+      const errMsg = `2FA input not found after 10 attempts`;
       console.error(`[SocyBase Login] ${errMsg}`);
       return { success: false, error: errMsg };
     }
