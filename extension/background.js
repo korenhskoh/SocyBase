@@ -1106,9 +1106,6 @@ async function loginSingleAccount(email, password, totpSecret, tabId) {
   if (clickRes?.error) return { success: false, error: clickRes.error };
   console.log(`[SocyBase Login] Button clicked via: ${clickRes?.method}`);
 
-  const fillRes = fillResult?.[0]?.result;
-  if (fillRes?.error) return { success: false, error: fillRes.error };
-
   // Wait for navigation after login
   const resultUrl = await waitForNavigation(tabId, 30000);
   console.log(`[SocyBase Login] Post-login URL: ${resultUrl}`);
@@ -1439,7 +1436,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ success: true });
       processLoginBatch(batchId);
     }
-    return true;
     return true;
   }
 
