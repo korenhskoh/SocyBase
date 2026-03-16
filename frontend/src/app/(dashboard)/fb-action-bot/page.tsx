@@ -192,6 +192,8 @@ export default function FBActionBotPage() {
   const [loginMode, setLoginMode] = useState<"sequential" | "concurrent">("sequential");
   const [loginDelay, setLoginDelay] = useState(10);
   const [loginParallel, setLoginParallel] = useState(2);
+  const [recommendedParallel, setRecommendedParallel] = useState<number | null>(null);
+  const [serverRamInfo, setServerRamInfo] = useState<string>("");
   const [loginProxyPool, setLoginProxyPool] = useState("");
   const [loginUploading, setLoginUploading] = useState(false);
   const [activeLoginBatch, setActiveLoginBatch] = useState<BatchInfo | null>(null);
@@ -334,7 +336,16 @@ export default function FBActionBotPage() {
     }).catch(() => {});
   }, [loginHistoryPage]);
 
-  useEffect(() => { if (activeTab === "login") loadLoginHistory(); }, [activeTab, loadLoginHistory]);
+  useEffect(() => {
+    if (activeTab === "login") {
+      loadLoginHistory();
+      // Fetch server RAM info for concurrency recommendation
+      fbActionApi.getLoginSystemInfo().then((res) => {
+        setRecommendedParallel(res.data.recommended_parallel);
+        setServerRamInfo(`${res.data.available_ram_mb}MB free / ${res.data.total_ram_mb}MB total`);
+      }).catch(() => {});
+    }
+  }, [activeTab, loadLoginHistory]);
 
   // Poll active login batch
   useEffect(() => {
@@ -1152,8 +1163,22 @@ export default function FBActionBotPage() {
                 </div>
               ) : (
                 <div>
-                  <label className="text-xs text-white/40 block mb-2">Workers: {loginParallel}</label>
-                  <input type="range" min={1} max={5} value={loginParallel} onChange={(e) => setLoginParallel(Number(e.target.value))} className="w-full accent-primary-500" />
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs text-white/40">
+                      Workers: <span className="text-white/70">{loginParallel}</span>
+                      {recommendedParallel && <span className="text-primary-400/60 ml-1">(rec: {recommendedParallel})</span>}
+                    </label>
+                    <button
+                      onClick={() => { if (recommendedParallel) setLoginParallel(recommendedParallel); }}
+                      disabled={!recommendedParallel}
+                      className="text-[10px] px-2 py-0.5 rounded bg-primary-500/15 text-primary-300 border border-primary-500/20 hover:bg-primary-500/25 transition disabled:opacity-30"
+                      title={serverRamInfo || "Detecting server resources..."}
+                    >
+                      Auto
+                    </button>
+                  </div>
+                  <input type="range" min={1} max={20} value={loginParallel} onChange={(e) => setLoginParallel(Number(e.target.value))} className="w-full accent-primary-500" />
+                  {serverRamInfo && <p className="text-[10px] text-white/20 mt-1">{serverRamInfo}</p>}
                 </div>
               )}
               <div className="flex flex-col items-end gap-3">

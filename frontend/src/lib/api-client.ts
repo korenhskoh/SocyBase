@@ -545,6 +545,8 @@ export const fbActionApi = {
   exportBatchResults: (batchId: string) =>
     api.get(`/fb-action/batch/${batchId}/export`, { responseType: "blob" }),
   // Bulk Login
+  getLoginSystemInfo: () =>
+    api.get("/fb-action/login-batch/system-info"),
   downloadLoginTemplate: () =>
     api.get("/fb-action/login-batch/accounts-template", { responseType: "blob" }),
   uploadLoginBatch: (file: File, settings: {

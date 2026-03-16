@@ -626,6 +626,25 @@ LOGIN_CSV_COLUMNS = [
 ]
 
 
+# ── GET /fb-action/login-batch/system-info ────────────────────────────
+
+@router.get("/login-batch/system-info")
+async def get_login_system_info(user: User = Depends(get_current_user)):
+    """Return server RAM info and recommended concurrency for browser-based login."""
+    import psutil
+    mem = psutil.virtual_memory()
+    total_mb = int(mem.total / (1024 * 1024))
+    available_mb = int(mem.available / (1024 * 1024))
+    # Reserve 500MB for OS + app, ~150MB per Chromium instance
+    recommended = max(1, min(20, (available_mb - 500) // 150))
+    return {
+        "total_ram_mb": total_mb,
+        "available_ram_mb": available_mb,
+        "recommended_parallel": recommended,
+        "max_parallel": 20,
+    }
+
+
 # ── GET /fb-action/login-batch/accounts-template ─────────────────────
 
 @router.get("/login-batch/accounts-template")
@@ -720,7 +739,7 @@ async def upload_login_batch(
     if execution_mode not in ("sequential", "concurrent"):
         execution_mode = "sequential"
     delay_seconds = max(3.0, min(60.0, float(batch_settings.get("delay_seconds", 10.0))))
-    max_parallel = max(1, min(5, int(batch_settings.get("max_parallel", 2))))
+    max_parallel = max(1, min(20, int(batch_settings.get("max_parallel", 2))))
 
     # Parse proxy pool
     proxy_pool_raw = batch_settings.get("proxy_pool", [])

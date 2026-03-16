@@ -49,6 +49,8 @@ dependencies = [
     "pytrends>=4.9.0",
     # 2FA TOTP
     "pyotp>=2.9.0",
+    # System monitoring
+    "psutil>=5.9.0",
     # Utilities
     "python-dotenv>=1.0.0",
     # Monitoring
