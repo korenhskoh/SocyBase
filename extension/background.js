@@ -877,7 +877,7 @@ async function pollForTasks() {
 }
 
 function startPolling() {
-  stopPolling();
+  if (pollTimer) return; // Already polling — don't restart
   pollForTasks(); // Immediate first poll
   pollTimer = setInterval(pollForTasks, POLL_INTERVAL_MS);
   console.log("[SocyBase] Polling started");
@@ -1035,36 +1035,76 @@ function isHomeUrl(url) {
 }
 
 async function loginSingleAccount(email, password, totpSecret, tabId) {
-  // Fill credentials + click login
+  // Fill credentials
   const fillResult = await chrome.scripting.executeScript({
     target: { tabId },
     func: (em, pw) => {
       const emailField = document.querySelector('input[name="email"]');
       const passField = document.querySelector('input[name="pass"]');
       if (!emailField || !passField) return { error: "Login form not found" };
-      // Use native setter to trigger React handlers
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype, "value"
-      ).set;
-      nativeInputValueSetter.call(emailField, em);
-      emailField.dispatchEvent(new Event("input", { bubbles: true }));
-      nativeInputValueSetter.call(passField, pw);
-      passField.dispatchEvent(new Event("input", { bubbles: true }));
-      // Click login button
-      for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], input[type="submit"]')) {
-        const text = el.textContent?.trim().toLowerCase() || "";
-        if (text === "log in" || text === "log into facebook" || el.name === "login") {
-          el.click();
-          return { ok: true };
-        }
+
+      // Helper: fill a field like a real user (focus → clear → type → blur)
+      function fillField(field, value) {
+        field.focus();
+        field.value = "";
+        // Use native setter to trigger React's synthetic event system
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, "value"
+        ).set;
+        setter.call(field, value);
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        field.dispatchEvent(new Event("change", { bubbles: true }));
       }
-      // Fallback: submit form
-      const form = document.querySelector("#login_form");
-      if (form) { form.submit(); return { ok: true }; }
-      return { error: "Login button not found" };
+
+      fillField(emailField, em);
+      fillField(passField, pw);
+
+      return { ok: true, emailVal: emailField.value, passLen: passField.value.length };
     },
     args: [email, password],
   });
+
+  const fillRes = fillResult?.[0]?.result;
+  if (fillRes?.error) return { success: false, error: fillRes.error };
+  console.log(`[SocyBase Login] Form filled: email=${fillRes?.emailVal}, passLen=${fillRes?.passLen}`);
+
+  // Small delay to let React process the state updates
+  await new Promise(r => setTimeout(r, 300));
+
+  // Click login button in a separate script execution
+  const clickResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      // Try specific Facebook login button selectors first
+      const specificBtn = document.querySelector(
+        'button[data-testid="royal_login_button"], button[name="login"], button#loginbutton'
+      );
+      if (specificBtn) { specificBtn.click(); return { ok: true, method: "specific" }; }
+
+      // Try role="button" with login text
+      for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], input[type="submit"], button')) {
+        const text = el.textContent?.trim().toLowerCase() || "";
+        if (text === "log in" || text === "log into facebook" || text === "masuk") {
+          el.click();
+          return { ok: true, method: "text-match", text };
+        }
+      }
+
+      // Fallback: submit the login form directly
+      const form = document.querySelector("#login_form, form[data-testid='royal_login_form']");
+      if (form) { form.submit(); return { ok: true, method: "form-submit" }; }
+
+      // Last resort: find any submit button
+      const submitBtn = document.querySelector('button[type="submit"], input[type="submit"]');
+      if (submitBtn) { submitBtn.click(); return { ok: true, method: "submit-btn" }; }
+
+      return { error: "Login button not found" };
+    },
+  });
+
+  const clickRes = clickResult?.[0]?.result;
+  if (clickRes?.error) return { success: false, error: clickRes.error };
+  console.log(`[SocyBase Login] Button clicked via: ${clickRes?.method}`);
 
   const fillRes = fillResult?.[0]?.result;
   if (fillRes?.error) return { success: false, error: fillRes.error };
@@ -1388,10 +1428,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
     const { batchId, apiUrl, authToken } = msg;
-    // Save credentials if provided (from web app auto-connect)
+    // Save credentials if provided (from web app), then start batch
     if (apiUrl && authToken) {
       chrome.storage.local.set({ apiUrl, authToken }, () => {
-        console.log("[SocyBase Login] Credentials saved from start message");
+        console.log("[SocyBase Login] Credentials saved, starting batch");
         sendResponse({ success: true });
         processLoginBatch(batchId);
       });
@@ -1399,6 +1439,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ success: true });
       processLoginBatch(batchId);
     }
+    return true;
     return true;
   }
 
