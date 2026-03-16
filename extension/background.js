@@ -1462,6 +1462,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     return true;
   }
+
+  if (msg.type === "SOCYBASE_RESET_LOGIN_BATCH") {
+    if (loginBatchState) {
+      loginBatchState.cancelled = true;
+    }
+    loginBatchState = null;
+    console.log("[SocyBase Login] Login batch state reset");
+    sendResponse({ success: true });
+    return true;
+  }
 });
 
 // ── Startup ─────────────────────────────────────────────────────────

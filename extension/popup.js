@@ -105,6 +105,16 @@ chrome.runtime.sendMessage({ type: "SOCYBASE_GET_STATUS" }, (response) => {
   }
 });
 
+// Reset login batch
+document.getElementById("btn-reset-login").addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "SOCYBASE_RESET_LOGIN_BATCH" }, (response) => {
+    if (response?.success) {
+      updateLoginBatchUI(null);
+      showMessage("Login batch reset");
+    }
+  });
+});
+
 // Listen for progress updates
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "SOCYBASE_LOGIN_PROGRESS") {
