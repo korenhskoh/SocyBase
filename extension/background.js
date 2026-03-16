@@ -1351,17 +1351,9 @@ async function handle2FA(tabId, totpSecret) {
 
       const scanRes = scanResult?.[0]?.result;
       if (scanRes?.found) {
-        // Input found! Get the 2FA code:
-        // - If totpSecret is 4-8 digits, use it directly (user pasted code from authenticator)
-        // - Otherwise treat it as a TOTP secret and generate the code
-        let code;
-        if (/^\d{4,8}$/.test(totpSecret)) {
-          code = totpSecret;
-          console.log(`[SocyBase Login] Using direct 2FA code: ${code} (attempt ${attempt + 1})`);
-        } else {
-          code = await generateTOTP(totpSecret);
-          console.log(`[SocyBase Login] Generated TOTP code: ${code} (attempt ${attempt + 1})`);
-        }
+        // Input found! Generate TOTP code from the base32 secret
+        const code = await generateTOTP(totpSecret);
+        console.log(`[SocyBase Login] Generated TOTP code: ${code} (attempt ${attempt + 1})`);
 
         const fillResult = await chrome.scripting.executeScript({
           target: { tabId },
