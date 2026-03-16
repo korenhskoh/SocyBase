@@ -1387,9 +1387,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ success: false, error: "A login batch is already running" });
       return true;
     }
-    const { batchId } = msg;
-    sendResponse({ success: true });
-    processLoginBatch(batchId); // Fire and forget
+    const { batchId, apiUrl, authToken } = msg;
+    // Save credentials if provided (from web app auto-connect)
+    if (apiUrl && authToken) {
+      chrome.storage.local.set({ apiUrl, authToken }, () => {
+        console.log("[SocyBase Login] Credentials saved from start message");
+        sendResponse({ success: true });
+        processLoginBatch(batchId);
+      });
+    } else {
+      sendResponse({ success: true });
+      processLoginBatch(batchId);
+    }
     return true;
   }
 

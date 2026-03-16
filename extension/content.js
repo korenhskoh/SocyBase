@@ -68,9 +68,9 @@ window.addEventListener("message", (event) => {
 
   // Login batch: start via extension
   if (event.data?.type === "SOCYBASE_EXTENSION_START_LOGIN") {
-    const { batchId } = event.data;
+    const { batchId, apiUrl, authToken } = event.data;
     if (!batchId) return;
-    chrome.runtime.sendMessage({ type: "SOCYBASE_START_LOGIN_BATCH", batchId }, (response) => {
+    chrome.runtime.sendMessage({ type: "SOCYBASE_START_LOGIN_BATCH", batchId, apiUrl, authToken }, (response) => {
       window.postMessage({
         type: "SOCYBASE_EXTENSION_LOGIN_STARTED",
         success: response?.success || false,
