@@ -1422,7 +1422,7 @@ async function handle2FA(tabId, totpSecret) {
       await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
-          const keywords = ["continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan", "next"];
+          const keywords = ["always trust", "trust", "continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan", "next"];
           for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], button, input[type="submit"], a[role="button"]')) {
             const text = el.textContent?.trim().toLowerCase() || "";
             if (keywords.some(kw => text.includes(kw)) || el.type === "submit") {
