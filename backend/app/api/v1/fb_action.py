@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1130,13 +1130,23 @@ async def worker_complete_batch(
 async def download_worker_script(_user: User = Depends(get_current_user)):
     """Download the local login worker Python script."""
     import pathlib
-    script_path = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "scripts" / "fb_login_worker.py"
-    if not script_path.exists():
+    # Try multiple possible locations (local dev vs Docker)
+    base = pathlib.Path(__file__).resolve().parent
+    candidates = [
+        base.parent.parent.parent / "scripts" / "fb_login_worker.py",  # from app/api/v1/ -> backend/
+        pathlib.Path("/app/scripts/fb_login_worker.py"),                # Docker WORKDIR
+    ]
+    content = None
+    for p in candidates:
+        if p.exists():
+            content = p.read_text(encoding="utf-8")
+            break
+    if content is None:
         raise HTTPException(status_code=404, detail="Worker script not found")
-    return FileResponse(
-        path=str(script_path),
-        filename="fb_login_worker.py",
+    return Response(
+        content=content,
         media_type="text/x-python",
+        headers={"Content-Disposition": 'attachment; filename="fb_login_worker.py"'},
     )
 
 
