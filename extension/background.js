@@ -1164,57 +1164,134 @@ async function loginSingleAccount(email, password, totpSecret, tabId) {
 async function handle2FA(tabId, totpSecret) {
   try {
     const code = await generateTOTP(totpSecret);
-    console.log(`[SocyBase Login] Entering 2FA code`);
+    console.log(`[SocyBase Login] Generated 2FA code: ${code}`);
 
-    // Wait a moment for the 2FA form to render
-    await new Promise(r => setTimeout(r, 2000));
+    // Wait for the 2FA form to render
+    await new Promise(r => setTimeout(r, 3000));
 
     // Fill 2FA code
-    await chrome.scripting.executeScript({
+    const fillResult = await chrome.scripting.executeScript({
       target: { tabId },
       func: (code) => {
-        const input = document.querySelector('input[name="approvals_code"], input[name="code"], input[type="tel"]');
-        if (input) {
-          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype, "value"
-          ).set;
-          nativeInputValueSetter.call(input, code);
-          input.dispatchEvent(new Event("input", { bubbles: true }));
+        // Try multiple selectors for the 2FA input field
+        const selectors = [
+          'input[name="approvals_code"]',
+          'input[name="code"]',
+          'input[type="tel"]',
+          'input[type="number"]',
+          'input[autocomplete="one-time-code"]',
+          'input[inputmode="numeric"]',
+          'input[type="text"][id*="code"]',
+          'input[type="text"][name*="code"]',
+        ];
+
+        let input = null;
+        let matchedSelector = "";
+        for (const sel of selectors) {
+          input = document.querySelector(sel);
+          if (input) { matchedSelector = sel; break; }
         }
-        // Click continue/submit
-        for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], input[type="submit"]')) {
-          const text = el.textContent?.trim().toLowerCase() || "";
-          if (text.includes("continue") || text.includes("submit") || el.type === "submit") {
-            el.click();
-            return;
+
+        // Fallback: find any visible text/tel/number input on the page
+        if (!input) {
+          for (const el of document.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input:not([type])')) {
+            if (el.offsetParent !== null && !el.name.includes("email") && !el.name.includes("pass")) {
+              input = el;
+              matchedSelector = `fallback: ${el.tagName}[name="${el.name}"][type="${el.type}"]`;
+              break;
+            }
           }
         }
+
+        if (!input) {
+          // Dump page info for debugging
+          const inputs = Array.from(document.querySelectorAll("input")).map(i =>
+            `${i.type}|${i.name}|${i.id}|visible=${i.offsetParent !== null}`
+          );
+          return { error: `2FA input not found. Inputs on page: ${inputs.join("; ")}` };
+        }
+
+        // Fill the code
+        input.focus();
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, "value"
+        ).set;
+        setter.call(input, code);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+
+        return { ok: true, selector: matchedSelector, value: input.value };
       },
       args: [code],
     });
 
-    // Wait for navigation
-    const url = await waitForNavigation(tabId, 30000);
+    const fillRes = fillResult?.[0]?.result;
+    if (fillRes?.error) {
+      console.error(`[SocyBase Login] 2FA fill failed: ${fillRes.error}`);
+      return { success: false, error: fillRes.error };
+    }
+    console.log(`[SocyBase Login] 2FA code filled via: ${fillRes?.selector}, value=${fillRes?.value}`);
 
-    // Handle up to 3 follow-up screens
-    for (let i = 0; i < 3; i++) {
-      const { fbUserId, cookieString } = await extractFacebookCookies();
-      if (fbUserId) return { success: true, cookieString, fbUserId };
-      if (isHomeUrl(url)) {
+    // Small delay then click submit
+    await new Promise(r => setTimeout(r, 500));
+
+    const clickResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        // Try specific 2FA submit buttons
+        const keywords = ["continue", "submit", "verify", "confirm", "lanjutkan", "kirim"];
+        for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], button, input[type="submit"]')) {
+          const text = el.textContent?.trim().toLowerCase() || "";
+          if (keywords.some(kw => text.includes(kw)) || el.type === "submit") {
+            el.click();
+            return { ok: true, text };
+          }
+        }
+        // Fallback: submit form
+        const form = document.querySelector("form");
+        if (form) { form.submit(); return { ok: true, text: "form-submit" }; }
+        return { error: "No submit button found" };
+      },
+    });
+
+    const clickRes = clickResult?.[0]?.result;
+    console.log(`[SocyBase Login] 2FA submit: ${JSON.stringify(clickRes)}`);
+
+    // Wait for navigation after 2FA submit
+    const url = await waitForNavigation(tabId, 30000);
+    console.log(`[SocyBase Login] Post-2FA URL: ${url}`);
+
+    // Check cookies immediately
+    const { fbUserId, cookieString } = await extractFacebookCookies();
+    if (fbUserId) return { success: true, cookieString, fbUserId };
+
+    // Handle up to 5 follow-up screens (Facebook often has "save browser" etc.)
+    for (let i = 0; i < 5; i++) {
+      const tabInfo = await chrome.tabs.get(tabId);
+      const currentUrl = tabInfo?.url || "";
+      console.log(`[SocyBase Login] 2FA follow-up ${i + 1}: ${currentUrl}`);
+
+      // Check if we made it home
+      if (isHomeUrl(currentUrl)) {
         const cookies = await extractFacebookCookies();
         if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
       }
 
-      const tabInfo = await chrome.tabs.get(tabId);
-      if (!tabInfo.url.includes("/checkpoint")) break;
+      // Check cookies
+      const cookies = await extractFacebookCookies();
+      if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
 
-      // Click next button
+      // If not on checkpoint/verification page, stop
+      if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/auth")) break;
+
+      // Click any continue/next/save button
       await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
-          for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], input[type="submit"]')) {
+          const keywords = ["continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan"];
+          for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], button, input[type="submit"], a[role="button"]')) {
             const text = el.textContent?.trim().toLowerCase() || "";
-            if (text.includes("continue") || text.includes("this was me") || el.type === "submit") {
+            if (keywords.some(kw => text.includes(kw)) || el.type === "submit") {
               el.click(); return;
             }
           }
@@ -1227,7 +1304,9 @@ async function handle2FA(tabId, totpSecret) {
     const { fbUserId: finalId, cookieString: finalCookies } = await extractFacebookCookies();
     if (finalId) return { success: true, cookieString: finalCookies, fbUserId: finalId };
 
-    return { success: false, error: "2FA submitted but login still failed" };
+    // Get final URL for error context
+    const finalTab = await chrome.tabs.get(tabId);
+    return { success: false, error: `2FA submitted but login still failed (url=${finalTab?.url || "unknown"})` };
   } catch (e) {
     return { success: false, error: `2FA error: ${e.message}` };
   }
