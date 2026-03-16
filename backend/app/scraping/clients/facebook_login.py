@@ -3,6 +3,14 @@
 Launches real headless Chromium instances with per-login proxy support.
 This bypasses all bot detection since it's an actual browser with real
 JS execution, TLS fingerprint, and cookie handling.
+
+DOM structure verified via Playwright MCP inspection (2026-03-16):
+- mbasic.facebook.com/login/ redirects to www.facebook.com/login/
+- Email field: input[name="email"]
+- Password field: input[name="pass"]
+- Login button: div[role="button"] with text "Log in" (NOT a <button>/<input>)
+- Hidden submit: input[type="submit"] (no name)
+- Form: #login_form, method=POST
 """
 
 import logging
@@ -12,18 +20,18 @@ from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
-# Realistic mobile UAs
-MOBILE_USER_AGENTS = [
-    "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.71 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 12; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.66 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; Redmi Note 12 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
+# Desktop UAs (mbasic redirects to www.facebook.com on the server)
+DESKTOP_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
 ]
 
 
 def random_user_agent() -> str:
-    return random.choice(MOBILE_USER_AGENTS)
+    return random.choice(DESKTOP_USER_AGENTS)
 
 
 def build_proxy_url(proxy: dict) -> str | None:
@@ -59,9 +67,10 @@ async def fb_mbasic_login(
     totp_secret: str | None = None,
     proxy: dict | None = None,
     user_agent: str | None = None,
+    headless: bool = True,
 ) -> dict:
     """
-    Perform browser-based login against mbasic.facebook.com.
+    Perform browser-based login against Facebook.
 
     Returns:
         {
@@ -76,15 +85,14 @@ async def fb_mbasic_login(
     proxy_config = _build_playwright_proxy(proxy)
 
     logger.info(
-        "fb_mbasic_login: email=%s proxy=%s method=playwright",
-        email, bool(proxy),
+        "fb_mbasic_login: email=%s proxy=%s headless=%s method=playwright",
+        email, bool(proxy), headless,
     )
 
     try:
         async with async_playwright() as p:
-            # Launch Chromium with proxy (if any)
             launch_args = {
-                "headless": True,
+                "headless": headless,
                 "args": ["--no-sandbox", "--disable-dev-shm-usage"],
             }
             if proxy_config:
@@ -93,7 +101,7 @@ async def fb_mbasic_login(
             browser = await p.chromium.launch(**launch_args)
             context = await browser.new_context(
                 user_agent=ua,
-                viewport={"width": 375, "height": 812},
+                viewport={"width": 1280, "height": 800},
                 locale="en-US",
             )
 
@@ -116,8 +124,9 @@ async def _do_login(page, context, email: str, password: str, totp_secret: str |
     """Internal login flow using real browser."""
 
     # ── Step 1: Navigate to login page ──────────────────────────────
+    # mbasic.facebook.com redirects to www.facebook.com on server
     resp = await page.goto(
-        "https://mbasic.facebook.com/login/",
+        "https://www.facebook.com/login/",
         wait_until="domcontentloaded",
         timeout=30000,
     )
@@ -126,22 +135,22 @@ async def _do_login(page, context, email: str, password: str, totp_secret: str |
         proxy_info = f"proxy={'yes' if has_proxy else 'NO'}"
         return _fail(ua, f"Login page blocked (HTTP 400) — {proxy_info}")
 
+    url_after_load = page.url
+    logger.info("Login page loaded: url=%s", url_after_load)
+
     # ── Step 1b: Handle cookie consent / interstitials ─────────────
-    # mbasic may show a cookie consent page first
-    accept_btn = page.locator('button[name="accept_only_essential"], button[title="Accept All"], input[value="Accept All"], input[value="OK"], button:has-text("Accept")')
-    if await accept_btn.count() > 0:
+    consent = page.locator('[data-cookiebanner="accept_button"], button:has-text("Allow all cookies"), button:has-text("Accept All"), button:has-text("Accept")')
+    if await consent.count() > 0:
         logger.info("Cookie consent detected, clicking accept")
         try:
-            async with page.expect_navigation(wait_until="domcontentloaded", timeout=10000):
-                await accept_btn.first.click()
+            await consent.first.click()
+            await page.wait_for_timeout(1000)
         except Exception:
-            pass  # might not navigate
+            pass
 
     # ── Step 2: Fill and submit credentials ─────────────────────────
-    # Wait for email field (may take a moment after consent)
     email_field = page.locator('input[name="email"]')
     if await email_field.count() == 0:
-        # Log page content for debugging
         title = await page.title()
         url_now = page.url
         snippet = (await page.content())[:500]
@@ -151,14 +160,16 @@ async def _do_login(page, context, email: str, password: str, totp_secret: str |
     await email_field.fill(email)
     await page.locator('input[name="pass"]').fill(password)
 
-    # Find submit button — mbasic uses various names/types
-    submit_btn = page.locator('input[name="login"]')
-    if await submit_btn.count() == 0:
-        submit_btn = page.locator('input[type="submit"], button[type="submit"]').first
+    # Login button: on www.facebook.com it's a div[role="button"] or
+    # a hidden input[type="submit"]. Use Playwright's role-based locator.
+    login_btn = page.get_by_role("button", name="Log in").first
+    if await login_btn.count() == 0:
+        # Fallback: hidden submit input or any submit element
+        login_btn = page.locator('#login_form input[type="submit"], input[type="submit"], input[name="login"]').first
 
-    # Click login and wait for navigation
+    logger.info("Clicking login button")
     async with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
-        await submit_btn.click()
+        await login_btn.click()
 
     # ── Step 3: Determine outcome ───────────────────────────────────
     url = page.url
@@ -185,9 +196,12 @@ async def _do_login(page, context, email: str, password: str, totp_secret: str |
     # Still on login page = invalid credentials
     if "/login" in url:
         error_text = ""
-        error_el = page.locator('#login_error')
-        if await error_el.count() > 0:
-            error_text = (await error_el.inner_text()).strip()[:120]
+        # www.facebook.com uses different error selectors
+        for sel in ['#login_error', '[data-testid="login_error"]', '.login_error_box', '._9ay7']:
+            error_el = page.locator(sel)
+            if await error_el.count() > 0:
+                error_text = (await error_el.first.inner_text()).strip()[:120]
+                break
         msg = "Invalid credentials"
         if error_text:
             msg += f" ({error_text})"
@@ -204,13 +218,17 @@ async def _handle_checkpoint(page, context, totp_secret: str | None, ua: str) ->
     import pyotp
     code = pyotp.TOTP(totp_secret).now()
 
-    # Fill 2FA code
-    code_input = page.locator('input[name="approvals_code"]')
+    # Fill 2FA code — try various field names
+    code_input = page.locator('input[name="approvals_code"], input[name="code"], input[type="tel"]')
     if await code_input.count() > 0:
-        await code_input.fill(code)
+        await code_input.first.fill(code)
 
         # Submit the code
-        submit = page.locator('input[type="submit"], button[type="submit"]')
+        submit = page.get_by_role("button", name="Continue").or_(
+            page.get_by_role("button", name="Submit")
+        ).or_(
+            page.locator('input[type="submit"], button[type="submit"]')
+        )
         if await submit.count() > 0:
             try:
                 async with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
@@ -229,8 +247,12 @@ async def _handle_checkpoint(page, context, totp_secret: str | None, ua: str) ->
         if "/checkpoint" not in page.url:
             break
 
-        # Try clicking the next submit button
-        submit = page.locator('input[type="submit"], button[type="submit"]')
+        # Try clicking the next action button
+        submit = page.get_by_role("button", name="Continue").or_(
+            page.get_by_role("button", name="This was me")
+        ).or_(
+            page.locator('input[type="submit"], button[type="submit"]')
+        )
         if await submit.count() > 0:
             try:
                 async with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
@@ -278,7 +300,7 @@ def _is_home_url(url: str) -> bool:
         "https://m.facebook.com",
         "https://www.facebook.com",
         "https://facebook.com",
-    ) or stripped.endswith("facebook.com/home.php")
+    ) or stripped.endswith("facebook.com/home.php") or "facebook.com/?sk=" in url
 
 
 async def _has_c_user(context) -> bool:

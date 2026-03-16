@@ -13,17 +13,17 @@ settings = get_settings()
 
 
 @celery_app.task(name="app.scraping.fb_login_tasks.run_fb_login_batch", bind=True)
-def run_fb_login_batch(self, batch_id: str):
+def run_fb_login_batch(self, batch_id: str, headless: bool = True):
     """Process a bulk login batch. Runs in Celery worker."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(_execute_login_batch(batch_id))
+        loop.run_until_complete(_execute_login_batch(batch_id, headless=headless))
     finally:
         loop.close()
 
 
-async def _execute_login_batch(batch_id: str):
+async def _execute_login_batch(batch_id: str, headless: bool = True):
     """Core async login batch processor."""
     import uuid
     from sqlalchemy import select
@@ -71,9 +71,9 @@ async def _execute_login_batch(batch_id: str):
             proxy_pool = batch.proxy_pool or []
 
             if batch.execution_mode == "concurrent":
-                await _run_concurrent(db, batch, rows, proxy_pool, meta, local_session)
+                await _run_concurrent(db, batch, rows, proxy_pool, meta, local_session, headless)
             else:
-                await _run_sequential(db, batch, rows, proxy_pool, meta)
+                await _run_sequential(db, batch, rows, proxy_pool, meta, headless)
 
             # Finalize
             await db.refresh(batch)
@@ -121,7 +121,7 @@ def _select_proxy(row: dict, proxy_pool: list, index: int) -> dict | None:
     return None
 
 
-async def _run_sequential(db, batch, rows, proxy_pool, meta):
+async def _run_sequential(db, batch, rows, proxy_pool, meta, headless=True):
     """Execute logins one by one with delay."""
     for i, row in enumerate(rows):
         # Check cancellation
@@ -130,7 +130,7 @@ async def _run_sequential(db, batch, rows, proxy_pool, meta):
             break
 
         proxy = _select_proxy(row, proxy_pool, i)
-        await _execute_single_login(db, batch, row, proxy, meta)
+        await _execute_single_login(db, batch, row, proxy, meta, headless)
 
         # Update progress
         batch.completed_rows = i + 1
@@ -141,7 +141,7 @@ async def _run_sequential(db, batch, rows, proxy_pool, meta):
             await asyncio.sleep(batch.delay_seconds)
 
 
-async def _run_concurrent(db, batch, rows, proxy_pool, meta, parent_session):
+async def _run_concurrent(db, batch, rows, proxy_pool, meta, parent_session, headless=True):
     """Execute logins concurrently with semaphore."""
     import uuid
     from sqlalchemy import select
@@ -174,7 +174,7 @@ async def _run_concurrent(db, batch, rows, proxy_pool, meta, parent_session):
 
                 proxy = _select_proxy(row, proxy_pool, index)
                 await _execute_single_login_concurrent(
-                    task_db, batch_id, tenant_id, user_id, row, proxy, meta
+                    task_db, batch_id, tenant_id, user_id, row, proxy, meta, headless
                 )
 
             # Update progress
@@ -196,7 +196,7 @@ async def _run_concurrent(db, batch, rows, proxy_pool, meta, parent_session):
         await local_engine.dispose()
 
 
-async def _execute_single_login(db, batch, row, proxy, meta):
+async def _execute_single_login(db, batch, row, proxy, meta, headless=True):
     """Login a single account (sequential mode — shared DB session)."""
     from app.models.fb_login_result import FBLoginResult
     from app.scraping.clients.facebook_login import fb_mbasic_login
@@ -211,6 +211,7 @@ async def _execute_single_login(db, batch, row, proxy, meta):
             password=password,
             totp_secret=totp_secret or None,
             proxy=proxy,
+            headless=headless,
         )
     except Exception as exc:
         log = FBLoginResult(
@@ -243,7 +244,7 @@ async def _execute_single_login(db, batch, row, proxy, meta):
     await db.commit()
 
 
-async def _execute_single_login_concurrent(db, batch_id, tenant_id, user_id, row, proxy, meta):
+async def _execute_single_login_concurrent(db, batch_id, tenant_id, user_id, row, proxy, meta, headless=True):
     """Login a single account (concurrent mode — own DB session)."""
     from sqlalchemy import select
     from app.models.fb_login_batch import FBLoginBatch
@@ -260,6 +261,7 @@ async def _execute_single_login_concurrent(db, batch_id, tenant_id, user_id, row
             password=password,
             totp_secret=totp_secret or None,
             proxy=proxy,
+            headless=headless,
         )
     except Exception as exc:
         log = FBLoginResult(

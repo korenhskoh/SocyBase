@@ -553,6 +553,7 @@ export const fbActionApi = {
     execution_mode: string;
     delay_seconds: number;
     max_parallel: number;
+    headless?: boolean;
     proxy_pool?: Array<{ host: string; port: string; username: string; password: string }>;
   }) => {
     const formData = new FormData();

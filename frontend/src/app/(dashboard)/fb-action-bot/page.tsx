@@ -194,6 +194,7 @@ export default function FBActionBotPage() {
   const [loginParallel, setLoginParallel] = useState(2);
   const [recommendedParallel, setRecommendedParallel] = useState<number | null>(null);
   const [serverRamInfo, setServerRamInfo] = useState<string>("");
+  const [loginHeadless, setLoginHeadless] = useState(true);
   const [loginProxyPool, setLoginProxyPool] = useState("");
   const [loginUploading, setLoginUploading] = useState(false);
   const [activeLoginBatch, setActiveLoginBatch] = useState<BatchInfo | null>(null);
@@ -554,6 +555,7 @@ export default function FBActionBotPage() {
         execution_mode: loginMode,
         delay_seconds: loginDelay,
         max_parallel: loginParallel,
+        headless: loginHeadless,
         proxy_pool: proxyPool.length > 0 ? proxyPool : undefined,
       });
       setActiveLoginBatch({
@@ -1190,6 +1192,15 @@ export default function FBActionBotPage() {
                     className="h-3.5 w-3.5 rounded border-white/20 bg-white/5 accent-amber-500"
                   />
                   <span className="text-xs text-white/40">Auto-load results into Batch Mode when done</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer self-start" title="Headless = no visible browser window (recommended for server). Disable for debugging.">
+                  <input
+                    type="checkbox"
+                    checked={loginHeadless}
+                    onChange={(e) => setLoginHeadless(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-white/20 bg-white/5 accent-primary-500"
+                  />
+                  <span className="text-xs text-white/40">Headless mode <span className="text-white/20">(uncheck to show browser)</span></span>
                 </label>
                 <button
                   onClick={handleStartLoginBatch}

@@ -740,6 +740,7 @@ async def upload_login_batch(
         execution_mode = "sequential"
     delay_seconds = max(3.0, min(60.0, float(batch_settings.get("delay_seconds", 10.0))))
     max_parallel = max(1, min(20, int(batch_settings.get("max_parallel", 2))))
+    headless = batch_settings.get("headless", True)
 
     # Parse proxy pool
     proxy_pool_raw = batch_settings.get("proxy_pool", [])
@@ -809,7 +810,7 @@ async def upload_login_batch(
 
     # Dispatch Celery task
     from app.scraping.fb_login_tasks import run_fb_login_batch
-    task = run_fb_login_batch.delay(str(batch.id))
+    task = run_fb_login_batch.delay(str(batch.id), headless=headless)
     batch.celery_task_id = task.id
     await db.commit()
 
