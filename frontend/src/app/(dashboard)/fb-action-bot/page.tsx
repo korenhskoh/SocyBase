@@ -192,9 +192,6 @@ export default function FBActionBotPage() {
   const [loginMode, setLoginMode] = useState<"sequential" | "concurrent">("sequential");
   const [loginDelay, setLoginDelay] = useState(10);
   const [loginParallel, setLoginParallel] = useState(2);
-  const [recommendedParallel, setRecommendedParallel] = useState<number | null>(null);
-  const [serverRamInfo, setServerRamInfo] = useState<string>("");
-  const [loginHeadless, setLoginHeadless] = useState(true);
   const [loginProxyPool, setLoginProxyPool] = useState("");
   const [loginUploading, setLoginUploading] = useState(false);
   const [activeLoginBatch, setActiveLoginBatch] = useState<BatchInfo | null>(null);
@@ -340,11 +337,6 @@ export default function FBActionBotPage() {
   useEffect(() => {
     if (activeTab === "login") {
       loadLoginHistory();
-      // Fetch server RAM info for concurrency recommendation
-      fbActionApi.getLoginSystemInfo().then((res) => {
-        setRecommendedParallel(res.data.recommended_parallel);
-        setServerRamInfo(`${res.data.available_ram_mb}MB free / ${res.data.total_ram_mb}MB total`);
-      }).catch(() => {});
     }
   }, [activeTab, loadLoginHistory]);
 
@@ -555,7 +547,6 @@ export default function FBActionBotPage() {
         execution_mode: loginMode,
         delay_seconds: loginDelay,
         max_parallel: loginParallel,
-        headless: loginHeadless,
         proxy_pool: proxyPool.length > 0 ? proxyPool : undefined,
       });
       setActiveLoginBatch({
@@ -578,7 +569,7 @@ export default function FBActionBotPage() {
       if (errs && errs.length > 0) {
         showToast("error", `Login started with ${errs.length} skipped rows`);
       } else {
-        showToast("success", `Login batch started: ${res.data.total_rows} accounts`);
+        showToast("success", `Batch created: ${res.data.total_rows} accounts — run the worker script below`);
       }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Upload failed";
@@ -1165,22 +1156,11 @@ export default function FBActionBotPage() {
                 </div>
               ) : (
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-white/40">
-                      Workers: <span className="text-white/70">{loginParallel}</span>
-                      {recommendedParallel && <span className="text-primary-400/60 ml-1">(rec: {recommendedParallel})</span>}
-                    </label>
-                    <button
-                      onClick={() => { if (recommendedParallel) setLoginParallel(recommendedParallel); }}
-                      disabled={!recommendedParallel}
-                      className="text-[10px] px-2 py-0.5 rounded bg-primary-500/15 text-primary-300 border border-primary-500/20 hover:bg-primary-500/25 transition disabled:opacity-30"
-                      title={serverRamInfo || "Detecting server resources..."}
-                    >
-                      Auto
-                    </button>
-                  </div>
+                  <label className="text-xs text-white/40 block mb-2">
+                    Workers: <span className="text-white/70">{loginParallel}</span>
+                    <span className="text-white/20 ml-1">(browsers on your machine)</span>
+                  </label>
                   <input type="range" min={1} max={20} value={loginParallel} onChange={(e) => setLoginParallel(Number(e.target.value))} className="w-full accent-primary-500" />
-                  {serverRamInfo && <p className="text-[10px] text-white/20 mt-1">{serverRamInfo}</p>}
                 </div>
               )}
               <div className="flex flex-col items-end gap-3">
@@ -1193,15 +1173,6 @@ export default function FBActionBotPage() {
                   />
                   <span className="text-xs text-white/40">Auto-load results into Batch Mode when done</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer self-start" title="Headless = no visible browser window (recommended for server). Disable for debugging.">
-                  <input
-                    type="checkbox"
-                    checked={loginHeadless}
-                    onChange={(e) => setLoginHeadless(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-white/20 bg-white/5 accent-primary-500"
-                  />
-                  <span className="text-xs text-white/40">Headless mode <span className="text-white/20">(uncheck to show browser)</span></span>
-                </label>
                 <button
                   onClick={handleStartLoginBatch}
                   disabled={!loginFile || loginUploading}
@@ -1212,17 +1183,91 @@ export default function FBActionBotPage() {
                   ) : (
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
                   )}
-                  {loginUploading ? "Starting..." : "Start Bulk Login"}
+                  {loginUploading ? "Uploading..." : "Upload & Prepare Login Batch"}
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Active Login Progress */}
-          {activeLoginBatch && (activeLoginBatch.status === "pending" || activeLoginBatch.status === "running") && (
+          {/* Active Login — Pending (waiting for local worker) */}
+          {activeLoginBatch && activeLoginBatch.status === "pending" && (
             <div className="glass-card p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-white/60">Login Progress</h3>
+                <h3 className="text-sm font-medium text-amber-400 flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                  Waiting for Local Worker
+                </h3>
+                <button onClick={handleCancelLoginBatch} className="text-xs text-red-400 hover:text-red-300 transition px-3 py-1 rounded-lg border border-red-500/20 hover:border-red-500/30">
+                  Cancel
+                </button>
+              </div>
+              <p className="text-xs text-white/40">
+                Login runs on <span className="text-white/70">your machine</span> using a real browser. Download the worker script and run it below.
+              </p>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">1.</span>
+                  <span className="text-xs text-white/50">Install requirements (one-time):</span>
+                </div>
+                <div className="bg-black/40 rounded-lg p-3 font-mono text-xs text-emerald-300/80 select-all overflow-x-auto">
+                  pip install playwright httpx pyotp && playwright install chromium
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">2.</span>
+                  <span className="text-xs text-white/50">Download &amp; run the worker:</span>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await fbActionApi.downloadWorkerScript();
+                      const url = window.URL.createObjectURL(new Blob([res.data]));
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "fb_login_worker.py";
+                      a.click();
+                      window.URL.revokeObjectURL(url);
+                    } catch {
+                      showToast("error", "Failed to download worker script");
+                    }
+                  }}
+                  className="px-4 py-2 bg-primary-500/15 hover:bg-primary-500/25 text-primary-300 text-xs rounded-lg transition border border-primary-500/20 flex items-center gap-2"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                  Download fb_login_worker.py
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">3.</span>
+                  <span className="text-xs text-white/50">Run this command in your terminal:</span>
+                </div>
+                <div className="relative bg-black/40 rounded-lg p-3 font-mono text-[11px] text-emerald-300/80 overflow-x-auto">
+                  <button
+                    onClick={() => {
+                      const cmd = `python fb_login_worker.py --url ${window.location.origin} --token ${localStorage.getItem("access_token") || "YOUR_TOKEN"} --batch ${activeLoginBatch.id}`;
+                      navigator.clipboard.writeText(cmd);
+                      showToast("success", "Command copied to clipboard");
+                    }}
+                    className="absolute top-2 right-2 text-white/20 hover:text-white/50 transition"
+                    title="Copy command"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>
+                  </button>
+                  python fb_login_worker.py --url {typeof window !== "undefined" ? window.location.origin : "https://YOUR_SERVER"} --token <span className="text-amber-300/60">YOUR_TOKEN</span> --batch {activeLoginBatch.id}
+                </div>
+                <p className="text-[10px] text-white/20">
+                  The browser will open on your machine. Keep the terminal running until all logins complete. Progress updates automatically here.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Active Login Progress (running) */}
+          {activeLoginBatch && activeLoginBatch.status === "running" && (
+            <div className="glass-card p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                  Login Progress
+                </h3>
                 <button onClick={handleCancelLoginBatch} className="text-xs text-red-400 hover:text-red-300 transition px-3 py-1 rounded-lg border border-red-500/20 hover:border-red-500/30">
                   Cancel
                 </button>

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -740,7 +740,6 @@ async def upload_login_batch(
         execution_mode = "sequential"
     delay_seconds = max(3.0, min(60.0, float(batch_settings.get("delay_seconds", 10.0))))
     max_parallel = max(1, min(20, int(batch_settings.get("max_parallel", 2))))
-    headless = batch_settings.get("headless", True)
 
     # Parse proxy pool
     proxy_pool_raw = batch_settings.get("proxy_pool", [])
@@ -808,11 +807,8 @@ async def upload_login_batch(
     await db.commit()
     await db.refresh(batch)
 
-    # Dispatch Celery task
-    from app.scraping.fb_login_tasks import run_fb_login_batch
-    task = run_fb_login_batch.delay(str(batch.id), headless=headless)
-    batch.celery_task_id = task.id
-    await db.commit()
+    # NOTE: Login runs on user's local machine via worker script (not Celery).
+    # Batch stays "pending" until the local worker starts processing.
 
     return {
         "batch_id": str(batch.id),
@@ -979,6 +975,168 @@ async def export_login_results(
         iter([csv_bytes]),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=login_{str(batch_id)[:8]}_action_ready.csv"},
+    )
+
+
+# ── Local Worker Endpoints (login runs on user's machine) ────────────
+
+@router.get("/login-batch/{batch_id}/worker-data")
+async def get_worker_data(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return decrypted account data for the local worker script."""
+    from app.models.fb_login_batch import FBLoginBatch
+
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == batch_id,
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+    if not batch.csv_data_encrypted:
+        raise HTTPException(status_code=400, detail="Batch data already cleared or processed")
+
+    meta = MetaAPIService()
+    rows = json.loads(meta.decrypt_token(batch.csv_data_encrypted))
+
+    return {
+        "batch_id": str(batch.id),
+        "accounts": rows,
+        "execution_mode": batch.execution_mode,
+        "delay_seconds": batch.delay_seconds,
+        "max_parallel": batch.max_parallel,
+        "proxy_pool": batch.proxy_pool or [],
+    }
+
+
+@router.post("/login-batch/{batch_id}/worker-start")
+async def worker_start_batch(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark batch as running (called by local worker)."""
+    from app.models.fb_login_batch import FBLoginBatch
+
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == batch_id,
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+
+    batch.status = "running"
+    batch.started_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"success": True}
+
+
+class WorkerResultPayload(BaseModel):
+    email: str
+    success: bool
+    cookie_string: str | None = None
+    fb_user_id: str | None = None
+    user_agent: str | None = None
+    error: str | None = None
+    proxy_used: dict | None = None
+
+
+@router.post("/login-batch/{batch_id}/worker-result")
+async def post_worker_result(
+    batch_id: UUID,
+    payload: WorkerResultPayload,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Receive a single login result from the local worker."""
+    from app.models.fb_login_batch import FBLoginBatch
+    from app.models.fb_login_result import FBLoginResult
+
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == batch_id,
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+
+    meta = MetaAPIService()
+
+    if payload.success and payload.cookie_string:
+        encrypted_cookie = meta.encrypt_token(payload.cookie_string)
+        log = FBLoginResult(
+            login_batch_id=batch.id, tenant_id=user.tenant_id, user_id=user.id,
+            email=payload.email, fb_user_id=payload.fb_user_id,
+            cookie_encrypted=encrypted_cookie, user_agent=payload.user_agent,
+            proxy_used=payload.proxy_used, status="success",
+        )
+        db.add(log)
+        batch.success_count += 1
+    else:
+        log = FBLoginResult(
+            login_batch_id=batch.id, tenant_id=user.tenant_id, user_id=user.id,
+            email=payload.email, user_agent=payload.user_agent,
+            proxy_used=payload.proxy_used, status="failed",
+            error_message=payload.error,
+        )
+        db.add(log)
+        batch.failed_count += 1
+
+    batch.completed_rows += 1
+    await db.commit()
+    return {"success": True}
+
+
+@router.post("/login-batch/{batch_id}/worker-complete")
+async def worker_complete_batch(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark batch as completed (called by local worker when done)."""
+    from app.models.fb_login_batch import FBLoginBatch
+
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == batch_id,
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+
+    if batch.failed_count == batch.total_rows:
+        batch.status = "failed"
+    else:
+        batch.status = "completed"
+    batch.completed_at = datetime.now(timezone.utc)
+    batch.csv_data_encrypted = None  # clear sensitive data
+    await db.commit()
+    return {"success": True}
+
+
+@router.get("/login-batch/worker-script")
+async def download_worker_script(_user: User = Depends(get_current_user)):
+    """Download the local login worker Python script."""
+    import pathlib
+    script_path = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "fb_login_worker.py"
+    if not script_path.exists():
+        raise HTTPException(status_code=404, detail="Worker script not found")
+    return FileResponse(
+        path=str(script_path),
+        filename="fb_login_worker.py",
+        media_type="text/x-python",
     )
 
 

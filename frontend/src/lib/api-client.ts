@@ -569,6 +569,8 @@ export const fbActionApi = {
     api.post(`/fb-action/login-batch/${batchId}/cancel`),
   exportLoginResults: (batchId: string) =>
     api.get(`/fb-action/login-batch/${batchId}/export`, { responseType: "blob" }),
+  downloadWorkerScript: () =>
+    api.get("/fb-action/login-batch/worker-script", { responseType: "blob" }),
   // AI Planner
   aiPlanGenerate: (data: {
     posts: Array<{ post_id: string; message?: string | null; from_name?: string | null; reaction_count?: number; comment_count?: number; share_count?: number; attachment_type?: string | null; post_url?: string | null }>;
