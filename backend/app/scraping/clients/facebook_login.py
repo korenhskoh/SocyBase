@@ -1,14 +1,26 @@
-"""HTTP-based Facebook login via mbasic.facebook.com."""
+"""HTTP-based Facebook login via mbasic.facebook.com.
+
+Uses curl_cffi for realistic browser TLS fingerprinting to avoid
+Facebook's bot detection (JA3/JA4 fingerprint checks).
+"""
 
 import logging
 import random
 import re
 from html.parser import HTMLParser
-import httpx
+
+from curl_cffi.requests import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 MBASIC_BASE = "https://mbasic.facebook.com"
+
+# Browser impersonation targets for realistic TLS fingerprints
+IMPERSONATE_TARGETS = [
+    "chrome120",
+    "chrome119",
+    "chrome116",
+]
 
 # Realistic mobile UAs for mbasic
 MOBILE_USER_AGENTS = [
@@ -25,7 +37,7 @@ def random_user_agent() -> str:
 
 
 def build_proxy_url(proxy: dict) -> str | None:
-    """Convert proxy dict {host, port, username, password} to httpx proxy URL."""
+    """Convert proxy dict {host, port, username, password} to proxy URL."""
     if not proxy or not proxy.get("host"):
         return None
     host = proxy["host"]
@@ -85,51 +97,40 @@ async def fb_mbasic_login(
     """
     ua = user_agent or random_user_agent()
     proxy_url = build_proxy_url(proxy)
+    impersonate = random.choice(IMPERSONATE_TARGETS)
 
     logger.info(
-        "fb_mbasic_login: email=%s proxy=%s proxy_url=%s",
-        email,
-        bool(proxy),
-        proxy_url[:50] + "..." if proxy_url and len(proxy_url) > 50 else proxy_url,
+        "fb_mbasic_login: email=%s proxy=%s impersonate=%s",
+        email, bool(proxy), impersonate,
     )
 
-    headers = {
-        "User-Agent": ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control": "max-age=0",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-        "Connection": "keep-alive",
-    }
-
     try:
-        async with httpx.AsyncClient(
+        async with AsyncSession(
+            impersonate=impersonate,
             proxy=proxy_url,
-            headers=headers,
-            follow_redirects=False,
-            timeout=httpx.Timeout(30.0, connect=15.0),
-        ) as client:
-            return await _do_login(client, email, password, totp_secret, ua, bool(proxy_url))
-    except httpx.ProxyError as exc:
-        return _fail(ua, f"Proxy error: {exc}")
-    except httpx.ConnectError as exc:
-        return _fail(ua, f"Connection error: {exc}")
-    except httpx.TimeoutException as exc:
-        return _fail(ua, f"Timeout: {exc}")
+            timeout=30,
+            headers={"User-Agent": ua},
+        ) as session:
+            return await _do_login(session, email, password, totp_secret, ua, bool(proxy_url))
     except Exception as exc:
+        err_str = str(exc).lower()
+        if "proxy" in err_str:
+            return _fail(ua, f"Proxy error: {exc}")
+        if "timeout" in err_str or "timed out" in err_str:
+            return _fail(ua, f"Timeout: {exc}")
+        if "connect" in err_str:
+            return _fail(ua, f"Connection error: {exc}")
         return _fail(ua, f"Unexpected error: {exc}")
 
 
-async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_secret: str | None, ua: str, has_proxy: bool = False) -> dict:
+async def _do_login(
+    session: AsyncSession, email: str, password: str,
+    totp_secret: str | None, ua: str, has_proxy: bool = False,
+) -> dict:
     """Internal login flow."""
 
     # ── Step 1: GET login page ───────────────────────────────────────
-    resp = await client.get(f"{MBASIC_BASE}/login/")
+    resp = await session.get(f"{MBASIC_BASE}/login/", allow_redirects=False)
     if resp.status_code not in (200, 301, 302):
         return _fail(ua, f"Login page returned {resp.status_code}")
 
@@ -137,7 +138,7 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
     if resp.status_code in (301, 302):
         loc = resp.headers.get("location", "")
         if loc:
-            resp = await client.get(_abs_url(loc))
+            resp = await session.get(_abs_url(loc), allow_redirects=False)
 
     parser = FormFieldParser()
     parser.feed(resp.text)
@@ -147,10 +148,11 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
 
     # ── Step 2: POST login form ──────────────────────────────────────
     post_data = {**parser.fields, "email": email, "pass": password, "login": "Log In"}
-    resp = await client.post(
+    resp = await session.post(
         form_action,
         data=post_data,
         headers={"Referer": f"{MBASIC_BASE}/login/", "Origin": MBASIC_BASE},
+        allow_redirects=False,
     )
 
     logger.info(
@@ -179,20 +181,19 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
 
         # Check if we landed on home = success
         if _is_home_url(next_url):
-            resp = await client.get(next_url)
-            return _extract_cookies(client, ua)
+            resp = await session.get(next_url, allow_redirects=False)
+            return _extract_cookies(session, ua)
 
-        # Check if it's a checkpoint (2FA) — must check BEFORE /login
-        # because checkpoint URLs can contain /login (e.g. /login/checkpoint/)
+        # Check if it's a checkpoint (2FA)
         if "/checkpoint" in next_url:
-            resp = await client.get(next_url)
-            return await _handle_checkpoint(client, resp, totp_secret, ua)
+            resp = await session.get(next_url, allow_redirects=False)
+            return await _handle_checkpoint(session, resp, totp_secret, ua)
 
-        resp = await client.get(next_url)
+        resp = await session.get(next_url, allow_redirects=False)
 
     # Check cookies after redirect chain
-    if _has_c_user(client):
-        return _extract_cookies(client, ua)
+    if _has_c_user(session):
+        return _extract_cookies(session, ua)
 
     url_str = str(resp.url)
     body = resp.text
@@ -204,16 +205,14 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
 
     # Check for checkpoint FIRST — URL may contain both /login and /checkpoint
     if "/checkpoint" in url_str:
-        return await _handle_checkpoint(client, resp, totp_secret, ua)
+        return await _handle_checkpoint(session, resp, totp_secret, ua)
 
-    # Also detect checkpoint/2FA from response body (Facebook sometimes
-    # shows 2FA inline without a /checkpoint URL redirect)
+    # Detect checkpoint/2FA from response body
     if _body_has_checkpoint(body):
         logger.info("Detected checkpoint/2FA from response body (url=%s)", url_str)
-        return await _handle_checkpoint(client, resp, totp_secret, ua)
+        return await _handle_checkpoint(session, resp, totp_secret, ua)
 
-    # Extract a short diagnostic snippet from the body for debugging
-    # Look for error messages in the page
+    # Extract diagnostic snippet for debugging
     diag = _extract_error_snippet(body)
 
     # Still on login page = invalid credentials
@@ -226,7 +225,9 @@ async def _do_login(client: httpx.AsyncClient, email: str, password: str, totp_s
     return _fail(ua, f"Unexpected state: url={url_str}, status={resp.status_code}")
 
 
-async def _handle_checkpoint(client: httpx.AsyncClient, resp: httpx.Response, totp_secret: str | None, ua: str) -> dict:
+async def _handle_checkpoint(
+    session: AsyncSession, resp, totp_secret: str | None, ua: str,
+) -> dict:
     """Handle 2FA checkpoint and follow-up screens."""
     if not totp_secret:
         return _fail(ua, "2FA required but no TOTP secret provided")
@@ -243,7 +244,7 @@ async def _handle_checkpoint(client: httpx.AsyncClient, resp: httpx.Response, to
     cp_action = _abs_url(cp_action)
 
     cp_data = {**cp_parser.fields, "approvals_code": code, "submit[Submit Code]": "Submit Code"}
-    resp = await client.post(cp_action, data=cp_data)
+    resp = await session.post(cp_action, data=cp_data, allow_redirects=False)
 
     # Handle up to 3 follow-up checkpoint rounds ("This was me", "Don't save", etc.)
     for _ in range(3):
@@ -254,13 +255,13 @@ async def _handle_checkpoint(client: httpx.AsyncClient, resp: httpx.Response, to
                 break
             next_url = _abs_url(loc)
             if _is_home_url(next_url):
-                await client.get(next_url)
-                return _extract_cookies(client, ua)
-            resp = await client.get(next_url)
+                await session.get(next_url, allow_redirects=False)
+                return _extract_cookies(session, ua)
+            resp = await session.get(next_url, allow_redirects=False)
 
         # Check if we have cookies now
-        if _has_c_user(client):
-            return _extract_cookies(client, ua)
+        if _has_c_user(session):
+            return _extract_cookies(session, ua)
 
         # If still on checkpoint, parse and submit the next form
         if "/checkpoint" in str(resp.url):
@@ -268,19 +269,18 @@ async def _handle_checkpoint(client: httpx.AsyncClient, resp: httpx.Response, to
             cp2.feed(resp.text)
             if cp2.form_action:
                 act = _abs_url(cp2.form_action)
-                # Try common submit buttons
                 data2 = {**cp2.fields}
                 data2["submit[This was me]"] = "This was me"
                 data2["name_action_selected"] = "dont_save"
-                resp = await client.post(act, data=data2)
+                resp = await session.post(act, data=data2, allow_redirects=False)
             else:
                 break
         else:
             break
 
     # Final check
-    if _has_c_user(client):
-        return _extract_cookies(client, ua)
+    if _has_c_user(session):
+        return _extract_cookies(session, ua)
 
     return _fail(ua, "2FA submitted but login still failed (account may need review)")
 
@@ -296,8 +296,6 @@ def _abs_url(url: str) -> str:
 
 def _extract_error_snippet(body: str) -> str:
     """Extract error/status text from Facebook response for diagnostics."""
-    # Look for common error divs / messages
-    # mbasic uses <div class="...error..."> or <div id="login_error">
     patterns = [
         r'id="login_error"[^>]*>(.*?)</div>',
         r'class="[^"]*error[^"]*"[^>]*>(.*?)</div>',
@@ -315,19 +313,19 @@ def _extract_error_snippet(body: str) -> str:
 def _body_has_checkpoint(body: str) -> bool:
     """Detect 2FA / checkpoint page from response body content."""
     indicators = [
-        "approvals_code",          # 2FA code input field name
-        "checkpoint",              # generic checkpoint reference
-        "two-factor",              # English 2FA text
-        "login_approvals",         # FB's internal 2FA flow name
-        "Enter the code",          # English prompt for 2FA
-        "enter the login code",    # alternative prompt
-        "verify your identity",    # identity verification
-        "submit[Submit Code]",     # 2FA submit button
-        "pengesahan",              # Malay: "verification"
-        "code generator",          # code generator mention
-        "security code",           # security code prompt
-        "authentication code",     # authentication code prompt
-        "/checkpoint/",            # checkpoint in form action
+        "approvals_code",
+        "checkpoint",
+        "two-factor",
+        "login_approvals",
+        "Enter the code",
+        "enter the login code",
+        "verify your identity",
+        "submit[Submit Code]",
+        "pengesahan",
+        "code generator",
+        "security code",
+        "authentication code",
+        "/checkpoint/",
     ]
     body_lower = body.lower()
     return any(ind.lower() in body_lower for ind in indicators)
@@ -344,22 +342,19 @@ def _is_home_url(url: str) -> bool:
     ) or stripped.endswith("facebook.com/home.php")
 
 
-def _has_c_user(client: httpx.AsyncClient) -> bool:
-    """Check if c_user cookie exists in the client jar."""
-    for cookie in client.cookies.jar:
-        if cookie.name == "c_user":
-            return True
-    return False
+def _has_c_user(session: AsyncSession) -> bool:
+    """Check if c_user cookie exists in the session."""
+    return session.cookies.get("c_user") is not None
 
 
-def _extract_cookies(client: httpx.AsyncClient, ua: str) -> dict:
-    """Extract cookies from httpx client jar into a raw string."""
+def _extract_cookies(session: AsyncSession, ua: str) -> dict:
+    """Extract cookies from session into a raw string."""
     cookie_parts = []
     fb_user_id = None
-    for cookie in client.cookies.jar:
-        cookie_parts.append(f"{cookie.name}={cookie.value}")
-        if cookie.name == "c_user":
-            fb_user_id = cookie.value
+    for name, value in session.cookies.items():
+        cookie_parts.append(f"{name}={value}")
+        if name == "c_user":
+            fb_user_id = value
 
     cookie_string = "; ".join(cookie_parts)
 
