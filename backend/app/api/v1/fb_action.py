@@ -1130,7 +1130,7 @@ async def worker_complete_batch(
 async def download_worker_script(_user: User = Depends(get_current_user)):
     """Download the local login worker Python script."""
     import pathlib
-    script_path = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "fb_login_worker.py"
+    script_path = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "scripts" / "fb_login_worker.py"
     if not script_path.exists():
         raise HTTPException(status_code=404, detail="Worker script not found")
     return FileResponse(
