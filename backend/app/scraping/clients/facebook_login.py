@@ -1,28 +1,18 @@
-"""HTTP-based Facebook login via mbasic.facebook.com.
+"""Browser-based Facebook login via Playwright + Chromium.
 
-Uses curl_cffi for realistic browser TLS fingerprinting to avoid
-Facebook's bot detection (JA3/JA4 fingerprint checks).
+Launches real headless Chromium instances with per-login proxy support.
+This bypasses all bot detection since it's an actual browser with real
+JS execution, TLS fingerprint, and cookie handling.
 """
 
 import logging
 import random
-import re
-from html.parser import HTMLParser
 
-from curl_cffi.requests import AsyncSession
+from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
-MBASIC_BASE = "https://mbasic.facebook.com"
-
-# Browser impersonation targets for realistic TLS fingerprints
-IMPERSONATE_TARGETS = [
-    "chrome120",
-    "chrome119",
-    "chrome116",
-]
-
-# Realistic mobile UAs for mbasic
+# Realistic mobile UAs
 MOBILE_USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36",
     "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.71 Mobile Safari/537.36",
@@ -37,7 +27,7 @@ def random_user_agent() -> str:
 
 
 def build_proxy_url(proxy: dict) -> str | None:
-    """Convert proxy dict {host, port, username, password} to proxy URL."""
+    """Convert proxy dict to URL string (kept for backward compat)."""
     if not proxy or not proxy.get("host"):
         return None
     host = proxy["host"]
@@ -49,31 +39,18 @@ def build_proxy_url(proxy: dict) -> str | None:
     return f"http://{host}:{port}"
 
 
-class FormFieldParser(HTMLParser):
-    """Parse HTML to extract hidden form fields and the first POST form action URL."""
-
-    def __init__(self):
-        super().__init__()
-        self.fields: dict[str, str] = {}
-        self.form_action: str | None = None
-        self._in_form = False
-
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
-        if tag == "form" and attrs_dict.get("method", "").lower() == "post":
-            if self.form_action is None:  # take the first POST form
-                self.form_action = attrs_dict.get("action", "")
-            self._in_form = True
-        if tag == "input" and self._in_form:
-            input_type = attrs_dict.get("type", "").lower()
-            name = attrs_dict.get("name", "")
-            value = attrs_dict.get("value", "")
-            if input_type == "hidden" and name:
-                self.fields[name] = value
-
-    def handle_endtag(self, tag):
-        if tag == "form":
-            self._in_form = False
+def _build_playwright_proxy(proxy: dict) -> dict | None:
+    """Convert proxy dict to Playwright proxy config."""
+    if not proxy or not proxy.get("host"):
+        return None
+    config = {
+        "server": f"http://{proxy['host']}:{proxy.get('port', '')}",
+    }
+    if proxy.get("username"):
+        config["username"] = proxy["username"]
+    if proxy.get("password"):
+        config["password"] = proxy["password"]
+    return config
 
 
 async def fb_mbasic_login(
@@ -84,7 +61,7 @@ async def fb_mbasic_login(
     user_agent: str | None = None,
 ) -> dict:
     """
-    Perform HTTP-based login against mbasic.facebook.com.
+    Perform browser-based login against mbasic.facebook.com.
 
     Returns:
         {
@@ -96,219 +73,155 @@ async def fb_mbasic_login(
         }
     """
     ua = user_agent or random_user_agent()
-    proxy_url = build_proxy_url(proxy)
-    impersonate = random.choice(IMPERSONATE_TARGETS)
+    proxy_config = _build_playwright_proxy(proxy)
 
     logger.info(
-        "fb_mbasic_login: email=%s proxy=%s impersonate=%s",
-        email, bool(proxy), impersonate,
+        "fb_mbasic_login: email=%s proxy=%s method=playwright",
+        email, bool(proxy),
     )
 
     try:
-        async with AsyncSession(
-            impersonate=impersonate,
-            proxy=proxy_url,
-            timeout=30,
-            headers={"User-Agent": ua},
-        ) as session:
-            return await _do_login(session, email, password, totp_secret, ua, bool(proxy_url))
+        async with async_playwright() as p:
+            # Launch Chromium with proxy (if any)
+            launch_args = {
+                "headless": True,
+                "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+            }
+            if proxy_config:
+                launch_args["proxy"] = proxy_config
+
+            browser = await p.chromium.launch(**launch_args)
+            context = await browser.new_context(
+                user_agent=ua,
+                viewport={"width": 375, "height": 812},
+                locale="en-US",
+            )
+
+            try:
+                page = await context.new_page()
+                return await _do_login(page, context, email, password, totp_secret, ua, bool(proxy))
+            finally:
+                await context.close()
+                await browser.close()
     except Exception as exc:
         err_str = str(exc).lower()
         if "proxy" in err_str:
             return _fail(ua, f"Proxy error: {exc}")
         if "timeout" in err_str or "timed out" in err_str:
             return _fail(ua, f"Timeout: {exc}")
-        if "connect" in err_str:
-            return _fail(ua, f"Connection error: {exc}")
-        return _fail(ua, f"Unexpected error: {exc}")
+        return _fail(ua, f"Browser error: {exc}")
 
 
-async def _do_login(
-    session: AsyncSession, email: str, password: str,
-    totp_secret: str | None, ua: str, has_proxy: bool = False,
-) -> dict:
-    """Internal login flow."""
+async def _do_login(page, context, email: str, password: str, totp_secret: str | None, ua: str, has_proxy: bool) -> dict:
+    """Internal login flow using real browser."""
 
-    # ── Step 1: GET login page ───────────────────────────────────────
-    resp = await session.get(f"{MBASIC_BASE}/login/", allow_redirects=False)
-    if resp.status_code not in (200, 301, 302):
-        return _fail(ua, f"Login page returned {resp.status_code}")
-
-    # Follow redirect if needed
-    if resp.status_code in (301, 302):
-        loc = resp.headers.get("location", "")
-        if loc:
-            resp = await session.get(_abs_url(loc), allow_redirects=False)
-
-    parser = FormFieldParser()
-    parser.feed(resp.text)
-
-    form_action = parser.form_action or "/login/device-based/regular/login/"
-    form_action = _abs_url(form_action)
-
-    # ── Step 2: POST login form ──────────────────────────────────────
-    post_data = {**parser.fields, "email": email, "pass": password, "login": "Log In"}
-    resp = await session.post(
-        form_action,
-        data=post_data,
-        headers={"Referer": f"{MBASIC_BASE}/login/", "Origin": MBASIC_BASE},
-        allow_redirects=False,
+    # ── Step 1: Navigate to login page ──────────────────────────────
+    resp = await page.goto(
+        "https://mbasic.facebook.com/login/",
+        wait_until="domcontentloaded",
+        timeout=30000,
     )
 
-    logger.info(
-        "Login POST result: status=%s url=%s",
-        resp.status_code,
-        resp.url,
-    )
-
-    # 400 = Facebook blocked the request (datacenter IP / bot detection)
-    if resp.status_code == 400:
+    if resp and resp.status == 400:
         proxy_info = f"proxy={'yes' if has_proxy else 'NO'}"
-        return _fail(ua, f"Login blocked by Facebook (HTTP 400) — {proxy_info}")
+        return _fail(ua, f"Login page blocked (HTTP 400) — {proxy_info}")
 
-    # ── Step 3: Determine outcome ────────────────────────────────────
-    # Follow redirect chain (up to 5 hops)
-    redirect_urls = []
-    for _ in range(5):
-        if resp.status_code not in (301, 302, 303, 307):
-            break
-        loc = resp.headers.get("location", "")
-        if not loc:
-            break
-        next_url = _abs_url(loc)
-        redirect_urls.append(next_url)
-        logger.info("Login redirect hop: %s", next_url)
+    # ── Step 2: Fill and submit credentials ─────────────────────────
+    await page.locator('input[name="email"]').fill(email)
+    await page.locator('input[name="pass"]').fill(password)
 
-        # Check if we landed on home = success
-        if _is_home_url(next_url):
-            resp = await session.get(next_url, allow_redirects=False)
-            return _extract_cookies(session, ua)
+    # Click login and wait for navigation
+    async with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+        await page.locator('input[name="login"]').click()
 
-        # Check if it's a checkpoint (2FA)
-        if "/checkpoint" in next_url:
-            resp = await session.get(next_url, allow_redirects=False)
-            return await _handle_checkpoint(session, resp, totp_secret, ua)
+    # ── Step 3: Determine outcome ───────────────────────────────────
+    url = page.url
+    logger.info("Login result: url=%s", url)
 
-        resp = await session.get(next_url, allow_redirects=False)
+    # Check if we landed on home page (success)
+    if _is_home_url(url):
+        return await _extract_cookies(context, ua)
 
-    # Check cookies after redirect chain
-    if _has_c_user(session):
-        return _extract_cookies(session, ua)
+    # Check cookies (might have succeeded without landing on home)
+    if await _has_c_user(context):
+        return await _extract_cookies(context, ua)
 
-    url_str = str(resp.url)
-    body = resp.text
+    # Check for 2FA checkpoint
+    if "/checkpoint" in url:
+        return await _handle_checkpoint(page, context, totp_secret, ua)
 
-    logger.info(
-        "Login post-redirect: url=%s status=%s body_len=%d redirects=%s",
-        url_str, resp.status_code, len(body), redirect_urls,
-    )
-
-    # Check for checkpoint FIRST — URL may contain both /login and /checkpoint
-    if "/checkpoint" in url_str:
-        return await _handle_checkpoint(session, resp, totp_secret, ua)
-
-    # Detect checkpoint/2FA from response body
+    # Detect checkpoint from page content
+    body = await page.content()
     if _body_has_checkpoint(body):
-        logger.info("Detected checkpoint/2FA from response body (url=%s)", url_str)
-        return await _handle_checkpoint(session, resp, totp_secret, ua)
-
-    # Extract diagnostic snippet for debugging
-    diag = _extract_error_snippet(body)
+        logger.info("Detected checkpoint/2FA from page content (url=%s)", url)
+        return await _handle_checkpoint(page, context, totp_secret, ua)
 
     # Still on login page = invalid credentials
-    if "/login" in url_str:
+    if "/login" in url:
+        error_text = ""
+        error_el = page.locator('#login_error')
+        if await error_el.count() > 0:
+            error_text = (await error_el.inner_text()).strip()[:120]
         msg = "Invalid credentials"
-        if diag:
-            msg += f" ({diag})"
+        if error_text:
+            msg += f" ({error_text})"
         return _fail(ua, msg)
 
-    return _fail(ua, f"Unexpected state: url={url_str}, status={resp.status_code}")
+    return _fail(ua, f"Unexpected state: url={url}")
 
 
-async def _handle_checkpoint(
-    session: AsyncSession, resp, totp_secret: str | None, ua: str,
-) -> dict:
+async def _handle_checkpoint(page, context, totp_secret: str | None, ua: str) -> dict:
     """Handle 2FA checkpoint and follow-up screens."""
     if not totp_secret:
         return _fail(ua, "2FA required but no TOTP secret provided")
 
     import pyotp
-    totp = pyotp.TOTP(totp_secret)
-    code = totp.now()
+    code = pyotp.TOTP(totp_secret).now()
 
-    # Parse checkpoint form
-    cp_parser = FormFieldParser()
-    cp_parser.feed(resp.text)
+    # Fill 2FA code
+    code_input = page.locator('input[name="approvals_code"]')
+    if await code_input.count() > 0:
+        await code_input.fill(code)
 
-    cp_action = cp_parser.form_action or "/checkpoint/"
-    cp_action = _abs_url(cp_action)
+        # Submit the code
+        submit = page.locator('input[type="submit"], button[type="submit"]')
+        if await submit.count() > 0:
+            try:
+                async with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+                    await submit.first.click()
+            except Exception:
+                pass  # navigation might not happen
 
-    cp_data = {**cp_parser.fields, "approvals_code": code, "submit[Submit Code]": "Submit Code"}
-    resp = await session.post(cp_action, data=cp_data, allow_redirects=False)
-
-    # Handle up to 3 follow-up checkpoint rounds ("This was me", "Don't save", etc.)
+    # Handle up to 3 follow-up screens ("This was me", "Don't save", etc.)
     for _ in range(3):
-        # Follow redirect if needed
-        if resp.status_code in (301, 302, 303):
-            loc = resp.headers.get("location", "")
-            if not loc:
-                break
-            next_url = _abs_url(loc)
-            if _is_home_url(next_url):
-                await session.get(next_url, allow_redirects=False)
-                return _extract_cookies(session, ua)
-            resp = await session.get(next_url, allow_redirects=False)
+        if await _has_c_user(context):
+            return await _extract_cookies(context, ua)
 
-        # Check if we have cookies now
-        if _has_c_user(session):
-            return _extract_cookies(session, ua)
+        if _is_home_url(page.url):
+            return await _extract_cookies(context, ua)
 
-        # If still on checkpoint, parse and submit the next form
-        if "/checkpoint" in str(resp.url):
-            cp2 = FormFieldParser()
-            cp2.feed(resp.text)
-            if cp2.form_action:
-                act = _abs_url(cp2.form_action)
-                data2 = {**cp2.fields}
-                data2["submit[This was me]"] = "This was me"
-                data2["name_action_selected"] = "dont_save"
-                resp = await session.post(act, data=data2, allow_redirects=False)
-            else:
+        if "/checkpoint" not in page.url:
+            break
+
+        # Try clicking the next submit button
+        submit = page.locator('input[type="submit"], button[type="submit"]')
+        if await submit.count() > 0:
+            try:
+                async with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+                    await submit.first.click()
+            except Exception:
                 break
         else:
             break
 
     # Final check
-    if _has_c_user(session):
-        return _extract_cookies(session, ua)
+    if await _has_c_user(context):
+        return await _extract_cookies(context, ua)
 
     return _fail(ua, "2FA submitted but login still failed (account may need review)")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
-
-def _abs_url(url: str) -> str:
-    """Ensure URL is absolute."""
-    if url.startswith("http"):
-        return url
-    return MBASIC_BASE + (url if url.startswith("/") else "/" + url)
-
-
-def _extract_error_snippet(body: str) -> str:
-    """Extract error/status text from Facebook response for diagnostics."""
-    patterns = [
-        r'id="login_error"[^>]*>(.*?)</div>',
-        r'class="[^"]*error[^"]*"[^>]*>(.*?)</div>',
-        r'<title>(.*?)</title>',
-    ]
-    for pat in patterns:
-        m = re.search(pat, body, re.DOTALL | re.IGNORECASE)
-        if m:
-            text = re.sub(r'<[^>]+>', '', m.group(1)).strip()
-            if text:
-                return text[:120]
-    return ""
-
 
 def _body_has_checkpoint(body: str) -> bool:
     """Detect 2FA / checkpoint page from response body content."""
@@ -342,19 +255,21 @@ def _is_home_url(url: str) -> bool:
     ) or stripped.endswith("facebook.com/home.php")
 
 
-def _has_c_user(session: AsyncSession) -> bool:
-    """Check if c_user cookie exists in the session."""
-    return session.cookies.get("c_user") is not None
+async def _has_c_user(context) -> bool:
+    """Check if c_user cookie exists in the browser context."""
+    cookies = await context.cookies()
+    return any(c["name"] == "c_user" for c in cookies)
 
 
-def _extract_cookies(session: AsyncSession, ua: str) -> dict:
-    """Extract cookies from session into a raw string."""
+async def _extract_cookies(context, ua: str) -> dict:
+    """Extract cookies from browser context."""
+    cookies = await context.cookies()
     cookie_parts = []
     fb_user_id = None
-    for name, value in session.cookies.items():
-        cookie_parts.append(f"{name}={value}")
-        if name == "c_user":
-            fb_user_id = value
+    for c in cookies:
+        cookie_parts.append(f"{c['name']}={c['value']}")
+        if c["name"] == "c_user":
+            fb_user_id = c["value"]
 
     cookie_string = "; ".join(cookie_parts)
 

@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e .
 
+# Install Chromium browser for Playwright (used by FB login)
+RUN playwright install chromium --with-deps
+
 # Copy application code
 COPY . .
 
