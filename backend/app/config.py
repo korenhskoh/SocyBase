@@ -143,6 +143,10 @@ class Settings(BaseSettings):
         frontend = self.frontend_url.strip().rstrip("/")
         if frontend and frontend not in origins:
             origins.append(frontend)
+        # Always include backend_url so the Chrome extension service worker can reach the API
+        backend = self.backend_url.strip().rstrip("/")
+        if backend and backend not in origins:
+            origins.append(backend)
         return origins
 
     class Config:

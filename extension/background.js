@@ -1206,11 +1206,15 @@ async function processLoginBatch(batchId) {
   console.log(`[SocyBase Login] Starting batch: ${batchId}`);
 
   // 1. Fetch batch data
+  const { apiUrl, authToken } = await getConfig();
+  console.log(`[SocyBase Login] Config: apiUrl=${apiUrl ? apiUrl : "(empty)"}, token=${authToken ? "set" : "(empty)"}`);
+
   let data;
   try {
     data = await apiGet(`/fb-action/login-batch/${batchId}/worker-data`);
   } catch (e) {
     console.error("[SocyBase Login] Failed to fetch batch:", e.message);
+    console.error("[SocyBase Login] Full URL would be:", `${apiUrl}/api/v1/fb-action/login-batch/${batchId}/worker-data`);
     return;
   }
 
