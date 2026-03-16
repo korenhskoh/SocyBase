@@ -347,6 +347,12 @@ export default function FBActionBotPage() {
     function handleMessage(event: MessageEvent) {
       if (event.data?.type === "SOCYBASE_EXTENSION_INSTALLED") {
         setExtensionDetected(true);
+        // Auto-connect extension with API credentials so it's ready for login batches
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const authToken = localStorage.getItem("access_token") || "";
+        if (apiUrl && authToken) {
+          window.postMessage({ type: "SOCYBASE_EXTENSION_CONNECT", apiUrl, authToken }, "*");
+        }
       }
       if (event.data?.type === "SOCYBASE_EXTENSION_LOGIN_STARTED") {
         if (event.data.success) {
@@ -1245,10 +1251,21 @@ export default function FBActionBotPage() {
                   </p>
                   <button
                     onClick={() => {
+                      // First ensure extension has API credentials, then start login
+                      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                      const authToken = localStorage.getItem("access_token") || "";
                       window.postMessage({
-                        type: "SOCYBASE_EXTENSION_START_LOGIN",
-                        batchId: activeLoginBatch.id,
+                        type: "SOCYBASE_EXTENSION_CONNECT",
+                        apiUrl,
+                        authToken,
                       }, "*");
+                      // Give it a moment to save config, then start login
+                      setTimeout(() => {
+                        window.postMessage({
+                          type: "SOCYBASE_EXTENSION_START_LOGIN",
+                          batchId: activeLoginBatch.id,
+                        }, "*");
+                      }, 500);
                     }}
                     disabled={extensionLoginStarted}
                     className="w-full py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-sm font-medium rounded-xl border border-emerald-500/20 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
