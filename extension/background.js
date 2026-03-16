@@ -1492,6 +1492,87 @@ const DESKTOP_USER_AGENTS = [
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ];
 
+// ── Proxy helpers ───────────────────────────────────────────────────
+
+function selectProxy(account, proxyPool, index) {
+  // Priority 1: Per-row proxy from CSV
+  const host = account.proxy_host || "";
+  if (host) {
+    return {
+      host,
+      port: account.proxy_port || "",
+      username: account.proxy_username || "",
+      password: account.proxy_password || "",
+    };
+  }
+  // Priority 2: Round-robin from shared pool
+  if (proxyPool && proxyPool.length > 0) {
+    return proxyPool[index % proxyPool.length];
+  }
+  // Priority 3: No proxy
+  return null;
+}
+
+async function applyProxy(proxy) {
+  if (!proxy || !proxy.host) {
+    await clearProxy();
+    return;
+  }
+  const scheme = proxy.host.startsWith("socks") ? "socks5" : "http";
+  const port = proxy.port || (scheme === "socks5" ? "1080" : "8080");
+  const proxyUrl = `${scheme}://${proxy.host}:${port}`;
+
+  console.log(`[SocyBase Login] Setting proxy: ${proxy.host}:${port} (user=${proxy.username || "none"})`);
+
+  await chrome.proxy.settings.set({
+    value: {
+      mode: "fixed_servers",
+      rules: {
+        singleProxy: {
+          scheme,
+          host: proxy.host,
+          port: parseInt(port, 10),
+        },
+        bypassList: ["localhost", "127.0.0.1"],
+      },
+    },
+    scope: "regular",
+  });
+
+  // Handle proxy auth if credentials are provided
+  if (proxy.username) {
+    // Remove any previous listener
+    if (applyProxy._authListener) {
+      chrome.webRequest.onAuthRequired.removeListener(applyProxy._authListener);
+    }
+    applyProxy._authListener = (details) => {
+      if (details.isProxy) {
+        return {
+          authCredentials: {
+            username: proxy.username,
+            password: proxy.password || "",
+          },
+        };
+      }
+      return {};
+    };
+    chrome.webRequest.onAuthRequired.addListener(
+      applyProxy._authListener,
+      { urls: ["<all_urls>"] },
+      ["blocking"]
+    );
+  }
+}
+
+async function clearProxy() {
+  await chrome.proxy.settings.clear({ scope: "regular" });
+  if (applyProxy._authListener) {
+    chrome.webRequest.onAuthRequired.removeListener(applyProxy._authListener);
+    applyProxy._authListener = null;
+  }
+  console.log("[SocyBase Login] Proxy cleared");
+}
+
 async function processLoginBatch(batchId) {
   console.log(`[SocyBase Login] Starting batch: ${batchId}`);
 
@@ -1509,7 +1590,9 @@ async function processLoginBatch(batchId) {
   }
 
   const accounts = data.accounts;
+  const proxyPool = data.proxy_pool || [];
   const delaySeconds = data.delay_seconds || 10;
+  console.log(`[SocyBase Login] ${accounts.length} accounts, ${proxyPool.length} proxies in pool, delay=${delaySeconds}s`);
 
   loginBatchState = {
     batchId,
@@ -1542,7 +1625,13 @@ async function processLoginBatch(batchId) {
     const password = account.password || "";
     const totpSecret = account["2fa_secret"] || "";
 
-    console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] ${email}`);
+    // Select proxy for this account
+    const proxy = selectProxy(account, proxyPool, i);
+    const proxyLabel = proxy ? `${proxy.host}:${proxy.port}` : "direct";
+    console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] ${email} (proxy=${proxyLabel})`);
+
+    // Apply proxy before clearing cookies & opening tab
+    await applyProxy(proxy);
 
     // Clear cookies before each login
     await clearFacebookCookies();
@@ -1570,10 +1659,10 @@ async function processLoginBatch(batchId) {
 
       if (result.success) {
         loginBatchState.success++;
-        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId})`);
+        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId}, proxy=${proxyLabel})`);
       } else {
         loginBatchState.failed++;
-        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] FAILED: ${email} — ${result.error}`);
+        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] FAILED: ${email} — ${result.error} (proxy=${proxyLabel})`);
       }
 
       // Report to server
@@ -1585,7 +1674,7 @@ async function processLoginBatch(batchId) {
           fb_user_id: result.fbUserId || null,
           user_agent: ua,
           error: result.error || null,
-          proxy_used: null,
+          proxy_used: proxy || null,
         });
       } catch (e) {
         console.error(`[SocyBase Login] Failed to report result for ${email}:`, e.message);
@@ -1600,6 +1689,7 @@ async function processLoginBatch(batchId) {
           success: false,
           error: e.message,
           user_agent: ua,
+          proxy_used: proxy || null,
         });
       } catch {}
     } finally {
@@ -1607,6 +1697,8 @@ async function processLoginBatch(batchId) {
       if (tab?.id) {
         try { await chrome.tabs.remove(tab.id); } catch {}
       }
+      // Clear proxy after each account
+      await clearProxy();
     }
 
     loginBatchState.current = i + 1;
@@ -1618,7 +1710,10 @@ async function processLoginBatch(batchId) {
     }
   }
 
-  // 4. Mark batch complete
+  // 4. Ensure proxy is cleared
+  await clearProxy();
+
+  // 5. Mark batch complete
   try {
     await apiPost(`/fb-action/login-batch/${batchId}/worker-complete`, {});
   } catch (e) {
