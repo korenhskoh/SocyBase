@@ -126,13 +126,39 @@ async def _do_login(page, context, email: str, password: str, totp_secret: str |
         proxy_info = f"proxy={'yes' if has_proxy else 'NO'}"
         return _fail(ua, f"Login page blocked (HTTP 400) — {proxy_info}")
 
+    # ── Step 1b: Handle cookie consent / interstitials ─────────────
+    # mbasic may show a cookie consent page first
+    accept_btn = page.locator('button[name="accept_only_essential"], button[title="Accept All"], input[value="Accept All"], input[value="OK"], button:has-text("Accept")')
+    if await accept_btn.count() > 0:
+        logger.info("Cookie consent detected, clicking accept")
+        try:
+            async with page.expect_navigation(wait_until="domcontentloaded", timeout=10000):
+                await accept_btn.first.click()
+        except Exception:
+            pass  # might not navigate
+
     # ── Step 2: Fill and submit credentials ─────────────────────────
-    await page.locator('input[name="email"]').fill(email)
+    # Wait for email field (may take a moment after consent)
+    email_field = page.locator('input[name="email"]')
+    if await email_field.count() == 0:
+        # Log page content for debugging
+        title = await page.title()
+        url_now = page.url
+        snippet = (await page.content())[:500]
+        logger.warning("No email field found: title=%s url=%s body=%s", title, url_now, snippet)
+        return _fail(ua, f"Login form not found (title={title}, url={url_now})")
+
+    await email_field.fill(email)
     await page.locator('input[name="pass"]').fill(password)
+
+    # Find submit button — mbasic uses various names/types
+    submit_btn = page.locator('input[name="login"]')
+    if await submit_btn.count() == 0:
+        submit_btn = page.locator('input[type="submit"], button[type="submit"]').first
 
     # Click login and wait for navigation
     async with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
-        await page.locator('input[name="login"]').click()
+        await submit_btn.click()
 
     # ── Step 3: Determine outcome ───────────────────────────────────
     url = page.url
