@@ -177,6 +177,17 @@
       </label>
     </div>
 
+    <div id="login-batch-section" style="display:none;margin-top:14px;padding:10px 12px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.15)">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+        <span style="width:6px;height:6px;border-radius:50%;background:#f59e0b;flex-shrink:0" id="login-dot"></span>
+        <span style="font-size:12px;font-weight:600;color:#f59e0b" id="login-batch-title">Login Batch Running</span>
+      </div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-bottom:6px" id="login-batch-counts">0/0 — 0 ok, 0 fail</div>
+      <div style="height:4px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden">
+        <div id="login-batch-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#f59e0b,#ef4444);border-radius:4px;transition:width 0.5s"></div>
+      </div>
+    </div>
+
     <div class="hint">
       When enabled, the extension polls for AI-Scraping tasks and uses your browser session to scrape Facebook pages.
     </div>

@@ -201,6 +201,8 @@ export default function FBActionBotPage() {
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const loginFileInputRef = useRef<HTMLInputElement>(null);
   const [autoGoToBatch, setAutoGoToBatch] = useState(true);
+  const [extensionDetected, setExtensionDetected] = useState(false);
+  const [extensionLoginStarted, setExtensionLoginStarted] = useState(false);
 
   // AI Planner state
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -339,6 +341,39 @@ export default function FBActionBotPage() {
       loadLoginHistory();
     }
   }, [activeTab, loadLoginHistory]);
+
+  // Detect Chrome extension
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.data?.type === "SOCYBASE_EXTENSION_INSTALLED") {
+        setExtensionDetected(true);
+      }
+      if (event.data?.type === "SOCYBASE_EXTENSION_LOGIN_STARTED") {
+        if (event.data.success) {
+          setExtensionLoginStarted(true);
+          showToast("success", "Login started via Chrome extension");
+        } else {
+          showToast("error", event.data.error || "Failed to start extension login");
+        }
+      }
+      if (event.data?.type === "SOCYBASE_LOGIN_PROGRESS" && event.data.progress) {
+        const p = event.data.progress;
+        if (activeLoginBatch && p.batchId === activeLoginBatch.id) {
+          setActiveLoginBatch(prev => prev ? {
+            ...prev,
+            completed_rows: p.current,
+            success_count: p.success,
+            failed_count: p.failed,
+            status: p.status === "completed" || p.status === "cancelled" ? p.status : prev.status,
+          } : prev);
+        }
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    // Ping extension to check if installed
+    window.postMessage({ type: "SOCYBASE_EXTENSION_PING" }, "*");
+    return () => window.removeEventListener("message", handleMessage);
+  }, [activeLoginBatch, showToast]);
 
   // Poll active login batch
   useEffect(() => {
@@ -1189,74 +1224,108 @@ export default function FBActionBotPage() {
             </div>
           </div>
 
-          {/* Active Login — Pending (waiting for local worker) */}
+          {/* Active Login — Pending (waiting for worker) */}
           {activeLoginBatch && activeLoginBatch.status === "pending" && (
             <div className="glass-card p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-amber-400 flex items-center gap-2">
                   <div className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-                  Waiting for Local Worker
+                  Ready to Login ({activeLoginBatch.total_rows} accounts)
                 </h3>
                 <button onClick={handleCancelLoginBatch} className="text-xs text-red-400 hover:text-red-300 transition px-3 py-1 rounded-lg border border-red-500/20 hover:border-red-500/30">
                   Cancel
                 </button>
               </div>
-              <p className="text-xs text-white/40">
-                Login runs on <span className="text-white/70">your machine</span> using a real browser. Download the worker script and run it below.
-              </p>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">1.</span>
-                  <span className="text-xs text-white/50">Install requirements (one-time):</span>
-                </div>
-                <div className="bg-black/40 rounded-lg p-3 font-mono text-xs text-emerald-300/80 select-all overflow-x-auto">
-                  pip install playwright httpx pyotp && playwright install chromium
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">2.</span>
-                  <span className="text-xs text-white/50">Download &amp; run the worker:</span>
-                </div>
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await fbActionApi.downloadWorkerScript();
-                      const url = window.URL.createObjectURL(new Blob([res.data]));
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "fb_login_worker.py";
-                      a.click();
-                      window.URL.revokeObjectURL(url);
-                    } catch {
-                      showToast("error", "Failed to download worker script");
-                    }
-                  }}
-                  className="px-4 py-2 bg-primary-500/15 hover:bg-primary-500/25 text-primary-300 text-xs rounded-lg transition border border-primary-500/20 flex items-center gap-2"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
-                  Download fb_login_worker.py
-                </button>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">3.</span>
-                  <span className="text-xs text-white/50">Run this command in your terminal:</span>
-                </div>
-                <div className="relative bg-black/40 rounded-lg p-3 font-mono text-[11px] text-emerald-300/80 overflow-x-auto">
+
+              {/* Option 1: Chrome Extension (shown when detected) */}
+              {extensionDetected && (
+                <div className="space-y-3">
+                  <p className="text-xs text-white/40">
+                    Login runs on <span className="text-white/70">your Chrome browser</span> via the SocyBase extension.
+                  </p>
                   <button
                     onClick={() => {
-                      const cmd = `python fb_login_worker.py --url ${window.location.origin} --token ${localStorage.getItem("access_token") || "YOUR_TOKEN"} --batch ${activeLoginBatch.id}`;
-                      navigator.clipboard.writeText(cmd);
-                      showToast("success", "Command copied to clipboard");
+                      window.postMessage({
+                        type: "SOCYBASE_EXTENSION_START_LOGIN",
+                        batchId: activeLoginBatch.id,
+                      }, "*");
                     }}
-                    className="absolute top-2 right-2 text-white/20 hover:text-white/50 transition"
-                    title="Copy command"
+                    disabled={extensionLoginStarted}
+                    className="w-full py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-sm font-medium rounded-xl border border-emerald-500/20 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" /></svg>
+                    {extensionLoginStarted ? "Login Started..." : "Run via Chrome Extension"}
                   </button>
-                  python fb_login_worker.py --url {typeof window !== "undefined" ? window.location.origin : "https://YOUR_SERVER"} --token <span className="text-amber-300/60">YOUR_TOKEN</span> --batch {activeLoginBatch.id}
+                  <p className="text-[10px] text-white/20">
+                    The extension will open tabs in your Chrome and log into each account automatically. Keep Chrome open until done.
+                  </p>
                 </div>
-                <p className="text-[10px] text-white/20">
-                  The browser will open on your machine. Keep the terminal running until all logins complete. Progress updates automatically here.
-                </p>
-              </div>
+              )}
+
+              {/* Option 2: Python Script (shown as fallback or primary if no extension) */}
+              <details className={extensionDetected ? "mt-2" : ""} open={!extensionDetected}>
+                <summary className="text-xs text-white/30 cursor-pointer hover:text-white/50 transition">
+                  {extensionDetected ? "Alternative: Python script" : "Run via Python script"}
+                </summary>
+                <div className="space-y-3 mt-3">
+                  {!extensionDetected && (
+                    <p className="text-xs text-white/40">
+                      Login runs on <span className="text-white/70">your machine</span> using a real browser. Install the <span className="text-primary-300">SocyBase Chrome extension</span> for a simpler one-click flow.
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">1.</span>
+                    <span className="text-xs text-white/50">Install requirements (one-time):</span>
+                  </div>
+                  <div className="bg-black/40 rounded-lg p-3 font-mono text-xs text-emerald-300/80 select-all overflow-x-auto">
+                    pip install playwright httpx pyotp && playwright install chromium
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">2.</span>
+                    <span className="text-xs text-white/50">Download &amp; run the worker:</span>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await fbActionApi.downloadWorkerScript();
+                        const url = window.URL.createObjectURL(new Blob([res.data]));
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = "fb_login_worker.py";
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                      } catch {
+                        showToast("error", "Failed to download worker script");
+                      }
+                    }}
+                    className="px-4 py-2 bg-primary-500/15 hover:bg-primary-500/25 text-primary-300 text-xs rounded-lg transition border border-primary-500/20 flex items-center gap-2"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                    Download fb_login_worker.py
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-white/30 font-mono bg-white/5 rounded px-2 py-1">3.</span>
+                    <span className="text-xs text-white/50">Run this command in your terminal:</span>
+                  </div>
+                  <div className="relative bg-black/40 rounded-lg p-3 font-mono text-[11px] text-emerald-300/80 overflow-x-auto">
+                    <button
+                      onClick={() => {
+                        const cmd = `python fb_login_worker.py --url ${window.location.origin} --token ${localStorage.getItem("access_token") || "YOUR_TOKEN"} --batch ${activeLoginBatch.id}`;
+                        navigator.clipboard.writeText(cmd);
+                        showToast("success", "Command copied to clipboard");
+                      }}
+                      className="absolute top-2 right-2 text-white/20 hover:text-white/50 transition"
+                      title="Copy command"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>
+                    </button>
+                    python fb_login_worker.py --url {typeof window !== "undefined" ? window.location.origin : "https://YOUR_SERVER"} --token <span className="text-amber-300/60">YOUR_TOKEN</span> --batch {activeLoginBatch.id}
+                  </div>
+                  <p className="text-[10px] text-white/20">
+                    The browser will open on your machine. Keep the terminal running until all logins complete.
+                  </p>
+                </div>
+              </details>
             </div>
           )}
 

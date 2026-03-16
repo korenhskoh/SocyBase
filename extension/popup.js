@@ -77,3 +77,37 @@ btnDisconnect.addEventListener("click", () => {
     }
   });
 });
+
+// Login batch progress
+const loginSection = document.getElementById("login-batch-section");
+const loginTitle = document.getElementById("login-batch-title");
+const loginCounts = document.getElementById("login-batch-counts");
+const loginBar = document.getElementById("login-batch-bar");
+
+function updateLoginBatchUI(progress) {
+  if (!progress) {
+    loginSection.style.display = "none";
+    return;
+  }
+  loginSection.style.display = "block";
+  const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+  loginTitle.textContent = progress.status === "completed" ? "Login Batch Done" :
+                           progress.status === "cancelled" ? "Login Batch Cancelled" :
+                           `Login Batch (${pct}%)`;
+  loginCounts.textContent = `${progress.current}/${progress.total} — ${progress.success} ok, ${progress.failed} fail`;
+  loginBar.style.width = `${pct}%`;
+}
+
+// Check on popup open
+chrome.runtime.sendMessage({ type: "SOCYBASE_GET_STATUS" }, (response) => {
+  if (response?.loginBatch) {
+    updateLoginBatchUI(response.loginBatch);
+  }
+});
+
+// Listen for progress updates
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "SOCYBASE_LOGIN_PROGRESS") {
+    updateLoginBatchUI(msg.progress);
+  }
+});

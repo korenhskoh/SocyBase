@@ -890,6 +890,452 @@ function stopPolling() {
   }
 }
 
+// ── TOTP (RFC 6238) — pure JS, no dependencies ─────────────────────
+
+function base32Decode(encoded) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  encoded = encoded.replace(/[\s=-]+/g, "").toUpperCase();
+  let bits = "";
+  for (const ch of encoded) {
+    const val = alphabet.indexOf(ch);
+    if (val === -1) continue;
+    bits += val.toString(2).padStart(5, "0");
+  }
+  const bytes = new Uint8Array(Math.floor(bits.length / 8));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
+  }
+  return bytes;
+}
+
+async function generateTOTP(secret, period = 30, digits = 6) {
+  const key = base32Decode(secret);
+  const counter = Math.floor(Date.now() / 1000 / period);
+  // Convert counter to 8-byte big-endian
+  const counterBytes = new Uint8Array(8);
+  let tmp = counter;
+  for (let i = 7; i >= 0; i--) {
+    counterBytes[i] = tmp & 0xff;
+    tmp = Math.floor(tmp / 256);
+  }
+  // HMAC-SHA1
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw", key, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, counterBytes);
+  const hmac = new Uint8Array(sig);
+  // Dynamic truncation
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const code =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+  return String(code % Math.pow(10, digits)).padStart(digits, "0");
+}
+
+// ── Login Batch Processor ───────────────────────────────────────────
+
+let loginBatchState = null; // { batchId, accounts, current, total, success, failed, cancelled }
+
+function broadcastLoginProgress() {
+  if (!loginBatchState) return;
+  const progress = {
+    batchId: loginBatchState.batchId,
+    current: loginBatchState.current,
+    total: loginBatchState.total,
+    success: loginBatchState.success,
+    failed: loginBatchState.failed,
+    status: loginBatchState.cancelled ? "cancelled" :
+            loginBatchState.current >= loginBatchState.total ? "completed" : "running",
+  };
+  // Broadcast to all extension pages (popup, content scripts)
+  chrome.runtime.sendMessage({ type: "SOCYBASE_LOGIN_PROGRESS", progress }).catch(() => {});
+  // Also broadcast to all tabs with content script
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, { type: "SOCYBASE_LOGIN_PROGRESS", progress }).catch(() => {});
+    }
+  });
+}
+
+async function clearFacebookCookies() {
+  const domains = [".facebook.com", "facebook.com", "www.facebook.com"];
+  for (const domain of domains) {
+    const cookies = await chrome.cookies.getAll({ domain });
+    for (const cookie of cookies) {
+      const protocol = cookie.secure ? "https" : "http";
+      await chrome.cookies.remove({
+        url: `${protocol}://${domain.replace(/^\./, "")}${cookie.path}`,
+        name: cookie.name,
+      });
+    }
+  }
+}
+
+async function extractFacebookCookies() {
+  const cookies = await chrome.cookies.getAll({ domain: ".facebook.com" });
+  const parts = [];
+  let fbUserId = null;
+  for (const c of cookies) {
+    parts.push(`${c.name}=${c.value}`);
+    if (c.name === "c_user") fbUserId = c.value;
+  }
+  return { cookieString: parts.join("; "), fbUserId };
+}
+
+function waitForTabLoad(tabId, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("Tab load timeout"));
+    }, timeoutMs);
+    function listener(id, changeInfo) {
+      if (id === tabId && changeInfo.status === "complete") {
+        chrome.tabs.onUpdated.removeListener(listener);
+        clearTimeout(timeout);
+        resolve();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+function waitForNavigation(tabId, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      // Resolve anyway — check URL after timeout
+      chrome.tabs.get(tabId, (tab) => resolve(tab?.url || ""));
+    }, timeoutMs);
+    let loadingStarted = false;
+    function listener(id, changeInfo) {
+      if (id !== tabId) return;
+      if (changeInfo.status === "loading") loadingStarted = true;
+      if (loadingStarted && changeInfo.status === "complete") {
+        chrome.tabs.onUpdated.removeListener(listener);
+        clearTimeout(timeout);
+        chrome.tabs.get(tabId, (tab) => resolve(tab?.url || ""));
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+function isHomeUrl(url) {
+  const stripped = url.replace(/\/+$/, "");
+  return (
+    stripped === "https://www.facebook.com" ||
+    stripped === "https://facebook.com" ||
+    stripped === "https://m.facebook.com" ||
+    stripped === "https://mbasic.facebook.com" ||
+    stripped.endsWith("facebook.com/home.php") ||
+    url.includes("facebook.com/?sk=")
+  );
+}
+
+async function loginSingleAccount(email, password, totpSecret, tabId) {
+  // Fill credentials + click login
+  const fillResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (em, pw) => {
+      const emailField = document.querySelector('input[name="email"]');
+      const passField = document.querySelector('input[name="pass"]');
+      if (!emailField || !passField) return { error: "Login form not found" };
+      // Use native setter to trigger React handlers
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, "value"
+      ).set;
+      nativeInputValueSetter.call(emailField, em);
+      emailField.dispatchEvent(new Event("input", { bubbles: true }));
+      nativeInputValueSetter.call(passField, pw);
+      passField.dispatchEvent(new Event("input", { bubbles: true }));
+      // Click login button
+      for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], input[type="submit"]')) {
+        const text = el.textContent?.trim().toLowerCase() || "";
+        if (text === "log in" || text === "log into facebook" || el.name === "login") {
+          el.click();
+          return { ok: true };
+        }
+      }
+      // Fallback: submit form
+      const form = document.querySelector("#login_form");
+      if (form) { form.submit(); return { ok: true }; }
+      return { error: "Login button not found" };
+    },
+    args: [email, password],
+  });
+
+  const fillRes = fillResult?.[0]?.result;
+  if (fillRes?.error) return { success: false, error: fillRes.error };
+
+  // Wait for navigation after login
+  const resultUrl = await waitForNavigation(tabId, 30000);
+  console.log(`[SocyBase Login] Post-login URL: ${resultUrl}`);
+
+  // Check success
+  if (isHomeUrl(resultUrl)) {
+    const { cookieString, fbUserId } = await extractFacebookCookies();
+    if (fbUserId) return { success: true, cookieString, fbUserId };
+    return { success: false, error: "Home page reached but no c_user cookie" };
+  }
+
+  // Check cookies directly
+  const { cookieString, fbUserId } = await extractFacebookCookies();
+  if (fbUserId) return { success: true, cookieString, fbUserId };
+
+  // Check for 2FA checkpoint
+  if (resultUrl.includes("/checkpoint") || resultUrl.includes("/two_step_verification")) {
+    if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
+    return await handle2FA(tabId, totpSecret);
+  }
+
+  // Check for checkpoint indicators in page content
+  const checkpointResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const body = document.body?.textContent?.toLowerCase() || "";
+      const indicators = ["approvals_code", "checkpoint", "two-factor", "enter the code",
+                          "security code", "authentication code", "verify your identity"];
+      return indicators.some(ind => body.includes(ind));
+    },
+  });
+  if (checkpointResult?.[0]?.result) {
+    if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
+    return await handle2FA(tabId, totpSecret);
+  }
+
+  // Still on login page = invalid credentials
+  if (resultUrl.includes("/login")) {
+    const errorResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        for (const sel of ["#login_error", '[data-testid="login_error"]', ".login_error_box", "._9ay7"]) {
+          const el = document.querySelector(sel);
+          if (el) return el.textContent.trim().slice(0, 120);
+        }
+        return "";
+      },
+    });
+    const errorText = errorResult?.[0]?.result || "";
+    return { success: false, error: `Invalid credentials${errorText ? ` (${errorText})` : ""}` };
+  }
+
+  return { success: false, error: `Unexpected state: url=${resultUrl}` };
+}
+
+async function handle2FA(tabId, totpSecret) {
+  try {
+    const code = await generateTOTP(totpSecret);
+    console.log(`[SocyBase Login] Entering 2FA code`);
+
+    // Wait a moment for the 2FA form to render
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Fill 2FA code
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (code) => {
+        const input = document.querySelector('input[name="approvals_code"], input[name="code"], input[type="tel"]');
+        if (input) {
+          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, "value"
+          ).set;
+          nativeInputValueSetter.call(input, code);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        // Click continue/submit
+        for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], input[type="submit"]')) {
+          const text = el.textContent?.trim().toLowerCase() || "";
+          if (text.includes("continue") || text.includes("submit") || el.type === "submit") {
+            el.click();
+            return;
+          }
+        }
+      },
+      args: [code],
+    });
+
+    // Wait for navigation
+    const url = await waitForNavigation(tabId, 30000);
+
+    // Handle up to 3 follow-up screens
+    for (let i = 0; i < 3; i++) {
+      const { fbUserId, cookieString } = await extractFacebookCookies();
+      if (fbUserId) return { success: true, cookieString, fbUserId };
+      if (isHomeUrl(url)) {
+        const cookies = await extractFacebookCookies();
+        if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
+      }
+
+      const tabInfo = await chrome.tabs.get(tabId);
+      if (!tabInfo.url.includes("/checkpoint")) break;
+
+      // Click next button
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], input[type="submit"]')) {
+            const text = el.textContent?.trim().toLowerCase() || "";
+            if (text.includes("continue") || text.includes("this was me") || el.type === "submit") {
+              el.click(); return;
+            }
+          }
+        },
+      });
+      await waitForNavigation(tabId, 15000);
+    }
+
+    // Final check
+    const { fbUserId: finalId, cookieString: finalCookies } = await extractFacebookCookies();
+    if (finalId) return { success: true, cookieString: finalCookies, fbUserId: finalId };
+
+    return { success: false, error: "2FA submitted but login still failed" };
+  } catch (e) {
+    return { success: false, error: `2FA error: ${e.message}` };
+  }
+}
+
+const DESKTOP_USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+];
+
+async function processLoginBatch(batchId) {
+  console.log(`[SocyBase Login] Starting batch: ${batchId}`);
+
+  // 1. Fetch batch data
+  let data;
+  try {
+    data = await apiGet(`/fb-action/login-batch/${batchId}/worker-data`);
+  } catch (e) {
+    console.error("[SocyBase Login] Failed to fetch batch:", e.message);
+    return;
+  }
+
+  const accounts = data.accounts;
+  const delaySeconds = data.delay_seconds || 10;
+
+  loginBatchState = {
+    batchId,
+    accounts,
+    current: 0,
+    total: accounts.length,
+    success: 0,
+    failed: 0,
+    cancelled: false,
+  };
+  broadcastLoginProgress();
+
+  // 2. Mark batch as running
+  try {
+    await apiPost(`/fb-action/login-batch/${batchId}/worker-start`, {});
+  } catch (e) {
+    console.error("[SocyBase Login] Failed to start batch:", e.message);
+    loginBatchState = null;
+    return;
+  }
+
+  // 3. Process each account sequentially
+  const ua = DESKTOP_USER_AGENTS[Math.floor(Math.random() * DESKTOP_USER_AGENTS.length)];
+
+  for (let i = 0; i < accounts.length; i++) {
+    if (loginBatchState.cancelled) break;
+
+    const account = accounts[i];
+    const email = account.email || "";
+    const password = account.password || "";
+    const totpSecret = account["2fa_secret"] || "";
+
+    console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] ${email}`);
+
+    // Clear cookies before each login
+    await clearFacebookCookies();
+
+    // Handle cookie consent — open tab
+    let tab;
+    try {
+      tab = await chrome.tabs.create({ url: "https://www.facebook.com/login/", active: false });
+      await waitForTabLoad(tab.id);
+      await new Promise(r => setTimeout(r, 1500)); // Wait for React to render
+
+      // Click cookie consent if present
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          const selectors = '[data-cookiebanner="accept_button"], button[title="Allow all cookies"], button[title="Accept All"]';
+          const btn = document.querySelector(selectors);
+          if (btn) btn.click();
+        },
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      // Login
+      const result = await loginSingleAccount(email, password, totpSecret || null, tab.id);
+
+      if (result.success) {
+        loginBatchState.success++;
+        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId})`);
+      } else {
+        loginBatchState.failed++;
+        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] FAILED: ${email} — ${result.error}`);
+      }
+
+      // Report to server
+      try {
+        await apiPostWithRetry(`/fb-action/login-batch/${batchId}/worker-result`, {
+          email,
+          success: result.success,
+          cookie_string: result.cookieString || null,
+          fb_user_id: result.fbUserId || null,
+          user_agent: ua,
+          error: result.error || null,
+          proxy_used: null,
+        });
+      } catch (e) {
+        console.error(`[SocyBase Login] Failed to report result for ${email}:`, e.message);
+      }
+
+    } catch (e) {
+      loginBatchState.failed++;
+      console.error(`[SocyBase Login] Error for ${email}:`, e.message);
+      try {
+        await apiPostWithRetry(`/fb-action/login-batch/${batchId}/worker-result`, {
+          email,
+          success: false,
+          error: e.message,
+          user_agent: ua,
+        });
+      } catch {}
+    } finally {
+      // Close tab
+      if (tab?.id) {
+        try { await chrome.tabs.remove(tab.id); } catch {}
+      }
+    }
+
+    loginBatchState.current = i + 1;
+    broadcastLoginProgress();
+
+    // Delay between logins (skip after last)
+    if (i < accounts.length - 1 && !loginBatchState.cancelled) {
+      await new Promise(r => setTimeout(r, delaySeconds * 1000));
+    }
+  }
+
+  // 4. Mark batch complete
+  try {
+    await apiPost(`/fb-action/login-batch/${batchId}/worker-complete`, {});
+  } catch (e) {
+    console.error("[SocyBase Login] Failed to complete batch:", e.message);
+  }
+
+  console.log(`[SocyBase Login] Batch done: ${loginBatchState.success} ok, ${loginBatchState.failed} fail`);
+  broadcastLoginProgress();
+  loginBatchState = null;
+}
+
 // ── Message handling ────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -907,7 +1353,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "SOCYBASE_GET_STATUS") {
     (async () => {
       const configured = await isConfigured();
-      sendResponse({ configured, polling: !!pollTimer });
+      sendResponse({
+        configured,
+        polling: !!pollTimer,
+        loginBatch: loginBatchState ? {
+          batchId: loginBatchState.batchId,
+          current: loginBatchState.current,
+          total: loginBatchState.total,
+          success: loginBatchState.success,
+          failed: loginBatchState.failed,
+          status: loginBatchState.cancelled ? "cancelled" :
+                  loginBatchState.current >= loginBatchState.total ? "completed" : "running",
+        } : null,
+      });
     })();
     return true;
   }
@@ -917,6 +1375,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.storage.local.remove(["apiUrl", "authToken"], () => {
       sendResponse({ success: true });
     });
+    return true;
+  }
+
+  if (msg.type === "SOCYBASE_START_LOGIN_BATCH") {
+    if (loginBatchState) {
+      sendResponse({ success: false, error: "A login batch is already running" });
+      return true;
+    }
+    const { batchId } = msg;
+    sendResponse({ success: true });
+    processLoginBatch(batchId); // Fire and forget
+    return true;
+  }
+
+  if (msg.type === "SOCYBASE_LOGIN_BATCH_STATUS") {
+    sendResponse({
+      active: !!loginBatchState,
+      progress: loginBatchState ? {
+        batchId: loginBatchState.batchId,
+        current: loginBatchState.current,
+        total: loginBatchState.total,
+        success: loginBatchState.success,
+        failed: loginBatchState.failed,
+      } : null,
+    });
+    return true;
+  }
+
+  if (msg.type === "SOCYBASE_CANCEL_LOGIN_BATCH") {
+    if (loginBatchState) {
+      loginBatchState.cancelled = true;
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false, error: "No active login batch" });
+    }
     return true;
   }
 });

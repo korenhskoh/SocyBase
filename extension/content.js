@@ -65,4 +65,37 @@ window.addEventListener("message", (event) => {
       );
     });
   }
+
+  // Login batch: start via extension
+  if (event.data?.type === "SOCYBASE_EXTENSION_START_LOGIN") {
+    const { batchId } = event.data;
+    if (!batchId) return;
+    chrome.runtime.sendMessage({ type: "SOCYBASE_START_LOGIN_BATCH", batchId }, (response) => {
+      window.postMessage({
+        type: "SOCYBASE_EXTENSION_LOGIN_STARTED",
+        success: response?.success || false,
+        error: response?.error || null,
+      }, "*");
+    });
+  }
+
+  // Login batch: cancel
+  if (event.data?.type === "SOCYBASE_EXTENSION_CANCEL_LOGIN") {
+    chrome.runtime.sendMessage({ type: "SOCYBASE_CANCEL_LOGIN_BATCH" }, (response) => {
+      window.postMessage({
+        type: "SOCYBASE_EXTENSION_LOGIN_CANCELLED",
+        success: response?.success || false,
+      }, "*");
+    });
+  }
+});
+
+// Listen for login progress from background → forward to page
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "SOCYBASE_LOGIN_PROGRESS") {
+    window.postMessage({
+      type: "SOCYBASE_LOGIN_PROGRESS",
+      progress: msg.progress,
+    }, "*");
+  }
 });
