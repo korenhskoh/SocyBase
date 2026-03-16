@@ -1081,29 +1081,36 @@ async function handleFollowUpScreens(tabId) {
 }
 
 async function loginSingleAccount(email, password, totpSecret, tabId) {
-  // Fill credentials
+  // Fill credentials by typing character-by-character
   const fillResult = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (em, pw) => {
+    func: async (em, pw) => {
       const emailField = document.querySelector('input[name="email"]');
       const passField = document.querySelector('input[name="pass"]');
       if (!emailField || !passField) return { error: "Login form not found" };
 
-      // Helper: fill a field like a real user (focus → clear → type → blur)
-      function fillField(field, value) {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, "value"
+      ).set;
+
+      // Type into a field character-by-character with random delays
+      async function typeInField(field, value) {
         field.focus();
-        field.value = "";
-        // Use native setter to trigger React's synthetic event system
-        const setter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype, "value"
-        ).set;
-        setter.call(field, value);
+        setter.call(field, "");
         field.dispatchEvent(new Event("input", { bubbles: true }));
+        for (let i = 0; i < value.length; i++) {
+          const char = value[i];
+          setter.call(field, field.value + char);
+          field.dispatchEvent(new KeyboardEvent("keydown", { key: char, bubbles: true }));
+          field.dispatchEvent(new Event("input", { bubbles: true }));
+          field.dispatchEvent(new KeyboardEvent("keyup", { key: char, bubbles: true }));
+          await new Promise(r => setTimeout(r, 30 + Math.random() * 50));
+        }
         field.dispatchEvent(new Event("change", { bubbles: true }));
       }
 
-      fillField(emailField, em);
-      fillField(passField, pw);
+      await typeInField(emailField, em);
+      await typeInField(passField, pw);
 
       return { ok: true, emailVal: emailField.value, passLen: passField.value.length };
     },
@@ -1357,7 +1364,7 @@ async function handle2FA(tabId, totpSecret) {
 
         const fillResult = await chrome.scripting.executeScript({
           target: { tabId },
-          func: (code) => {
+          func: async (code) => {
             const selectors = [
               'input[name="approvals_code"]', 'input[name="code"]',
               'input[type="tel"]', 'input[type="number"]',
@@ -1382,17 +1389,22 @@ async function handle2FA(tabId, totpSecret) {
             }
             if (!input) return { error: "Input disappeared" };
 
-            // Clear any existing value first
-            input.focus();
-            input.value = "";
+            // Type code character-by-character
             const setter = Object.getOwnPropertyDescriptor(
               window.HTMLInputElement.prototype, "value"
             ).set;
-            setter.call(input, code);
+            input.focus();
+            setter.call(input, "");
             input.dispatchEvent(new Event("input", { bubbles: true }));
+            for (let i = 0; i < code.length; i++) {
+              const ch = code[i];
+              setter.call(input, input.value + ch);
+              input.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+              input.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true }));
+              await new Promise(r => setTimeout(r, 30 + Math.random() * 50));
+            }
             input.dispatchEvent(new Event("change", { bubbles: true }));
-            input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }));
-            input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
 
             return { ok: true, selector: matchedSelector, value: input.value };
           },
