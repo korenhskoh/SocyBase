@@ -178,13 +178,64 @@ async def execute_action(
     db.add(log)
     await db.commit()
 
+    result_url = _build_result_url(body.action_name, resp, body.params)
     return {
         "success": log_status == "success",
         "status_code": status_code,
         "status_message": status_msg,
         "data": data.get("data") if isinstance(data, dict) else None,
+        "result_url": result_url,
         "raw": resp,
     }
+
+
+# ── Result URL builder ───────────────────────────────────────────────
+
+POST_ACTIONS = {"post_to_my_feed", "page_post_to_feed", "post_to_group", "post_reels"}
+COMMENT_ACTIONS = {"comment_to_post", "page_comment_to_post", "reply_to_comment"}
+
+
+def _build_result_url(action_name: str, response_data: dict | None, action_params: dict | None) -> str | None:
+    """Construct a Facebook URL from action response data."""
+    if not response_data or not isinstance(response_data, dict):
+        return None
+    data = response_data.get("data", {})
+    if not isinstance(data, dict):
+        return None
+    result = data.get("data", {})
+    if not isinstance(result, dict):
+        return None
+
+    params = action_params or {}
+
+    # Post actions → facebook.com/{post_id}
+    post_id = result.get("post_id") or result.get("id")
+    if post_id and action_name in POST_ACTIONS:
+        return f"https://facebook.com/{post_id}"
+
+    # Comment actions → facebook.com/{post_id}?comment_id={comment_id}
+    comment_id = result.get("comment_id")
+    if comment_id and action_name in COMMENT_ACTIONS:
+        parent = params.get("post_id") or params.get("parent_post_id") or params.get("input", "")
+        if parent:
+            return f"https://facebook.com/{parent}?comment_id={comment_id}"
+        return None
+
+    # get_id → facebook.com/{id}
+    if action_name == "get_id" and result.get("id"):
+        return f"https://facebook.com/{result['id']}"
+
+    # add_friend → facebook.com/{uid}
+    uid = params.get("uid") or result.get("uid")
+    if action_name == "add_friend" and uid:
+        return f"https://facebook.com/{uid}"
+
+    # join_group → facebook.com/groups/{group_id}
+    group_id = params.get("group_id")
+    if action_name == "join_group" and group_id:
+        return f"https://facebook.com/groups/{group_id}"
+
+    return None
 
 
 # ── GET /fb-action/history ───────────────────────────────────────────
@@ -226,6 +277,7 @@ async def get_action_history(
                 "status": log.status,
                 "response_data": log.response_data,
                 "error_message": log.error_message,
+                "result_url": _build_result_url(log.action_name, log.response_data, log.action_params),
                 "created_at": log.created_at.isoformat() if log.created_at else None,
             }
             for log in logs
@@ -643,7 +695,7 @@ async def export_batch_results(
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["#", "Action", "Status", "Error", "Response Summary", "Time"])
+    writer.writerow(["#", "Action", "Status", "Error", "Response Summary", "Result Link", "Time"])
     for i, log in enumerate(logs, 1):
         # Build a short response summary
         summary = ""
@@ -654,12 +706,15 @@ async def export_batch_results(
                 if isinstance(inner, dict):
                     summary = "; ".join(f"{k}={v}" for k, v in inner.items())
 
+        result_url = _build_result_url(log.action_name, log.response_data, log.action_params) or ""
+
         writer.writerow([
             i,
             log.action_name,
             log.status,
             log.error_message or "",
             summary,
+            result_url,
             log.created_at.isoformat() if log.created_at else "",
         ])
 

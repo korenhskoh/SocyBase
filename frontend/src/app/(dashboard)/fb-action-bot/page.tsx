@@ -130,6 +130,7 @@ interface ActionLog {
   status: string;
   response_data: Record<string, unknown> | null;
   error_message: string | null;
+  result_url: string | null;
   created_at: string | null;
 }
 
@@ -883,6 +884,12 @@ export default function FBActionBotPage() {
                   </span>
                   {result.status_code != null ? (<span className="text-xs text-white/30">Code: {String(result.status_code)}</span>) : null}
                 </div>
+                {result.result_url && (
+                  <a href={result.result_url as string} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-amber-400/80 hover:text-amber-400 mb-2">
+                    <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                    {String(result.result_url)}
+                  </a>
+                )}
                 {result.data && typeof result.data === "object" ? (
                   <div className="space-y-1 text-xs">
                     {Object.entries(result.data as Record<string, unknown>).map(([k, v]) => (
@@ -931,8 +938,21 @@ export default function FBActionBotPage() {
                             <td className="py-2 px-3">
                               <span className={`text-xs px-2 py-0.5 rounded-full ${log.status === "success" ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>{log.status}</span>
                             </td>
-                            <td className="py-2 px-3 text-xs text-white/50 max-w-[250px] truncate">
-                              {log.status === "success" && resultData ? Object.entries(resultData).map(([k, v]) => `${k}: ${v}`).join(", ") : log.error_message || ""}
+                            <td className="py-2 px-3 text-xs max-w-[300px]">
+                              {log.status === "success" ? (
+                                <div className="flex items-center gap-2">
+                                  {log.result_url ? (
+                                    <a href={log.result_url} target="_blank" rel="noopener noreferrer" className="text-amber-400/80 hover:text-amber-400 flex items-center gap-1 truncate">
+                                      <svg className="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                                      <span className="truncate">{resultData ? Object.entries(resultData).map(([k, v]) => `${k}: ${v}`).join(", ") : "View"}</span>
+                                    </a>
+                                  ) : (
+                                    <span className="text-white/50 truncate">{resultData ? Object.entries(resultData).map(([k, v]) => `${k}: ${v}`).join(", ") : "OK"}</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-red-400/60 truncate block">{log.error_message || ""}</span>
+                              )}
                             </td>
                           </tr>
                         );
