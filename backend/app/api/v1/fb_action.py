@@ -114,8 +114,9 @@ async def execute_action(
         if isinstance(c, dict)
     )
 
-    # Use provided UA or fall back to stored one
-    ua = body.user_agent or session.user_agent or ""
+    # Use provided UA or fall back to stored one, with sensible default
+    DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ua = body.user_agent or session.user_agent or DEFAULT_UA
 
     # Proxy config
     proxy_dict = None
@@ -123,6 +124,8 @@ async def execute_action(
         proxy_dict = body.proxy.model_dump()
 
     # Execute via AKNG API
+    logger.info("Executing %s: cookie_len=%d, ua_len=%d, proxy=%s",
+                body.action_name, len(cookie_str), len(ua), bool(proxy_dict))
     client = FacebookGraphClient()
     try:
         resp = await client.execute_action(
