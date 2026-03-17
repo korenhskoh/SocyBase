@@ -1310,12 +1310,76 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
         }
 
         if (url.includes("/login") && !url.includes("/two_step") && !url.includes("/checkpoint")) {
-          // Redirected to login — fail (outer retry loop will re-attempt)
-          const errBody = await chrome.scripting.executeScript({
+          // Security check failed → redirected back to login page
+          // Re-fill credentials on the SAME tab and login again (Facebook often goes straight to 2FA after this)
+          console.log(`[SocyBase Login] Security check redirected to login at ${secs}s — re-filling credentials on same tab...`);
+
+          await new Promise(r => setTimeout(r, 1500)); // Wait for login page to render
+
+          // Check if login form exists
+          const reLoginResult = await chrome.scripting.executeScript({
             target: { tabId },
-            func: () => document.body?.innerText?.slice(0, 150) || "",
+            func: async (em, pw) => {
+              const emailField = document.querySelector('input[name="email"]');
+              const passField = document.querySelector('input[name="pass"]');
+              if (!emailField || !passField) return { error: "Login form not found on re-login" };
+
+              const setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, "value"
+              ).set;
+
+              async function typeInField(field, value) {
+                field.focus();
+                setter.call(field, "");
+                field.dispatchEvent(new Event("input", { bubbles: true }));
+                for (let i = 0; i < value.length; i++) {
+                  const char = value[i];
+                  setter.call(field, field.value + char);
+                  field.dispatchEvent(new KeyboardEvent("keydown", { key: char, bubbles: true }));
+                  field.dispatchEvent(new Event("input", { bubbles: true }));
+                  field.dispatchEvent(new KeyboardEvent("keyup", { key: char, bubbles: true }));
+                  await new Promise(r => setTimeout(r, 30 + Math.random() * 50));
+                }
+                field.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+
+              await typeInField(emailField, em);
+              await typeInField(passField, pw);
+              return { ok: true };
+            },
+            args: [email, password],
           });
-          return { success: false, error: `Login rejected after security check (${errBody?.[0]?.result?.slice(0, 80) || "unknown"})` };
+
+          if (reLoginResult?.[0]?.result?.error) {
+            return { success: false, error: reLoginResult[0].result.error };
+          }
+
+          // Click login button
+          await new Promise(r => setTimeout(r, 300));
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            func: () => {
+              const specificBtn = document.querySelector(
+                'button[data-testid="royal_login_button"], button[name="login"], button#loginbutton'
+              );
+              if (specificBtn) { specificBtn.click(); return; }
+              for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], input[type="submit"], button')) {
+                const text = el.textContent?.trim().toLowerCase() || "";
+                if (text === "log in" || text === "log into facebook" || text === "masuk") {
+                  el.click(); return;
+                }
+              }
+              const form = document.querySelector("#login_form, form[data-testid='royal_login_form']");
+              if (form) form.submit();
+            },
+          });
+
+          console.log(`[SocyBase Login] Re-login submitted — waiting for navigation...`);
+          const reLoginUrl = await waitForNavigation(tabId, 30000);
+          console.log(`[SocyBase Login] Re-login post-nav URL: ${reLoginUrl}`);
+
+          // After re-login, continue the scan loop — should land on 2FA next
+          continue;
         }
 
         // Still on checkpoint/two_step URL but no indicators yet — keep scanning
