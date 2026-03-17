@@ -2032,7 +2032,8 @@ async function processLoginBatch(batchId, twoFaWaitSeconds = 60) {
     }
   }
 
-  // 4. Ensure proxy is cleared
+  // 4. Final cleanup — clear cookies and proxy
+  await clearFacebookCookies();
   await clearProxy();
 
   // 5. Mark batch complete
