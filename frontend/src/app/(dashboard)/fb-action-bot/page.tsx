@@ -1302,7 +1302,7 @@ export default function FBActionBotPage() {
               )}
               <div>
                 <label className="text-xs text-white/40 block mb-2">2FA Wait: {twoFaWaitSeconds}s</label>
-                <input type="range" min={30} max={180} step={10} value={twoFaWaitSeconds} onChange={(e) => setTwoFaWaitSeconds(Number(e.target.value))} className="w-full accent-primary-500" />
+                <input type="range" min={30} max={300} step={10} value={twoFaWaitSeconds} onChange={(e) => setTwoFaWaitSeconds(Number(e.target.value))} className="w-full accent-primary-500" />
               </div>
               <div className="flex flex-col items-end gap-3">
                 <label className="flex items-center gap-2 cursor-pointer self-start">

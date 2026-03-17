@@ -1314,27 +1314,53 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
         return { success: false, error: `Login rejected after security check${errorText ? ` (${errorText})` : ""}` };
       }
 
-      // Maybe redirected to actual 2FA or trust page — check again
-      const recheck = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          const body = document.body?.innerText?.toLowerCase() || "";
-          const is2FA = body.includes("enter the code") || body.includes("authentication code") ||
-                        body.includes("approvals_code") || body.includes("two-factor") ||
-                        body.includes("verify your identity") || body.includes("masukkan kode");
-          const isTrust = body.includes("trust") || body.includes("save browser") ||
-                          body.includes("remember browser") || body.includes("this was me");
-          return { is2FA, isTrust };
-        },
-      });
-      const recheckRes = recheck?.[0]?.result;
-      if (recheckRes?.isTrust && !recheckRes?.is2FA) return await handleFollowUpScreens(tabId);
-      if (recheckRes?.is2FA) {
-        if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
-        return await handle2FA(tabId, totpSecret, twoFaWaitSeconds);
+      // Maybe redirected to actual 2FA or trust page — keep scanning with remaining time
+      // The 2FA input may take extra time to render after security check clears
+      const postScanMax = Math.max(5, Math.ceil(twoFaWaitSeconds / 3));
+      for (let ps = 0; ps < postScanMax; ps++) {
+        const recheck = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const body = document.body?.innerText?.toLowerCase() || "";
+            const is2FA = body.includes("enter the code") || body.includes("authentication code") ||
+                          body.includes("approvals_code") || body.includes("two-factor") ||
+                          body.includes("verify your identity") || body.includes("masukkan kode");
+            const isTrust = body.includes("trust") || body.includes("save browser") ||
+                            body.includes("remember browser") || body.includes("this was me");
+            const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
+              'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
+            const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
+            return { is2FA: is2FA || has2FAInput, isTrust, has2FAInput };
+          },
+        });
+        const recheckRes = recheck?.[0]?.result;
+        if (recheckRes?.isTrust && !recheckRes?.is2FA) return await handleFollowUpScreens(tabId);
+        if (recheckRes?.is2FA) {
+          if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
+          return await handle2FA(tabId, totpSecret, twoFaWaitSeconds);
+        }
+
+        // Check cookies — maybe got logged in during transition
+        const transitCookies = await extractFacebookCookies();
+        if (transitCookies.fbUserId) return { success: true, cookieString: transitCookies.cookieString, fbUserId: transitCookies.fbUserId };
+
+        // Check if redirected away
+        const currentTab = await chrome.tabs.get(tabId);
+        const curUrl = currentTab?.url || "";
+        if (isHomeUrl(curUrl)) {
+          const c = await extractFacebookCookies();
+          if (c.fbUserId) return { success: true, cookieString: c.cookieString, fbUserId: c.fbUserId };
+          break;
+        }
+        if (curUrl.includes("/login") && !curUrl.includes("/two_step") && !curUrl.includes("/checkpoint")) {
+          return { success: false, error: "Redirected to login page — credentials rejected" };
+        }
+
+        console.log(`[SocyBase Login] Post-security-check scan ${ps + 1}/${postScanMax}: waiting for 2FA input...`);
+        await new Promise(r => setTimeout(r, 3000));
       }
 
-      return { success: false, error: `Unexpected state after security check: url=${postCheckUrl}` };
+      return { success: false, error: `2FA input not found after security check: url=${postCheckUrl}` };
     }
 
     if (trustRes?.isTrust && !trustRes?.is2FA) {
