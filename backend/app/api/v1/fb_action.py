@@ -908,6 +908,7 @@ async def get_login_batch_status(
                 "status": r.status,
                 "fb_user_id": r.fb_user_id,
                 "error_message": r.error_message,
+                "has_token": bool(r.access_token_encrypted),
             })
 
     return {
@@ -996,13 +997,20 @@ async def export_login_results(
     meta = MetaAPIService()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(CSV_COLUMNS)
+    writer.writerow(CSV_COLUMNS + ["access_token"])
 
     for r in results:
         try:
             cookie_str = meta.decrypt_token(r.cookie_encrypted)
         except Exception:
             continue
+
+        access_token = ""
+        if r.access_token_encrypted:
+            try:
+                access_token = meta.decrypt_token(r.access_token_encrypted)
+            except Exception:
+                pass
 
         proxy_host = ""
         proxy_port = ""
@@ -1021,8 +1029,10 @@ async def export_login_results(
             "1",                   # repeat_count
             "", "", "", "", "", "",  # input, content, images, image, video_url, preset_id
             "", "", "", "", "",    # page_id, group_id, post_id, comment_id, parent_post_id
-            "", "", "", "", "",    # first, last, middle, bio, uid
+            "", "", "", "",        # first, last, middle, bio
+            r.fb_user_id or "",    # uid
             proxy_host, proxy_port, proxy_user, proxy_pass,
+            access_token,          # access_token
         ])
 
     csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
@@ -1102,6 +1112,7 @@ class WorkerResultPayload(BaseModel):
     user_agent: str | None = None
     error: str | None = None
     proxy_used: dict | None = None
+    access_token: str | None = None
 
 
 @router.post("/login-batch/{batch_id}/worker-result")
@@ -1129,10 +1140,12 @@ async def post_worker_result(
 
     if payload.success and payload.cookie_string:
         encrypted_cookie = meta.encrypt_token(payload.cookie_string)
+        encrypted_token = meta.encrypt_token(payload.access_token) if payload.access_token else None
         log = FBLoginResult(
             login_batch_id=batch.id, tenant_id=user.tenant_id, user_id=user.id,
             email=payload.email, fb_user_id=payload.fb_user_id,
-            cookie_encrypted=encrypted_cookie, user_agent=payload.user_agent,
+            cookie_encrypted=encrypted_cookie, access_token_encrypted=encrypted_token,
+            user_agent=payload.user_agent,
             proxy_used=payload.proxy_used, status="success",
         )
         db.add(log)

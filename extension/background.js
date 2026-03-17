@@ -1754,6 +1754,45 @@ async function handle2FA(tabId, totpSecret, twoFaWaitSeconds = 60) {
   }
 }
 
+async function extractEAABToken(tabId) {
+  try {
+    // Navigate to Facebook business page to extract EAAB token
+    await chrome.tabs.update(tabId, { url: "https://business.facebook.com/content_management" });
+    await waitForTabLoad(tabId, 20000);
+    await new Promise(r => setTimeout(r, 3000)); // Wait for JS to render
+
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const html = document.documentElement.innerHTML;
+        // Try multiple patterns for EAAB token
+        const patterns = [
+          /"accessToken":"(EAAB[^"]+)"/,
+          /"access_token":"(EAAB[^"]+)"/,
+          /accessToken\s*[:=]\s*"(EAAB[^"]+)"/,
+          /EAAB[a-zA-Z0-9]+/,
+        ];
+        for (const pattern of patterns) {
+          const match = html.match(pattern);
+          if (match) return match[1] || match[0];
+        }
+        return null;
+      },
+    });
+
+    const token = result?.[0]?.result;
+    if (token && token.startsWith("EAAB")) {
+      console.log(`[SocyBase Login] EAAB token extracted: ${token.slice(0, 20)}...`);
+      return token;
+    }
+    console.log("[SocyBase Login] No EAAB token found on business page");
+    return null;
+  } catch (e) {
+    console.warn("[SocyBase Login] EAAB extraction failed:", e.message);
+    return null;
+  }
+}
+
 const DESKTOP_USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -1994,8 +2033,13 @@ async function processLoginBatch(batchId, twoFaWaitSeconds = 60) {
         result.fbUserId = settled.fbUserId;
       }
 
+      // Extract EAAB token (best-effort, login still counts as success without it)
+      if (tab?.id) {
+        result.accessToken = await extractEAABToken(tab.id);
+      }
+
       loginBatchState.success++;
-      console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId}, cookies=${result.cookieString?.length || 0} chars, proxy=${proxyLabel})`);
+      console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId}, cookies=${result.cookieString?.length || 0} chars, token=${result.accessToken ? "yes" : "no"}, proxy=${proxyLabel})`);
     } else {
       loginBatchState.failed++;
       console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] FAILED: ${email} — ${result?.error || "unknown"} (proxy=${proxyLabel})`);
@@ -2011,6 +2055,7 @@ async function processLoginBatch(batchId, twoFaWaitSeconds = 60) {
         user_agent: tabUA,
         error: result?.error || null,
         proxy_used: proxy || null,
+        access_token: result?.accessToken || null,
       });
     } catch (e) {
       console.error(`[SocyBase Login] Failed to report result for ${email}:`, e.message);

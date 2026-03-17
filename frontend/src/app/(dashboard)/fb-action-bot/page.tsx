@@ -144,7 +144,7 @@ interface BatchInfo {
   delay_seconds: number;
   max_parallel: number;
   error_message?: string;
-  results?: Array<{ email: string; status: string; fb_user_id?: string; error_message?: string }>;
+  results?: Array<{ email: string; status: string; fb_user_id?: string; error_message?: string; has_token?: boolean }>;
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -1124,6 +1124,7 @@ export default function FBActionBotPage() {
                     <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs ${r.status === "success" ? "bg-emerald-500/5 text-emerald-400" : "bg-red-500/5 text-red-400"}`}>
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.status === "success" ? "bg-emerald-400" : "bg-red-400"}`} />
                       <span className="truncate">{r.email}</span>
+                      {r.status === "success" && r.has_token && <span className="text-amber-400/60 shrink-0" title="EAAB token extracted">TK</span>}
                       {r.status === "success" && r.fb_user_id && <span className="text-white/20 ml-auto shrink-0">uid: {r.fb_user_id}</span>}
                       {r.status !== "success" && r.error_message && <span className="text-red-300/60 ml-auto shrink-0 truncate max-w-[50%]">{r.error_message}</span>}
                     </div>
@@ -1510,6 +1511,7 @@ export default function FBActionBotPage() {
                     <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs ${r.status === "success" ? "bg-emerald-500/5 text-emerald-400" : "bg-red-500/5 text-red-400"}`}>
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.status === "success" ? "bg-emerald-400" : "bg-red-400"}`} />
                       <span className="truncate">{r.email}</span>
+                      {r.status === "success" && r.has_token && <span className="text-amber-400/60 shrink-0" title="EAAB token extracted">TK</span>}
                       {r.status === "success" && r.fb_user_id && <span className="text-white/20 ml-auto shrink-0">uid: {r.fb_user_id}</span>}
                       {r.status !== "success" && r.error_message && <span className="text-red-300/60 ml-auto shrink-0 truncate max-w-[60%]">{r.error_message}</span>}
                     </div>
