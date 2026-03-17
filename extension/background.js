@@ -977,11 +977,14 @@ async function extractFacebookCookies() {
   const cookies = await chrome.cookies.getAll({ domain: ".facebook.com" });
   const parts = [];
   let fbUserId = null;
+  let hasXs = false;
   for (const c of cookies) {
     parts.push(`${c.name}=${c.value}`);
     if (c.name === "c_user") fbUserId = c.value;
+    if (c.name === "xs") hasXs = true;
   }
-  return { cookieString: parts.join("; "), fbUserId };
+  // Both c_user and xs are required for a valid session
+  return { cookieString: parts.join("; "), fbUserId: (fbUserId && hasXs) ? fbUserId : null, hasXs };
 }
 
 function waitForTabLoad(tabId, timeoutMs = 30000) {
@@ -1059,7 +1062,7 @@ async function handleFollowUpScreens(tabId) {
     await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
-        const keywords = ["always trust", "trust", "continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan", "next"];
+        const keywords = ["always trust", "always confirm", "trust", "confirm", "continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan", "next"];
         for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], button, input[type="submit"], a[role="button"]')) {
           const text = el.textContent?.trim().toLowerCase() || "";
           if (keywords.some(kw => text.includes(kw)) || el.type === "submit") {
@@ -1739,9 +1742,30 @@ async function processLoginBatch(batchId) {
       // Login
       const result = await loginSingleAccount(email, password, totpSecret || null, tab.id);
 
+      // Grab actual user agent from the tab
+      let tabUA = ua;
+      try {
+        const uaResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => navigator.userAgent,
+        });
+        if (uaResult?.[0]?.result) tabUA = uaResult[0].result;
+      } catch {}
+
       if (result.success) {
+        // Wait 15s for Facebook to finish setting all cookies (xs, fr, datr, etc.)
+        console.log(`[SocyBase Login] Login successful — waiting 15s for cookies to settle...`);
+        await new Promise(r => setTimeout(r, 15000));
+
+        // Re-extract the full cookie jar
+        const settled = await extractFacebookCookies();
+        if (settled.fbUserId) {
+          result.cookieString = settled.cookieString;
+          result.fbUserId = settled.fbUserId;
+        }
+
         loginBatchState.success++;
-        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId}, proxy=${proxyLabel})`);
+        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId}, cookies=${result.cookieString?.length || 0} chars, proxy=${proxyLabel})`);
       } else {
         loginBatchState.failed++;
         console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] FAILED: ${email} — ${result.error} (proxy=${proxyLabel})`);
@@ -1754,7 +1778,7 @@ async function processLoginBatch(batchId) {
           success: result.success,
           cookie_string: result.cookieString || null,
           fb_user_id: result.fbUserId || null,
-          user_agent: ua,
+          user_agent: tabUA,
           error: result.error || null,
           proxy_used: proxy || null,
         });
@@ -1900,6 +1924,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     loginBatchState = null;
     console.log("[SocyBase Login] Login batch state reset");
     sendResponse({ success: true });
+    return true;
+  }
+
+  if (msg.type === "SOCYBASE_GET_FB_COOKIES") {
+    (async () => {
+      try {
+        const cookies = await chrome.cookies.getAll({ domain: ".facebook.com" });
+        let cUser = null;
+        let xs = null;
+        for (const c of cookies) {
+          if (c.name === "c_user") cUser = c.value;
+          if (c.name === "xs") xs = c.value;
+        }
+        if (cUser && xs) {
+          sendResponse({ success: true, c_user: cUser, xs });
+        } else {
+          sendResponse({ success: false, error: "No active Facebook session found (missing c_user or xs)" });
+        }
+      } catch (e) {
+        sendResponse({ success: false, error: e.message });
+      }
+    })();
     return true;
   }
 });

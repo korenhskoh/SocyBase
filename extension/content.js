@@ -79,6 +79,19 @@ window.addEventListener("message", (event) => {
     });
   }
 
+  // Get current Facebook cookies from browser
+  if (event.data?.type === "SOCYBASE_EXTENSION_GET_COOKIES") {
+    chrome.runtime.sendMessage({ type: "SOCYBASE_GET_FB_COOKIES" }, (response) => {
+      window.postMessage({
+        type: "SOCYBASE_EXTENSION_COOKIES_RESPONSE",
+        success: response?.success || false,
+        c_user: response?.c_user || null,
+        xs: response?.xs || null,
+        error: response?.error || null,
+      }, "*");
+    });
+  }
+
   // Login batch: cancel
   if (event.data?.type === "SOCYBASE_EXTENSION_CANCEL_LOGIN") {
     chrome.runtime.sendMessage({ type: "SOCYBASE_CANCEL_LOGIN_BATCH" }, (response) => {

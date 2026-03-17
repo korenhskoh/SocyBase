@@ -152,7 +152,8 @@ interface BatchInfo {
 
 export default function FBActionBotPage() {
   // Tab state
-  const [activeTab, setActiveTab] = useState<"single" | "batch" | "login" | "ai-planner" | "livestream">("single");
+  const [activeTab, setActiveTab] = useState<"single" | "batch" | "livestream">("single");
+  const [batchSubTab, setBatchSubTab] = useState<"accounts" | "manual" | "ai-planner">("accounts");
 
   // Config state
   const [hasCookies, setHasCookies] = useState(false);
@@ -161,6 +162,9 @@ export default function FBActionBotPage() {
   const [proxy, setProxy] = useState({ host: "", port: "", username: "", password: "" });
   const [configLoading, setConfigLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [cookieCUser, setCookieCUser] = useState("");
+  const [cookieXs, setCookieXs] = useState("");
+  const [connectingCookies, setConnectingCookies] = useState(false);
 
   // Action state
   const [selectedAction, setSelectedAction] = useState<ActionName>("post_to_my_feed");
@@ -310,7 +314,7 @@ export default function FBActionBotPage() {
     }).catch(() => {});
   }, [batchHistoryPage]);
 
-  useEffect(() => { if (activeTab === "batch") loadBatchHistory(); }, [activeTab, loadBatchHistory]);
+  useEffect(() => { if (activeTab === "batch" && batchSubTab === "manual") loadBatchHistory(); }, [activeTab, batchSubTab, loadBatchHistory]);
 
   // Poll active batch
   useEffect(() => {
@@ -337,10 +341,10 @@ export default function FBActionBotPage() {
   }, [loginHistoryPage]);
 
   useEffect(() => {
-    if (activeTab === "login") {
+    if (activeTab === "batch" && batchSubTab === "accounts") {
       loadLoginHistory();
     }
-  }, [activeTab, loadLoginHistory]);
+  }, [activeTab, batchSubTab, loadLoginHistory]);
 
   // Detect Chrome extension
   useEffect(() => {
@@ -391,7 +395,7 @@ export default function FBActionBotPage() {
             if (loginPollRef.current) clearInterval(loginPollRef.current);
             loadLoginHistory();
 
-            // Auto-download CSV and navigate to Batch Mode
+            // Auto-download CSV after all accounts logged in
             if (autoGoToBatch && res.data.success_count > 0) {
               try {
                 const csvRes = await fbActionApi.exportLoginResults(res.data.id);
@@ -401,8 +405,7 @@ export default function FBActionBotPage() {
                 a.download = `login_${res.data.id.slice(0, 8)}_action_ready.csv`;
                 a.click();
                 window.URL.revokeObjectURL(url);
-                setActiveTab("batch");
-                showToast("success", `${res.data.success_count} accounts exported — fill in action_name & params, then upload here`);
+                showToast("success", `${res.data.success_count} accounts CSV downloaded successfully`);
               } catch {
                 showToast("success", `Login done — ${res.data.success_count} successful. Export manually to continue.`);
               }
@@ -429,6 +432,51 @@ export default function FBActionBotPage() {
     } finally {
       setSavingConfig(false);
     }
+  };
+
+  // Connect with cookies (manual c_user + xs)
+  const handleConnectCookies = async () => {
+    if (!cookieCUser.trim() || !cookieXs.trim()) {
+      showToast("error", "Both c_user and xs are required");
+      return;
+    }
+    setConnectingCookies(true);
+    try {
+      const res = await fbActionApi.connectCookies({
+        c_user: cookieCUser.trim(),
+        xs: cookieXs.trim(),
+        user_agent: userAgent || undefined,
+      });
+      setHasCookies(true);
+      setFbUserId(res.data.fb_user_id);
+      setCookieCUser("");
+      setCookieXs("");
+      showToast("success", `Connected as ${res.data.fb_user_id}`);
+    } catch {
+      showToast("error", "Failed to connect with cookies");
+    } finally {
+      setConnectingCookies(false);
+    }
+  };
+
+  // Auto-get cookies from extension
+  const handleAutoGetCookies = () => {
+    window.postMessage({ type: "SOCYBASE_EXTENSION_GET_COOKIES" }, "*");
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === "SOCYBASE_EXTENSION_COOKIES_RESPONSE") {
+        window.removeEventListener("message", handler);
+        if (event.data.success) {
+          setCookieCUser(event.data.c_user);
+          setCookieXs(event.data.xs);
+          showToast("success", `Found session for user ${event.data.c_user} — click Connect to save`);
+        } else {
+          showToast("error", event.data.error || "No Facebook session found in browser");
+        }
+      }
+    };
+    window.addEventListener("message", handler);
+    // Timeout after 5s
+    setTimeout(() => window.removeEventListener("message", handler), 5000);
   };
 
   // Execute action
@@ -692,27 +740,7 @@ export default function FBActionBotPage() {
               : "text-white/40 hover:text-white/60"
           }`}
         >
-          Batch Mode
-        </button>
-        <button
-          onClick={() => setActiveTab("login")}
-          className={`px-5 py-2 text-sm rounded-lg transition font-medium ${
-            activeTab === "login"
-              ? "bg-white/10 text-white shadow-sm"
-              : "text-white/40 hover:text-white/60"
-          }`}
-        >
-          Bulk Login
-        </button>
-        <button
-          onClick={() => setActiveTab("ai-planner")}
-          className={`px-5 py-2 text-sm rounded-lg transition font-medium ${
-            activeTab === "ai-planner"
-              ? "bg-white/10 text-white shadow-sm"
-              : "text-white/40 hover:text-white/60"
-          }`}
-        >
-          AI Planner
+          Batch
         </button>
         <button
           onClick={() => setActiveTab("livestream")}
@@ -743,8 +771,31 @@ export default function FBActionBotPage() {
                   <div className="flex items-center gap-2">
                     <div className={`h-2.5 w-2.5 rounded-full ${hasCookies ? "bg-emerald-400" : "bg-red-400"}`} />
                     <span className="text-sm text-white/80">
-                      {hasCookies ? `Connected (${fbUserId || "unknown"})` : "No cookies — connect via browser extension"}
+                      {hasCookies ? `Connected (${fbUserId || "unknown"})` : "Not connected"}
                     </span>
+                  </div>
+                  {/* Cookie connection inputs */}
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1">c_user</label>
+                        <input type="text" value={cookieCUser} onChange={(e) => setCookieCUser(e.target.value)} placeholder="e.g. 1658396629" className={inputClass} />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1">xs</label>
+                        <input type="text" value={cookieXs} onChange={(e) => setCookieXs(e.target.value)} placeholder="xs cookie value" className={inputClass} />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={handleConnectCookies} disabled={connectingCookies || (!cookieCUser && !cookieXs)} className="flex-1 px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 text-xs rounded-lg border border-emerald-500/20 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                        {connectingCookies ? "Connecting..." : "Connect"}
+                      </button>
+                      {extensionDetected && (
+                        <button onClick={handleAutoGetCookies} className="flex-1 px-3 py-1.5 bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 text-xs rounded-lg border border-blue-500/20 transition">
+                          Auto-get from Browser
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div>
                     <label className="text-xs text-white/40 block mb-1">User Agent</label>
@@ -883,9 +934,33 @@ export default function FBActionBotPage() {
         </>
       )}
 
-      {/* ═══════════════════ BATCH MODE TAB ═══════════════════ */}
+      {/* ═══════════════════ BATCH TAB ═══════════════════ */}
       {activeTab === "batch" && (
         <>
+          {/* Sub-tabs */}
+          <div className="flex gap-1 bg-white/[0.02] p-1 rounded-lg w-fit border border-white/5">
+            {([
+              { key: "accounts" as const, label: "Accounts" },
+              { key: "manual" as const, label: "Manual Actions" },
+              { key: "ai-planner" as const, label: "AI Planner" },
+            ]).map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setBatchSubTab(t.key)}
+                className={`px-4 py-1.5 text-xs rounded-md transition font-medium ${
+                  batchSubTab === t.key
+                    ? "bg-white/10 text-white"
+                    : "text-white/35 hover:text-white/55"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Manual Actions sub-tab (was Batch Mode) ── */}
+          {batchSubTab === "manual" && (
+            <>
           {/* CSV Upload */}
           <div className="glass-card p-6">
             <div className="flex items-center justify-between mb-4">
@@ -1115,10 +1190,10 @@ export default function FBActionBotPage() {
             )}
           </div>
         </>
-      )}
+          )}
 
-      {/* ═══════════════════ BULK LOGIN TAB ═══════════════════ */}
-      {activeTab === "login" && (
+          {/* ── Accounts sub-tab (was Bulk Login) ── */}
+          {batchSubTab === "accounts" && (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Upload Card */}
@@ -1212,7 +1287,7 @@ export default function FBActionBotPage() {
                     onChange={(e) => setAutoGoToBatch(e.target.checked)}
                     className="h-3.5 w-3.5 rounded border-white/20 bg-white/5 accent-amber-500"
                   />
-                  <span className="text-xs text-white/40">Auto-load results into Batch Mode when done</span>
+                  <span className="text-xs text-white/40">Auto-download CSV file after done logged in</span>
                 </label>
                 <button
                   onClick={handleStartLoginBatch}
@@ -1482,10 +1557,10 @@ export default function FBActionBotPage() {
             )}
           </div>
         </>
-      )}
+          )}
 
-      {/* ═══════════════════ AI PLANNER TAB ═══════════════════ */}
-      {activeTab === "ai-planner" && (
+          {/* ── AI Planner sub-tab ── */}
+          {batchSubTab === "ai-planner" && (
         <>
           {/* Stepper bar */}
           <div className="flex items-center gap-2">
@@ -2396,10 +2471,10 @@ export default function FBActionBotPage() {
                     <div className="text-xs text-amber-300/80 space-y-1">
                       <p>No login batches found. You need completed bulk logins to export with cookies.</p>
                       <button
-                        onClick={() => setActiveTab("login")}
+                        onClick={() => setBatchSubTab("accounts")}
                         className="text-amber-400 underline hover:text-amber-300"
                       >
-                        Go to Bulk Login tab to create one
+                        Go to Accounts tab to create one
                       </button>
                     </div>
                   ) : (
@@ -2476,6 +2551,8 @@ export default function FBActionBotPage() {
                 <button onClick={() => setPlannerStep(3)} className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white/60 text-sm rounded-lg transition">← Back</button>
               </div>
             </div>
+          )}
+        </>
           )}
         </>
       )}

@@ -50,6 +50,12 @@ class SaveConfigRequest(BaseModel):
     proxy: ProxyConfig | None = None
 
 
+class ConnectCookiesRequest(BaseModel):
+    c_user: str = Field(..., min_length=1)
+    xs: str = Field(..., min_length=1)
+    user_agent: str | None = None
+
+
 class AIPlanPost(BaseModel):
     post_id: str
     message: str | None = None
@@ -285,6 +291,52 @@ async def save_config(
 
     await db.commit()
     return {"success": True}
+
+
+# ── POST /fb-action/connect-cookies ─────────────────────────────────
+
+@router.post("/connect-cookies")
+async def connect_cookies(
+    body: ConnectCookiesRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Connect an account using manually provided c_user + xs cookie values."""
+    # Build minimal cookie array matching Chrome cookie format
+    cookies = [
+        {"name": "c_user", "value": body.c_user, "domain": ".facebook.com", "path": "/"},
+        {"name": "xs", "value": body.xs, "domain": ".facebook.com", "path": "/"},
+    ]
+
+    meta = MetaAPIService()
+    encrypted = meta.encrypt_token(json.dumps(cookies))
+
+    result = await db.execute(
+        select(FBCookieSession).where(FBCookieSession.tenant_id == user.tenant_id)
+    )
+    session = result.scalar_one_or_none()
+
+    if session:
+        session.cookies_encrypted = encrypted
+        session.fb_user_id = body.c_user
+        session.user_id = user.id
+        session.is_valid = True
+        session.last_validated_at = None
+        if body.user_agent:
+            session.user_agent = body.user_agent
+    else:
+        session = FBCookieSession(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            cookies_encrypted=encrypted,
+            fb_user_id=body.c_user,
+            user_agent=body.user_agent,
+        )
+        db.add(session)
+
+    await db.commit()
+    logger.info("Manual cookie connect for tenant %s (c_user=%s)", user.tenant_id, body.c_user)
+    return {"success": True, "fb_user_id": body.c_user}
 
 
 # ── CSV Template columns ────────────────────────────────────────────

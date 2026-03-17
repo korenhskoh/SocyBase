@@ -527,6 +527,8 @@ export const fbActionApi = {
   getConfig: () => api.get("/fb-action/config"),
   saveConfig: (data: { user_agent?: string; proxy?: { host: string; port: string; username: string; password: string } }) =>
     api.post("/fb-action/save-config", data),
+  connectCookies: (data: { c_user: string; xs: string; user_agent?: string }) =>
+    api.post("/fb-action/connect-cookies", data),
   // Batch mode
   downloadTemplate: () =>
     api.get("/fb-action/batch/csv-template", { responseType: "blob" }),
