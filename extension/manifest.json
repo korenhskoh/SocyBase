@@ -3,7 +3,7 @@
   "name": "SocyBase Browser Operator",
   "version": "1.0.0",
   "description": "Lend a tab to SocyBase for AI-Scraping tasks on restricted Facebook pages",
-  "permissions": ["storage", "alarms", "cookies", "offscreen", "scripting", "debugger", "proxy", "webRequest", "webRequestAuthProvider"],
+  "permissions": ["storage", "alarms", "cookies", "offscreen", "scripting", "debugger", "proxy", "webRequest", "webRequestAuthProvider", "sidePanel"],
   "host_permissions": [
     "https://mbasic.facebook.com/*",
     "https://*.facebook.com/*",
@@ -14,7 +14,6 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -28,6 +27,9 @@
       "run_at": "document_idle"
     }
   ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

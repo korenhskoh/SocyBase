@@ -12,6 +12,21 @@ const TASK_TIMEOUT_MS = 110 * 1000; // 110s task timeout (backend waits 2min = 1
 let pollTimer = null;
 let processingTask = false; // Guard against overlapping task processing
 
+// ── Side Panel setup ────────────────────────────────────────────────
+// Allow user to open side panel by clicking the extension icon
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+// Broadcast activity to side panel
+function broadcastActivity(icon, message) {
+  chrome.runtime.sendMessage({ type: "SOCYBASE_TASK_ACTIVITY", icon, message }).catch(() => {});
+}
+
+// Increment task stats in storage
+async function incrementStat(key) {
+  const data = await chrome.storage.local.get([key]);
+  await chrome.storage.local.set({ [key]: (data[key] || 0) + 1 });
+}
+
 // ── Config helpers ──────────────────────────────────────────────────
 
 async function getConfig() {
@@ -840,6 +855,10 @@ async function processTask(task) {
       success: true,
       data: { data: allItems, paging: {} },
     });
+
+    await incrementStat("tasksDone");
+    await incrementStat("tasksSuccess");
+    broadcastActivity("\u2705", `${task.task_type}: ${allItems.length} items scraped`);
   } catch (e) {
     console.error(`[SocyBase] Task ${task.id} failed:`, e.message);
     // Submit failure with retry — don't lose the error report
@@ -851,6 +870,10 @@ async function processTask(task) {
     } catch (submitErr) {
       console.error(`[SocyBase] Failed to submit error result for task ${task.id}:`, submitErr.message);
     }
+
+    await incrementStat("tasksDone");
+    await incrementStat("tasksErrors");
+    broadcastActivity("\u274C", `${task.task_type} failed: ${e.message.slice(0, 60)}`);
   }
 }
 

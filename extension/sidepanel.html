@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    .header img {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+    }
+    h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .subtitle {
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+      margin-bottom: 4px;
+      margin-top: 14px;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus {
+      border-color: rgba(99, 102, 241, 0.5);
+    }
+    input::placeholder { color: rgba(255,255,255,0.2); }
+    .btn {
+      width: 100%;
+      margin-top: 16px;
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-connect {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+    }
+    .btn-connect:hover { opacity: 0.9; }
+    .btn-disconnect {
+      background: rgba(239, 68, 68, 0.1);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+    .btn-disconnect:hover { background: rgba(239, 68, 68, 0.2); }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+    .status-connected {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      color: #10b981;
+    }
+    .status-disconnected {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.4);
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-green { background: #10b981; }
+    .dot-gray { background: rgba(255,255,255,0.2); }
+    .msg {
+      font-size: 12px;
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+    }
+    .msg-error { background: rgba(239,68,68,0.1); color: #ef4444; }
+    .msg-success { background: rgba(16,185,129,0.1); color: #10b981; }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .toggle-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: #e0e0e0;
+    }
+    .toggle-switch {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      display: inline-block;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: rgba(255,255,255,0.15);
+      border-radius: 22px;
+      transition: 0.2s;
+    }
+    .toggle-slider:before {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 3px;
+      bottom: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-slider {
+      background: #6366f1;
+    }
+    .toggle-switch input:checked + .toggle-slider:before {
+      transform: translateX(18px);
+    }
+    .hint {
+      font-size: 11px;
+      color: rgba(255,255,255,0.25);
+      margin-top: 14px;
+      line-height: 1.5;
+    }
+
+    /* Section card style for side panel */
+    .section-card {
+      margin-top: 16px;
+      padding: 14px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.6);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+
+    /* Stats row */
+    .stats-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .stat-box {
+      flex: 1;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .stat-label {
+      font-size: 10px;
+      color: rgba(255,255,255,0.4);
+      margin-top: 2px;
+    }
+
+    /* Activity log */
+    .activity-log {
+      margin-top: 14px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .activity-log::-webkit-scrollbar {
+      width: 4px;
+    }
+    .activity-log::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .activity-log::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+    }
+    .log-entry {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 6px 0;
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .log-entry:last-child { border-bottom: none; }
+    .log-time {
+      color: rgba(255,255,255,0.25);
+      white-space: nowrap;
+      font-size: 10px;
+      min-width: 45px;
+    }
+    .log-icon {
+      flex-shrink: 0;
+      width: 14px;
+      text-align: center;
+    }
+    .log-msg {
+      flex: 1;
+    }
+
+    /* Login batch section */
+    .login-batch {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: rgba(245,158,11,0.08);
+      border: 1px solid rgba(245,158,11,0.15);
+    }
+    .login-batch-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .login-batch-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .login-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #f59e0b;
+      flex-shrink: 0;
+    }
+    .login-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #f59e0b;
+    }
+    .btn-reset {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(239,68,68,0.3);
+      background: rgba(239,68,68,0.1);
+      color: #ef4444;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-reset:hover { background: rgba(239,68,68,0.2); }
+    .login-counts {
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+      margin-bottom: 6px;
+    }
+    .login-bar-track {
+      height: 4px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .login-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #f59e0b, #ef4444);
+      border-radius: 4px;
+      transition: width 0.5s;
+    }
+
+    .divider {
+      height: 1px;
+      background: rgba(255,255,255,0.06);
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <img src="icons/icon48.png" alt="SocyBase" />
+    <h1>SocyBase</h1>
+  </div>
+  <p class="subtitle">Browser Operator &mdash; Side Panel</p>
+
+  <div id="connected-view" style="display:none">
+    <div id="status-active" class="status status-connected">
+      <span class="dot dot-green"></span>
+      <span>Active &amp; polling for tasks</span>
+    </div>
+    <div id="status-paused" class="status status-disconnected" style="display:none">
+      <span class="dot dot-gray"></span>
+      <span>Paused</span>
+    </div>
+
+    <div class="toggle-row">
+      <span class="toggle-label">Enable Scraping</span>
+      <label class="toggle-switch">
+        <input type="checkbox" id="toggle-enabled" checked />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row" id="stats-row">
+      <div class="stat-box">
+        <div class="stat-value" id="stat-tasks">0</div>
+        <div class="stat-label">Tasks Done</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-success">0</div>
+        <div class="stat-label">Success</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-errors">0</div>
+        <div class="stat-label">Errors</div>
+      </div>
+    </div>
+
+    <!-- Login Batch -->
+    <div id="login-batch-section" class="login-batch" style="display:none">
+      <div class="login-batch-header">
+        <div class="login-batch-title-row">
+          <span class="login-dot" id="login-dot"></span>
+          <span class="login-title" id="login-batch-title">Login Batch Running</span>
+        </div>
+        <button id="btn-reset-login" class="btn-reset">Reset</button>
+      </div>
+      <div class="login-counts" id="login-batch-counts">0/0 — 0 ok, 0 fail</div>
+      <div class="login-bar-track">
+        <div id="login-batch-bar" class="login-bar-fill"></div>
+      </div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="section-card">
+      <div class="section-title">Activity Log</div>
+      <div class="activity-log" id="activity-log">
+        <div class="log-entry" style="color:rgba(255,255,255,0.25);font-style:italic">
+          No activity yet
+        </div>
+      </div>
+    </div>
+
+    <div class="hint">
+      When enabled, the extension polls for AI-Scraping tasks and uses your browser session to scrape Facebook pages.
+    </div>
+    <button class="btn btn-disconnect" id="btn-disconnect">Disconnect</button>
+  </div>
+
+  <div id="disconnected-view">
+    <label>API URL</label>
+    <input type="text" id="api-url" placeholder="https://your-app.railway.app" />
+
+    <label>Auth Token (JWT)</label>
+    <input type="password" id="auth-token" placeholder="Paste your JWT token" />
+
+    <button class="btn btn-connect" id="btn-connect">Connect</button>
+
+    <div class="hint">
+      Get your JWT token from SocyBase Settings page, or connect automatically from the web app.
+    </div>
+  </div>
+
+  <div id="message" class="msg" style="display:none"></div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
