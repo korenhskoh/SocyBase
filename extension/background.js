@@ -1106,6 +1106,8 @@ async function handleFollowUpScreens(tabId) {
       },
     });
     await waitForNavigation(tabId, 15000);
+    // Wait for cookies to settle after clicking follow-up button
+    await new Promise(r => setTimeout(r, 7000));
   }
 
   // Final cookie check
@@ -1132,8 +1134,10 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
       // Type into a field character-by-character with random delays
       async function typeInField(field, value) {
         field.focus();
+        await new Promise(r => setTimeout(r, 150)); // Wait for focus to settle
         setter.call(field, "");
         field.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise(r => setTimeout(r, 100));
         for (let i = 0; i < value.length; i++) {
           const char = value[i];
           setter.call(field, field.value + char);
@@ -1146,6 +1150,7 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
       }
 
       await typeInField(emailField, em);
+      await new Promise(r => setTimeout(r, 200)); // Gap between fields
       await typeInField(passField, pw);
 
       return { ok: true, emailVal: emailField.value, passLen: passField.value.length };
@@ -1330,8 +1335,10 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
 
               async function typeInField(field, value) {
                 field.focus();
+                await new Promise(r => setTimeout(r, 150));
                 setter.call(field, "");
                 field.dispatchEvent(new Event("input", { bubbles: true }));
+                await new Promise(r => setTimeout(r, 100));
                 for (let i = 0; i < value.length; i++) {
                   const char = value[i];
                   setter.call(field, field.value + char);
@@ -1344,6 +1351,7 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
               }
 
               await typeInField(emailField, em);
+              await new Promise(r => setTimeout(r, 200));
               await typeInField(passField, pw);
               return { ok: true };
             },
@@ -1726,11 +1734,19 @@ async function handle2FA(tabId, totpSecret, twoFaWaitSeconds = 60) {
     const url = await waitForNavigation(tabId, 30000);
     console.log(`[SocyBase Login] Post-2FA URL: ${url}`);
 
-    // Check cookies immediately
+    // Always handle follow-up screens first (click "Always confirm" etc.)
+    // even if cookies already exist — we want to complete the trust flow
+    if (url.includes("/remember_browser") || url.includes("/checkpoint") || url.includes("/two_factor") || url.includes("/two_step") || url.includes("/auth")) {
+      console.log(`[SocyBase Login] Follow-up page detected after 2FA — handling before extracting cookies`);
+      const followUpResult = await handleFollowUpScreens(tabId);
+      if (followUpResult.success) return followUpResult;
+    }
+
+    // Check cookies after follow-up screens
     const { fbUserId, cookieString } = await extractFacebookCookies();
     if (fbUserId) return { success: true, cookieString, fbUserId };
 
-    // Handle follow-up screens (trust browser, save browser, review login, etc.)
+    // Last resort: handle any remaining screens
     return await handleFollowUpScreens(tabId);
   } catch (e) {
     return { success: false, error: `2FA error: ${e.message}` };
