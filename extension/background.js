@@ -2093,6 +2093,198 @@ async function processLoginBatch(batchId, twoFaWaitSeconds = 60) {
   loginBatchState = null;
 }
 
+// ── DOM Selector Agent ──────────────────────────────────────────────
+
+// Fallback selectors — used when no AI-verified config exists
+const FALLBACK_SELECTORS = {
+  feed_article: { selector: '[role="article"]' },
+  like_button: { selector: '[aria-label="Like"]', state_check: "aria-pressed", state_value_liked: "true" },
+  profile_link: {
+    selector: 'a[role="link"]',
+    href_include: ["profile.php", "facebook.com/"],
+    href_exclude: ["/photo", "/story", "/groups", "/pages"],
+  },
+};
+
+// Selector cache (1 hour TTL)
+let cachedSelectors = null;
+let selectorsFetchedAt = null;
+const SELECTOR_CACHE_TTL = 60 * 60 * 1000;
+
+async function getActiveSelectors() {
+  if (cachedSelectors && selectorsFetchedAt && (Date.now() - selectorsFetchedAt < SELECTOR_CACHE_TTL)) {
+    return cachedSelectors;
+  }
+  try {
+    const data = await apiGet("/fb-action/dom-selectors/current");
+    if (data.has_config && data.confidence >= 0.6) {
+      cachedSelectors = data.selectors;
+      selectorsFetchedAt = Date.now();
+      console.log("[SocyBase Warmup] Using verified selectors (confidence:", data.confidence, ")");
+      return cachedSelectors;
+    }
+  } catch (e) {
+    console.warn("[SocyBase Warmup] Selector fetch failed, using fallback:", e.message);
+  }
+  console.log("[SocyBase Warmup] Using fallback selectors");
+  return FALLBACK_SELECTORS;
+}
+
+// DOM snapshot extraction — injected into Facebook tab
+function extractDOMSnapshot() {
+  const snapshot = {
+    timestamp: Date.now(),
+    url: window.location.href,
+    elements: { feed_articles: [], like_buttons: [], profile_links: [], comment_inputs: [] },
+  };
+
+  const articles = Array.from(document.querySelectorAll('[role="article"]')).slice(0, 5);
+
+  snapshot.elements.feed_articles = articles.map((el) => ({
+    tag: el.tagName,
+    role: el.getAttribute("role"),
+    aria_label: el.getAttribute("aria-label") || "",
+    class_sample: Array.from(el.classList).slice(0, 3).join(" "),
+    child_count: el.children.length,
+    parent_tag: el.parentElement?.tagName,
+  }));
+
+  articles.forEach((article, idx) => {
+    // Like buttons — search broadly
+    for (const el of article.querySelectorAll('[aria-label*="ike"], [aria-label*="uka"]')) {
+      snapshot.elements.like_buttons.push({
+        article_index: idx,
+        tag: el.tagName,
+        aria_label: el.getAttribute("aria-label"),
+        aria_pressed: el.getAttribute("aria-pressed"),
+        role: el.getAttribute("role"),
+        class_sample: Array.from(el.classList).slice(0, 3).join(" "),
+        parent_tag: el.parentElement?.tagName,
+        has_svg: !!el.querySelector("svg"),
+      });
+    }
+  });
+
+  articles.slice(0, 3).forEach((article, idx) => {
+    const links = Array.from(article.querySelectorAll('a[role="link"]'))
+      .filter((a) => {
+        const href = a.getAttribute("href") || "";
+        const text = a.textContent?.trim() || "";
+        return text.length > 1 && text.length < 80 &&
+          (href.includes("profile.php") || href.includes("facebook.com/")) &&
+          !href.includes("/photo") && !href.includes("/story");
+      })
+      .slice(0, 3);
+
+    links.forEach((link) => {
+      snapshot.elements.profile_links.push({
+        article_index: idx,
+        tag: link.tagName,
+        role: link.getAttribute("role"),
+        href_type: link.getAttribute("href")?.includes("profile.php") ? "profile.php" : "username",
+        text_length: link.textContent?.trim().length || 0,
+        aria_hidden: link.getAttribute("aria-hidden"),
+        tabindex: link.getAttribute("tabindex"),
+      });
+    });
+  });
+
+  // Comment inputs
+  const commentInputs = Array.from(document.querySelectorAll('[contenteditable="true"], [aria-label*="comment" i], [aria-label*="komentar" i]')).slice(0, 3);
+  snapshot.elements.comment_inputs = commentInputs.map((el) => ({
+    tag: el.tagName,
+    contenteditable: el.getAttribute("contenteditable"),
+    aria_label: el.getAttribute("aria-label"),
+    role: el.getAttribute("role"),
+    placeholder: el.getAttribute("placeholder") || el.getAttribute("data-placeholder") || "",
+  }));
+
+  return snapshot;
+}
+
+async function handleDOMCheck(checkData) {
+  const { account_email, cookie, proxy_host, proxy_port, proxy_username, proxy_password } = checkData;
+  console.log("[SocyBase DOM Check] Starting for", account_email);
+
+  let tab = null;
+  try {
+    // Apply proxy if provided
+    const proxy = proxy_host ? { host: proxy_host, port: proxy_port, username: proxy_username, password: proxy_password } : null;
+    await applyProxy(proxy);
+
+    // Inject cookies
+    await clearFacebookCookies();
+    await injectFacebookCookies(cookie);
+
+    // Open Facebook feed
+    tab = await chrome.tabs.create({ url: "https://www.facebook.com/", active: true });
+    await waitForTabLoad(tab.id, 20000);
+    await new Promise((r) => setTimeout(r, 5000));
+
+    // Check login
+    const loginCheck = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => ({ isLogin: window.location.href.includes("/login"), url: window.location.href }),
+    });
+    if (loginCheck?.[0]?.result?.isLogin) {
+      throw new Error("Session expired — redirected to login");
+    }
+
+    // Scroll a few times to load feed content
+    await new Promise((resolve, reject) => {
+      chrome.debugger.attach({ tabId: tab.id }, "1.3", () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+    const metrics = await cdp(tab.id, "Page.getLayoutMetrics");
+    const cx = (metrics.cssVisualViewport?.clientWidth || 800) / 2;
+    const cy = (metrics.cssVisualViewport?.clientHeight || 600) / 2;
+    for (let i = 0; i < 3; i++) {
+      await cdpScroll(tab.id, cx, cy, 800);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    try { await chrome.debugger.detach({ tabId: tab.id }); } catch {}
+
+    // Extract DOM snapshot
+    const snapshotResults = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: extractDOMSnapshot,
+    });
+    const snapshot = snapshotResults?.[0]?.result;
+    if (!snapshot) throw new Error("Failed to extract DOM snapshot");
+
+    console.log("[SocyBase DOM Check] Snapshot:", snapshot.elements.feed_articles.length, "articles,",
+      snapshot.elements.like_buttons.length, "like buttons,",
+      snapshot.elements.profile_links.length, "profile links");
+
+    // Submit to backend
+    const submitResult = await apiPost("/fb-action/dom-selectors/submit", {
+      snapshot,
+      account_email,
+    });
+
+    console.log("[SocyBase DOM Check] Done — confidence:", submitResult.confidence);
+
+    // Invalidate selector cache
+    cachedSelectors = null;
+    selectorsFetchedAt = null;
+
+    return { success: true, result: submitResult };
+
+  } catch (e) {
+    console.error("[SocyBase DOM Check] Error:", e.message);
+    return { success: false, error: e.message };
+  } finally {
+    if (tab?.id) {
+      try { await chrome.tabs.remove(tab.id); } catch {}
+    }
+    await clearFacebookCookies();
+    await clearProxy();
+  }
+}
+
+
 // ── Warm-Up Batch Processor ──────────────────────────────────────────
 
 let warmupBatchState = null; // { batchId, current, total, success, failed, cancelled }
@@ -2178,15 +2370,18 @@ async function warmupScrollFeed(tabId, count, minDelay = 2, maxDelay = 5) {
 }
 
 async function warmupLikePosts(tabId, count, minDelay = 3, maxDelay = 6) {
+  const selectors = await getActiveSelectors();
+
   const liked = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (maxLikes) => {
-      // Find unliked Like buttons in the feed
+    func: (maxLikes, selCfg) => {
+      const likeSelector = selCfg?.like_button?.selector || '[aria-label="Like"]';
+      const stateAttr = selCfg?.like_button?.state_check || "aria-pressed";
+      const stateVal = selCfg?.like_button?.state_value_liked || "true";
+
       const likeButtons = [];
-      for (const el of document.querySelectorAll('[aria-label="Like"]')) {
-        // Skip already-pressed (liked) buttons
-        if (el.getAttribute("aria-pressed") === "true") continue;
-        // Must be visible
+      for (const el of document.querySelectorAll(likeSelector)) {
+        if (el.getAttribute(stateAttr) === stateVal) continue;
         if (el.offsetParent === null) continue;
         likeButtons.push(el);
       }
@@ -2210,7 +2405,7 @@ async function warmupLikePosts(tabId, count, minDelay = 3, maxDelay = 6) {
       }
       return { found: likeButtons.length, clicked: results.length, results };
     },
-    args: [count],
+    args: [count, selectors],
   });
 
   const res = liked?.[0]?.result;
@@ -2224,26 +2419,31 @@ async function warmupLikePosts(tabId, count, minDelay = 3, maxDelay = 6) {
 }
 
 async function warmupViewProfiles(tabId, count, minDelay = 5, maxDelay = 10) {
+  const selectors = await getActiveSelectors();
   let viewed = 0;
 
   for (let i = 0; i < count; i++) {
     // Find random profile link in the feed
     const linkResult = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
+      func: (selCfg) => {
+        const linkSel = selCfg?.profile_link?.selector || 'a[role="link"]';
+        const hrefInclude = selCfg?.profile_link?.href_include || ["profile.php", "facebook.com/"];
+        const hrefExclude = selCfg?.profile_link?.href_exclude || ["/photo", "/story", "/groups", "/pages"];
+
         const links = [];
-        for (const a of document.querySelectorAll('a[role="link"]')) {
+        for (const a of document.querySelectorAll(linkSel)) {
           const href = a.getAttribute("href") || "";
           const text = a.textContent?.trim() || "";
-          // Profile-like links: profile.php or facebook.com/username
-          if (text.length > 1 && text.length < 60 &&
-              (href.includes("profile.php") || (href.includes("facebook.com/") && !href.includes("/photo") && !href.includes("/story") && !href.includes("/groups") && !href.includes("/pages")))) {
-            if (a.offsetParent !== null) links.push(href);
-          }
+          if (text.length < 2 || text.length >= 60) continue;
+          const included = hrefInclude.some((p) => href.includes(p));
+          const excluded = hrefExclude.some((p) => href.includes(p));
+          if (included && !excluded && a.offsetParent !== null) links.push(href);
         }
         if (links.length === 0) return null;
         return links[Math.floor(Math.random() * links.length)];
       },
+      args: [selectors],
     });
 
     const profileUrl = linkResult?.[0]?.result;
@@ -2625,6 +2825,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     warmupBatchState = null;
     console.log("[SocyBase Warmup] Warm-up batch state reset");
     sendResponse({ success: true });
+    return true;
+  }
+
+  // ── DOM Selector check ──────────────────────────────────────────
+  if (msg.type === "SOCYBASE_START_DOM_CHECK") {
+    if (loginBatchState || warmupBatchState) {
+      sendResponse({ success: false, error: "A login or warm-up batch is running — wait for it to finish" });
+      return true;
+    }
+    const { checkData, apiUrl, authToken } = msg;
+    if (apiUrl && authToken) {
+      chrome.storage.local.set({ apiUrl, authToken });
+    }
+    sendResponse({ success: true });
+    (async () => {
+      try {
+        const outcome = await handleDOMCheck(checkData);
+        // Broadcast result to all SocyBase tabs
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+          if (tab.url && (tab.url.includes("socybase") || tab.url.includes("localhost"))) {
+            chrome.tabs.sendMessage(tab.id, {
+              type: "SOCYBASE_DOM_CHECK_COMPLETE",
+              success: outcome.success,
+              result: outcome.result || null,
+              error: outcome.error || null,
+            }).catch(() => {});
+          }
+        }
+      } catch (e) {
+        console.error("[SocyBase DOM Check] Error:", e);
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+          if (tab.url && (tab.url.includes("socybase") || tab.url.includes("localhost"))) {
+            chrome.tabs.sendMessage(tab.id, {
+              type: "SOCYBASE_DOM_CHECK_COMPLETE",
+              success: false,
+              error: e.message || "DOM check failed",
+            }).catch(() => {});
+          }
+        }
+      }
+    })();
     return true;
   }
 

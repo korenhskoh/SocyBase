@@ -580,6 +580,13 @@ export const fbActionApi = {
     api.get(`/fb-action/warmup-batch/${batchId}`),
   getWarmupBatchHistory: (params?: { page?: number; page_size?: number }) =>
     api.get("/fb-action/warmup-batch/history", { params }),
+  // DOM Selectors
+  startDOMCheck: (data: { login_batch_id: string }) =>
+    api.post("/fb-action/dom-selectors/check", data),
+  submitDOMSnapshot: (data: { snapshot: Record<string, unknown>; account_email: string }) =>
+    api.post("/fb-action/dom-selectors/submit", data),
+  getCurrentSelectors: () =>
+    api.get("/fb-action/dom-selectors/current"),
   // AI Planner
   aiPlanGenerate: (data: {
     posts: Array<{ post_id: string; message?: string | null; from_name?: string | null; reaction_count?: number; comment_count?: number; share_count?: number; attachment_type?: string | null; post_url?: string | null }>;

@@ -28,6 +28,8 @@ from app.models.fb_live_sell import LiveSession, LiveComment
 from app.models.fb_live_engage import FBLiveEngageSession, FBLiveEngageLog
 from app.models.ai_search_history import AISearchHistory
 from app.models.quick_scan_history import QuickScanHistory
+from app.models.fb_warmup_batch import FBWarmupBatch
+from app.models.fb_dom_selector import FBDOMSelector
 
 __all__ = [
     "Tenant",
@@ -85,4 +87,7 @@ __all__ = [
     "AISearchHistory",
     # Quick Scan History
     "QuickScanHistory",
+    # Warmup & DOM Selectors
+    "FBWarmupBatch",
+    "FBDOMSelector",
 ]

@@ -1600,6 +1600,160 @@ async def get_warmup_history(
     }
 
 
+# ── DOM Selector Verification ────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+
+
+class DOMCheckRequest(BaseModel):
+    login_batch_id: str
+
+
+class DOMSnapshotSubmit(BaseModel):
+    snapshot: dict
+    account_email: str
+
+
+@router.post("/dom-selectors/check")
+async def start_dom_check(
+    body: DOMCheckRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pick one account from login batch and return its decrypted cookie for DOM check."""
+    from app.models.fb_login_batch import FBLoginBatch
+    from app.models.fb_login_result import FBLoginResult
+
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == UUID(body.login_batch_id),
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    login_batch = result.scalar_one_or_none()
+    if not login_batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+
+    # Pick one successful account with cookies
+    acct_r = await db.execute(
+        select(FBLoginResult)
+        .where(
+            FBLoginResult.login_batch_id == UUID(body.login_batch_id),
+            FBLoginResult.status == "success",
+            FBLoginResult.cookie_encrypted.isnot(None),
+        )
+        .limit(1)
+    )
+    account = acct_r.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=400, detail="No successful accounts in this batch")
+
+    meta = MetaAPIService()
+    try:
+        cookie_str = meta.decrypt_token(account.cookie_encrypted)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to decrypt account cookies")
+
+    proxy = account.proxy_used or {}
+
+    return {
+        "account_email": account.email,
+        "cookie": cookie_str,
+        "user_agent": account.user_agent or "",
+        "proxy_host": proxy.get("host", ""),
+        "proxy_port": proxy.get("port", ""),
+        "proxy_username": proxy.get("username", ""),
+        "proxy_password": proxy.get("password", ""),
+    }
+
+
+@router.post("/dom-selectors/submit")
+async def submit_dom_snapshot(
+    body: DOMSnapshotSubmit,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Receive DOM snapshot from extension, analyze with AI, store results."""
+    from app.models.fb_dom_selector import FBDOMSelector
+    from app.services.ai_dom_selector import DOMSelectorVerifier
+
+    if not body.snapshot or not body.snapshot.get("elements"):
+        raise HTTPException(status_code=400, detail="Invalid DOM snapshot")
+
+    try:
+        verifier = DOMSelectorVerifier()
+        result = await verifier.verify_selectors(body.snapshot)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("[DOMSelector] AI verification failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"AI analysis failed: {e}")
+
+    # Deactivate old configs for this tenant
+    from sqlalchemy import update as sa_update
+    await db.execute(
+        sa_update(FBDOMSelector)
+        .where(FBDOMSelector.tenant_id == user.tenant_id)
+        .values(is_active=False)
+    )
+
+    selector_config = FBDOMSelector(
+        tenant_id=user.tenant_id,
+        selectors=result.get("selectors", {}),
+        overall_confidence=result.get("overall_confidence", 0.0),
+        warnings=result.get("warnings"),
+        facebook_version=result.get("facebook_version"),
+        verified_by_account=body.account_email,
+        raw_snapshot=body.snapshot,
+        is_active=True,
+    )
+    db.add(selector_config)
+    await db.commit()
+    await db.refresh(selector_config)
+
+    return {
+        "success": True,
+        "config_id": str(selector_config.id),
+        "confidence": result.get("overall_confidence", 0.0),
+        "selectors": result.get("selectors", {}),
+        "warnings": result.get("warnings", []),
+        "facebook_version": result.get("facebook_version"),
+    }
+
+
+@router.get("/dom-selectors/current")
+async def get_current_selectors(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get currently active DOM selector config."""
+    from app.models.fb_dom_selector import FBDOMSelector
+
+    result = await db.execute(
+        select(FBDOMSelector)
+        .where(
+            FBDOMSelector.tenant_id == user.tenant_id,
+            FBDOMSelector.is_active == True,  # noqa: E712
+        )
+        .order_by(FBDOMSelector.verified_at.desc())
+        .limit(1)
+    )
+    config = result.scalar_one_or_none()
+
+    if not config:
+        return {"has_config": False, "selectors": None}
+
+    return {
+        "has_config": True,
+        "config_id": str(config.id),
+        "selectors": config.selectors,
+        "confidence": config.overall_confidence,
+        "warnings": config.warnings,
+        "facebook_version": config.facebook_version,
+        "verified_at": config.verified_at.isoformat() if config.verified_at else None,
+        "verified_by": config.verified_by_account,
+    }
+
+
 # ── AI Action Planner Endpoints ──────────────────────────────────────
 
 # ── GET /fb-action/ai-plan/login-batches ─────────────────────────────

@@ -115,6 +115,19 @@ window.addEventListener("message", (event) => {
     });
   }
 
+  // DOM Selector check: start via extension
+  if (event.data?.type === "SOCYBASE_START_DOM_CHECK") {
+    const { checkData, apiUrl, authToken } = event.data;
+    if (!checkData) return;
+    chrome.runtime.sendMessage({ type: "SOCYBASE_START_DOM_CHECK", checkData, apiUrl, authToken }, (response) => {
+      window.postMessage({
+        type: "SOCYBASE_DOM_CHECK_STARTED",
+        success: response?.success || false,
+        error: response?.error || null,
+      }, "*");
+    });
+  }
+
   // Login batch: cancel
   if (event.data?.type === "SOCYBASE_EXTENSION_CANCEL_LOGIN") {
     chrome.runtime.sendMessage({ type: "SOCYBASE_CANCEL_LOGIN_BATCH" }, (response) => {
@@ -138,6 +151,14 @@ chrome.runtime.onMessage.addListener((msg) => {
     window.postMessage({
       type: "SOCYBASE_WARMUP_PROGRESS",
       progress: msg.progress,
+    }, "*");
+  }
+  if (msg.type === "SOCYBASE_DOM_CHECK_COMPLETE") {
+    window.postMessage({
+      type: "SOCYBASE_DOM_CHECK_COMPLETE",
+      success: msg.success,
+      result: msg.result || null,
+      error: msg.error || null,
     }, "*");
   }
 });

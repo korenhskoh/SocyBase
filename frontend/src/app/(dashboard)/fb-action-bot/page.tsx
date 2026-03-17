@@ -282,6 +282,10 @@ export default function FBActionBotPage() {
   const [warmupHistoryTotal, setWarmupHistoryTotal] = useState(0);
   const [warmupHistoryPage, setWarmupHistoryPage] = useState(1);
   const warmupPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // DOM Selector check state
+  const [selectorConfig, setSelectorConfig] = useState<any>(null);
+  const [selectorChecking, setSelectorChecking] = useState(false);
+  const [selectorExpanded, setSelectorExpanded] = useState(false);
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // Toast
@@ -376,6 +380,10 @@ export default function FBActionBotPage() {
         setWarmupLoginBatches(items);
         if (items.length > 0 && !warmupLoginBatchId) setWarmupLoginBatchId(items[0].id);
       }).catch(() => {});
+      // Load current DOM selector config
+      fbActionApi.getCurrentSelectors().then((res) => {
+        setSelectorConfig(res.data);
+      }).catch(() => setSelectorConfig(null));
     }
   }, [activeTab, batchSubTab, warmupHistoryPage, loadWarmupHistory]);
 
@@ -440,6 +448,25 @@ export default function FBActionBotPage() {
       if (event.data?.type === "SOCYBASE_WARMUP_STARTED") {
         if (!event.data.success) {
           showToast("error", event.data.error || "Failed to start warm-up via extension");
+        }
+      }
+      // DOM check results
+      if (event.data?.type === "SOCYBASE_DOM_CHECK_STARTED") {
+        if (!event.data.success) {
+          setSelectorChecking(false);
+          showToast("error", event.data.error || "Failed to start DOM check");
+        }
+      }
+      if (event.data?.type === "SOCYBASE_DOM_CHECK_COMPLETE") {
+        setSelectorChecking(false);
+        if (event.data.success && event.data.result) {
+          showToast("success", `Selectors verified — confidence ${Math.round((event.data.result.confidence || 0) * 100)}%`);
+          // Reload full config from API (includes verified_at, verified_by)
+          fbActionApi.getCurrentSelectors().then((res) => {
+            setSelectorConfig(res.data);
+          }).catch(() => setSelectorConfig(event.data.result));
+        } else {
+          showToast("error", event.data.error || "DOM check failed");
         }
       }
     }
@@ -2720,6 +2747,99 @@ export default function FBActionBotPage() {
                   </div>
                 </div>
               )}
+
+              {/* DOM Selector Status */}
+              <div className="glass-card p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+                    <svg className="h-4 w-4 text-purple-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" /></svg>
+                    DOM Selector Agent
+                  </h3>
+                  {selectorConfig && selectorConfig.confidence != null && (
+                    <span className={`text-xs px-2 py-0.5 rounded ${
+                      selectorConfig.confidence >= 0.8 ? "bg-green-500/10 text-green-400" :
+                      selectorConfig.confidence >= 0.6 ? "bg-amber-500/10 text-amber-400" :
+                      "bg-red-500/10 text-red-400"
+                    }`}>
+                      {Math.round(selectorConfig.confidence * 100)}% confidence
+                    </span>
+                  )}
+                </div>
+
+                {selectorConfig && selectorConfig.selectors ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3 text-xs text-white/40">
+                      {selectorConfig.verified_at && (
+                        <span>Verified: {new Date(selectorConfig.verified_at).toLocaleString()}</span>
+                      )}
+                      {selectorConfig.verified_by && (
+                        <span>Account: {selectorConfig.verified_by}</span>
+                      )}
+                      {selectorConfig.facebook_version && (
+                        <span>FB: {selectorConfig.facebook_version}</span>
+                      )}
+                    </div>
+                    {selectorConfig.warnings && selectorConfig.warnings.length > 0 && (
+                      <div className="text-xs text-amber-400/60 bg-amber-400/5 p-2 rounded border border-amber-400/10">
+                        {selectorConfig.warnings.map((w: string, i: number) => (
+                          <div key={i}>{w}</div>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setSelectorExpanded(!selectorExpanded)}
+                      className="text-xs text-purple-400/60 hover:text-purple-400 transition"
+                    >
+                      {selectorExpanded ? "Hide details" : "Show selector details"}
+                    </button>
+                    {selectorExpanded && (
+                      <pre className="text-[10px] text-white/30 bg-white/[0.02] rounded-lg p-3 overflow-auto max-h-48 border border-white/5">
+                        {JSON.stringify(selectorConfig.selectors, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-white/30">No verified selectors. Using default (hardcoded) selectors.</p>
+                )}
+
+                <button
+                  disabled={!warmupLoginBatchId || selectorChecking || !extensionDetected}
+                  onClick={async () => {
+                    setSelectorChecking(true);
+                    try {
+                      const res = await fbActionApi.startDOMCheck({ login_batch_id: warmupLoginBatchId });
+                      const checkData = res.data;
+                      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                      const authToken = localStorage.getItem("access_token") || "";
+                      window.postMessage({
+                        type: "SOCYBASE_START_DOM_CHECK",
+                        checkData,
+                        apiUrl,
+                        authToken,
+                      }, "*");
+                    } catch (e: any) {
+                      setSelectorChecking(false);
+                      showToast("error", e.response?.data?.detail || "Failed to start DOM check");
+                    }
+                  }}
+                  className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs rounded-lg border border-purple-500/20 transition disabled:opacity-30 flex items-center gap-2"
+                >
+                  {selectorChecking ? (
+                    <>
+                      <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                      Checking DOM...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" /></svg>
+                      Check Selectors
+                    </>
+                  )}
+                </button>
+                {!extensionDetected && (
+                  <p className="text-[10px] text-white/20">Extension required to check selectors</p>
+                )}
+              </div>
 
               {/* Start new warm-up */}
               {(!warmupActive || (warmupActive.status !== "running" && warmupActive.status !== "pending")) && (
