@@ -304,14 +304,14 @@ async def connect_cookies(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Connect an account using manually provided c_user + xs cookie values."""
-    # Build minimal cookie array matching Chrome cookie format
+    """Connect an account using c_user + xs cookie values."""
+    meta = MetaAPIService()
+
     cookies = [
         {"name": "c_user", "value": body.c_user, "domain": ".facebook.com", "path": "/"},
         {"name": "xs", "value": body.xs, "domain": ".facebook.com", "path": "/"},
     ]
 
-    meta = MetaAPIService()
     encrypted = meta.encrypt_token(json.dumps(cookies))
 
     result = await db.execute(
