@@ -460,24 +460,41 @@ export default function FBActionBotPage() {
     }
   };
 
-  // Auto-get cookies from extension
+  // Auto-get cookies from extension — extract and auto-save
   const handleAutoGetCookies = () => {
+    setConnectingCookies(true);
     window.postMessage({ type: "SOCYBASE_EXTENSION_GET_COOKIES" }, "*");
-    const handler = (event: MessageEvent) => {
+    const handler = async (event: MessageEvent) => {
       if (event.data?.type === "SOCYBASE_EXTENSION_COOKIES_RESPONSE") {
         window.removeEventListener("message", handler);
         if (event.data.success) {
-          setCookieCUser(event.data.c_user);
-          setCookieXs(event.data.xs);
-          showToast("success", `Found session for user ${event.data.c_user} — click Connect to save`);
+          try {
+            const res = await fbActionApi.connectCookies({
+              c_user: event.data.c_user,
+              xs: event.data.xs,
+              user_agent: userAgent || undefined,
+            });
+            setHasCookies(true);
+            setFbUserId(res.data.fb_user_id);
+            setCookieCUser("");
+            setCookieXs("");
+            showToast("success", `Connected as ${res.data.fb_user_id}`);
+          } catch {
+            setCookieCUser(event.data.c_user);
+            setCookieXs(event.data.xs);
+            showToast("error", "Found cookies but failed to save — click Connect to retry");
+          }
         } else {
           showToast("error", event.data.error || "No Facebook session found in browser");
         }
+        setConnectingCookies(false);
       }
     };
     window.addEventListener("message", handler);
-    // Timeout after 5s
-    setTimeout(() => window.removeEventListener("message", handler), 5000);
+    setTimeout(() => {
+      window.removeEventListener("message", handler);
+      setConnectingCookies(false);
+    }, 5000);
   };
 
   // Execute action
