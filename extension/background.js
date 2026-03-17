@@ -1081,14 +1081,24 @@ async function handleFollowUpScreens(tabId) {
 
     if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/auth")) break;
 
-    // Click any trust/continue/save/skip button
+    // Click follow-up button — prefer "always confirm" over "trust this device"
     await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
-        const keywords = ["always trust", "always confirm", "trust", "confirm", "continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan", "next"];
-        for (const el of document.querySelectorAll('div[role="button"], button[type="submit"], button, input[type="submit"], a[role="button"]')) {
+        const buttons = document.querySelectorAll('div[role="button"], button[type="submit"], button, input[type="submit"], a[role="button"]');
+        // Pass 1: prefer "always confirm" / "always trust"
+        for (const el of buttons) {
           const text = el.textContent?.trim().toLowerCase() || "";
-          if (keywords.some(kw => text.includes(kw)) || el.type === "submit") {
+          if (text.includes("always confirm") || text.includes("always trust")) {
+            console.log(`[SocyBase Login] Clicking preferred button: "${text}"`);
+            el.click(); return;
+          }
+        }
+        // Pass 2: fallback to other action buttons
+        const fallback = ["trust", "confirm", "continue", "this was me", "save", "ok", "skip", "not now", "lanjutkan", "next"];
+        for (const el of buttons) {
+          const text = el.textContent?.trim().toLowerCase() || "";
+          if (fallback.some(kw => text.includes(kw)) || el.type === "submit") {
             console.log(`[SocyBase Login] Clicking follow-up button: "${text}"`);
             el.click(); return;
           }
