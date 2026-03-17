@@ -1079,7 +1079,7 @@ async function handleFollowUpScreens(tabId) {
       break;
     }
 
-    if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/auth")) break;
+    if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/two_factor") && !currentUrl.includes("/auth")) break;
 
     // Click follow-up button — prefer "always confirm" over "trust this device"
     await chrome.scripting.executeScript({
@@ -1999,10 +1999,11 @@ async function processLoginBatch(batchId, twoFaWaitSeconds = 60) {
       console.error(`[SocyBase Login] Failed to report result for ${email}:`, e.message);
     }
 
-    // Cleanup
+    // Cleanup — clear cookies immediately so next account starts clean
     if (tab?.id) {
       try { await chrome.tabs.remove(tab.id); } catch {}
     }
+    await clearFacebookCookies();
     await clearProxy();
 
     loginBatchState.current = i + 1;
