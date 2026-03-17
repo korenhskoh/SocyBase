@@ -1213,11 +1213,13 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
         const isTrust = body.includes("trust") || body.includes("save browser") ||
                         body.includes("remember browser") || body.includes("this was me") ||
                         body.includes("recognize");
-        // Only use heading/spinner text for security check — footer text ("arkose", "matchkey",
-        // "combat harmful conduct") stays permanently even after 2FA input appears
+        // For initial detection, include footer text too — the heading may not have loaded yet
+        // (the stillChecking loop uses only heading text since footer persists after transition)
         const isSecurityCheck = body.includes("running security checks") ||
                                 body.includes("please wait while we verify") ||
-                                body.includes("automatically redirected");
+                                body.includes("automatically redirected") ||
+                                body.includes("combat harmful conduct") ||
+                                body.includes("arkose") || body.includes("matchkey");
         // Also check if 2FA input is already visible on the page
         const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
           'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
@@ -1424,8 +1426,9 @@ async function handle2FA(tabId, totpSecret, twoFaWaitSeconds = 60) {
       target: { tabId },
       func: () => {
         const body = document.body?.innerText?.toLowerCase() || "";
-        // Check heading text only (footer about Arkose/MatchKey stays permanently)
-        const hasSecurityCheck = body.includes("running security checks") || body.includes("please wait while we verify");
+        // For initial detection, include footer text too — heading may not have loaded yet
+        const hasSecurityCheck = body.includes("running security checks") || body.includes("please wait while we verify") ||
+                                 body.includes("combat harmful conduct") || body.includes("arkose") || body.includes("matchkey");
         // Also check if 2FA input is already visible
         const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
           'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
@@ -1565,6 +1568,23 @@ async function handle2FA(tabId, totpSecret, twoFaWaitSeconds = 60) {
       if (attempt > 0) {
         console.log(`[SocyBase Login] 2FA code input scan ${attempt + 1}/${maxAttempts} — waiting 3s...`);
         await new Promise(r => setTimeout(r, 3000));
+      }
+
+      // Early exit: check if redirected to login page (credentials rejected)
+      const tabInfo = await chrome.tabs.get(tabId);
+      const tabUrl = tabInfo?.url || "";
+      if (tabUrl.includes("/login") && !tabUrl.includes("/two_step") && !tabUrl.includes("/checkpoint")) {
+        const loginBody = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => document.body?.innerText?.slice(0, 150) || "",
+        });
+        return { success: false, error: `Login rejected (${loginBody?.[0]?.result?.slice(0, 80) || "redirected to login"})` };
+      }
+
+      // Early exit: check if cookies appeared (got logged in)
+      const earlyCookies = await extractFacebookCookies();
+      if (earlyCookies.fbUserId) {
+        return { success: true, cookieString: earlyCookies.cookieString, fbUserId: earlyCookies.fbUserId };
       }
 
       // Check if there's a code input on the page
