@@ -1213,12 +1213,16 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
         const isTrust = body.includes("trust") || body.includes("save browser") ||
                         body.includes("remember browser") || body.includes("this was me") ||
                         body.includes("recognize");
+        // Only use heading/spinner text for security check — footer text ("arkose", "matchkey",
+        // "combat harmful conduct") stays permanently even after 2FA input appears
         const isSecurityCheck = body.includes("running security checks") ||
                                 body.includes("please wait while we verify") ||
-                                body.includes("automatically redirected") ||
-                                body.includes("arkose") || body.includes("matchkey") ||
-                                body.includes("combat harmful conduct");
-        return { is2FA, isTrust, isSecurityCheck, bodySnippet: body.slice(0, 300) };
+                                body.includes("automatically redirected");
+        // Also check if 2FA input is already visible on the page
+        const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
+          'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
+        const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
+        return { is2FA: is2FA || has2FAInput, isTrust, isSecurityCheck: isSecurityCheck && !has2FAInput, bodySnippet: body.slice(0, 300) };
       },
     });
     const trustRes = trustResult?.[0]?.result;
@@ -1250,18 +1254,31 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
           return { success: false, error: `Login rejected after security check (${errBody?.[0]?.result?.slice(0, 80) || "unknown"})` };
         }
 
-        // Check if we left the security check page
-        const bodyCheck = await chrome.scripting.executeScript({
+        // Check if 2FA input appeared (security check completed, page transitioned)
+        const transitionCheck = await chrome.scripting.executeScript({
           target: { tabId },
           func: () => {
             const body = document.body?.innerText?.toLowerCase() || "";
-            return { stillChecking: body.includes("running security checks") || body.includes("please wait while we verify") ||
-                     body.includes("arkose") || body.includes("matchkey") || body.includes("combat harmful conduct"),
-                     bodySnippet: body.slice(0, 200) };
+            // Only the heading/spinner text means still checking — footer text stays forever
+            const stillChecking = body.includes("running security checks") || body.includes("please wait while we verify");
+            // Check if 2FA input has appeared
+            const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
+              'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
+            const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
+            // Also check for 2FA text
+            const has2FAText = body.includes("enter the code") || body.includes("authentication code") ||
+                               body.includes("two-factor") || body.includes("verify your identity") || body.includes("masukkan kode");
+            return { stillChecking, has2FAInput, has2FAText, bodySnippet: body.slice(0, 200) };
           },
         });
-        if (!bodyCheck?.[0]?.result?.stillChecking) {
-          console.log(`[SocyBase Login] Security check completed, new page: ${bodyCheck?.[0]?.result?.bodySnippet?.slice(0, 100)}`);
+        const tc = transitionCheck?.[0]?.result;
+        if (tc?.has2FAInput || tc?.has2FAText) {
+          console.log(`[SocyBase Login] 2FA input appeared during security check wait (input=${tc.has2FAInput}, text=${tc.has2FAText})`);
+          if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
+          return await handle2FA(tabId, totpSecret, twoFaWaitSeconds);
+        }
+        if (!tc?.stillChecking) {
+          console.log(`[SocyBase Login] Security check completed, new page: ${tc?.bodySnippet?.slice(0, 100)}`);
           break;
         }
       }
@@ -1376,17 +1393,24 @@ async function handle2FA(tabId, totpSecret, twoFaWaitSeconds = 60) {
     // Wait for initial 2FA page render
     await new Promise(r => setTimeout(r, 2000));
 
-    // Step 0: Wait for security checks / Arkose CAPTCHA to clear
+    // Step 0: Wait for security checks to clear (but skip if 2FA input already visible)
     const secCheckResult = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
         const body = document.body?.innerText?.toLowerCase() || "";
-        return body.includes("running security checks") || body.includes("arkose") ||
-               body.includes("matchkey") || body.includes("combat harmful conduct") ||
-               body.includes("please wait while we verify");
+        // Check heading text only (footer about Arkose/MatchKey stays permanently)
+        const hasSecurityCheck = body.includes("running security checks") || body.includes("please wait while we verify");
+        // Also check if 2FA input is already visible
+        const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
+          'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
+        const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
+        return { hasSecurityCheck, has2FAInput };
       },
     });
-    if (secCheckResult?.[0]?.result) {
+    const secRes = secCheckResult?.[0]?.result;
+    if (secRes?.has2FAInput) {
+      console.log(`[SocyBase Login] 2FA input already visible — skipping security check wait`);
+    } else if (secRes?.hasSecurityCheck) {
       console.log(`[SocyBase Login] Security check/CAPTCHA detected before 2FA — waiting up to ${twoFaWaitSeconds}s for it to clear...`);
       const maxWaits = Math.ceil(twoFaWaitSeconds / 3);
       for (let wait = 0; wait < maxWaits; wait++) {
@@ -1410,17 +1434,27 @@ async function handle2FA(tabId, totpSecret, twoFaWaitSeconds = 60) {
           return { success: false, error: `Login rejected after security check (${errResult?.[0]?.result?.slice(0, 100) || "unknown"})` };
         }
 
-        // Check if security check cleared
-        const stillChecking = await chrome.scripting.executeScript({
+        // Check if security check cleared or 2FA input appeared
+        const checkResult = await chrome.scripting.executeScript({
           target: { tabId },
           func: () => {
             const body = document.body?.innerText?.toLowerCase() || "";
-            return body.includes("running security checks") || body.includes("arkose") ||
-                   body.includes("matchkey") || body.includes("combat harmful conduct") ||
-                   body.includes("please wait while we verify");
+            // Only heading text — footer about Arkose stays forever
+            const stillActive = body.includes("running security checks") || body.includes("please wait while we verify");
+            // Check if 2FA input has appeared on the page
+            const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
+              'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
+            const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
+            return { stillActive, has2FAInput };
           },
         });
-        if (!stillChecking?.[0]?.result) {
+        const cr = checkResult?.[0]?.result;
+        if (cr?.has2FAInput) {
+          console.log(`[SocyBase Login] 2FA input appeared during security check wait — proceeding to fill code`);
+          await new Promise(r => setTimeout(r, 1000)); // Let page settle
+          break;
+        }
+        if (!cr?.stillActive) {
           console.log(`[SocyBase Login] Security check cleared after ${(wait + 1) * 3}s`);
           await new Promise(r => setTimeout(r, 2000)); // Let page settle
           break;

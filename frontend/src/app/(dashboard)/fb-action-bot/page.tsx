@@ -394,6 +394,7 @@ export default function FBActionBotPage() {
           setActiveLoginBatch(res.data);
           if (res.data.status !== "pending" && res.data.status !== "running") {
             if (loginPollRef.current) clearInterval(loginPollRef.current);
+            setExtensionLoginStarted(false);
             loadLoginHistory();
 
             // Auto-download CSV after all accounts logged in
@@ -656,6 +657,7 @@ export default function FBActionBotPage() {
         max_parallel: loginParallel,
         proxy_pool: proxyPool.length > 0 ? proxyPool : undefined,
       });
+      setExtensionLoginStarted(false);
       setActiveLoginBatch({
         id: res.data.batch_id,
         status: "pending",
@@ -692,6 +694,7 @@ export default function FBActionBotPage() {
     try {
       await fbActionApi.cancelLoginBatch(activeLoginBatch.id);
       setActiveLoginBatch({ ...activeLoginBatch, status: "cancelled" });
+      setExtensionLoginStarted(false);
       showToast("success", "Login batch cancelled");
       loadLoginHistory();
     } catch {
@@ -1346,24 +1349,38 @@ export default function FBActionBotPage() {
                   <p className="text-xs text-white/40">
                     Login runs on <span className="text-white/70">your Chrome browser</span> via the SocyBase extension.
                   </p>
-                  <button
-                    onClick={() => {
-                      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-                      const authToken = localStorage.getItem("access_token") || "";
-                      window.postMessage({
-                        type: "SOCYBASE_EXTENSION_START_LOGIN",
-                        batchId: activeLoginBatch.id,
-                        apiUrl,
-                        authToken,
-                        twoFaWaitSeconds,
-                      }, "*");
-                    }}
-                    disabled={extensionLoginStarted}
-                    className="w-full py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-sm font-medium rounded-xl border border-emerald-500/20 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" /></svg>
-                    {extensionLoginStarted ? "Login Started..." : "Run via Chrome Extension"}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                        const authToken = localStorage.getItem("access_token") || "";
+                        window.postMessage({
+                          type: "SOCYBASE_EXTENSION_START_LOGIN",
+                          batchId: activeLoginBatch.id,
+                          apiUrl,
+                          authToken,
+                          twoFaWaitSeconds,
+                        }, "*");
+                      }}
+                      disabled={extensionLoginStarted}
+                      className="flex-1 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-sm font-medium rounded-xl border border-emerald-500/20 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" /></svg>
+                      {extensionLoginStarted ? "Login Started..." : "Run via Chrome Extension"}
+                    </button>
+                    {extensionLoginStarted && (
+                      <button
+                        onClick={() => {
+                          setExtensionLoginStarted(false);
+                          window.postMessage({ type: "SOCYBASE_EXTENSION_CANCEL_LOGIN" }, "*");
+                        }}
+                        className="px-3 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-sm font-medium rounded-xl border border-red-500/20 transition"
+                        title="Reset login state so you can start again"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
                   <p className="text-[10px] text-white/20">
                     The extension will open tabs in your Chrome and log into each account automatically. Keep Chrome open until done.
                   </p>
