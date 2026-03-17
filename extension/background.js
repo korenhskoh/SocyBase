@@ -1230,25 +1230,77 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
     const trustRes = trustResult?.[0]?.result;
     console.log(`[SocyBase Login] Checkpoint: is2FA=${trustRes?.is2FA}, isTrust=${trustRes?.isTrust}, isSecurityCheck=${trustRes?.isSecurityCheck}, body=${trustRes?.bodySnippet?.slice(0, 100)}`);
 
-    // "Running security checks" — wait for auto-redirect, then re-evaluate
+    // Security check → 2FA pipeline (single unified loop)
+    // Footer text detected → keep scanning for 2FA input until timeout
+    // Only check login redirect when BOTH heading AND footer are gone (fully left security check page)
     if (trustRes?.isSecurityCheck) {
-      const secMaxWaits = Math.max(10, Math.ceil(twoFaWaitSeconds / 3));
-      console.log(`[SocyBase Login] Security check page detected — waiting up to ${secMaxWaits * 3}s for redirect...`);
-      for (let wait = 0; wait < secMaxWaits; wait++) {
-        await new Promise(r => setTimeout(r, 3000));
-        const tab = await chrome.tabs.get(tabId);
-        const url = tab?.url || "";
-        console.log(`[SocyBase Login] Security check wait ${wait + 1}/${secMaxWaits}: ${url}`);
+      const startTime = Date.now();
+      const timeoutMs = twoFaWaitSeconds * 1000;
+      const elapsed = () => Date.now() - startTime;
 
-        // Check cookies first — maybe we got logged in
-        const earlyCheck = await extractFacebookCookies();
-        if (earlyCheck.fbUserId) {
-          console.log(`[SocyBase Login] Got cookies during security check`);
-          return { success: true, cookieString: earlyCheck.cookieString, fbUserId: earlyCheck.fbUserId };
+      console.log(`[SocyBase Login] Security check detected (footer text). Waiting up to ${twoFaWaitSeconds}s for 2FA input...`);
+
+      while (elapsed() < timeoutMs) {
+        await new Promise(r => setTimeout(r, 3000));
+
+        // Check 1: cookies appeared → success
+        const cookies = await extractFacebookCookies();
+        if (cookies.fbUserId) {
+          console.log(`[SocyBase Login] Got cookies during security check wait`);
+          return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
         }
 
-        // If redirected to login page → failed
+        // Check 2: page state — heading, footer, 2FA input, trust
+        const stateResult = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const body = document.body?.innerText?.toLowerCase() || "";
+            const hasHeading = body.includes("running security checks") || body.includes("please wait while we verify");
+            const hasFooter = body.includes("combat harmful conduct") || body.includes("arkose") || body.includes("matchkey");
+            const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
+              'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
+            const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
+            const has2FAText = body.includes("enter the code") || body.includes("authentication code") ||
+                               body.includes("two-factor") || body.includes("verify your identity") || body.includes("masukkan kode");
+            const isTrust = body.includes("trust") || body.includes("save browser") ||
+                            body.includes("remember browser") || body.includes("this was me");
+            return { hasHeading, hasFooter, has2FAInput, has2FAText, isTrust, bodySnippet: body.slice(0, 200) };
+          },
+        });
+        const st = stateResult?.[0]?.result;
+        const secs = Math.round(elapsed() / 1000);
+        console.log(`[SocyBase Login] Scan (${secs}s): heading=${st?.hasHeading}, footer=${st?.hasFooter}, 2faInput=${st?.has2FAInput}, 2faText=${st?.has2FAText}`);
+
+        // Check 3: 2FA input found → generate TOTP & fill
+        if (st?.has2FAInput || st?.has2FAText) {
+          console.log(`[SocyBase Login] 2FA input found at ${secs}s — proceeding to TOTP`);
+          if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
+          return await handle2FA(tabId, totpSecret, twoFaWaitSeconds);
+        }
+
+        // Check 4: trust page
+        if (st?.isTrust) {
+          return await handleFollowUpScreens(tabId);
+        }
+
+        // Check 5: still on security check page (heading OR footer present) → keep waiting
+        if (st?.hasHeading || st?.hasFooter) {
+          continue; // Don't check URL — security check still in progress
+        }
+
+        // Check 6: heading AND footer both gone → page has left security check
+        // Now check URL to see where we ended up
+        const tab = await chrome.tabs.get(tabId);
+        const url = tab?.url || "";
+
+        if (isHomeUrl(url)) {
+          const c = await extractFacebookCookies();
+          if (c.fbUserId) return { success: true, cookieString: c.cookieString, fbUserId: c.fbUserId };
+          return { success: false, error: "Home page reached after security check but no c_user cookie" };
+        }
+
         if (url.includes("/login") && !url.includes("/two_step") && !url.includes("/checkpoint")) {
+          // Redirected to login — fail (outer retry loop will re-attempt)
           const errBody = await chrome.scripting.executeScript({
             target: { tabId },
             func: () => document.body?.innerText?.slice(0, 150) || "",
@@ -1256,113 +1308,11 @@ async function loginSingleAccount(email, password, totpSecret, tabId, twoFaWaitS
           return { success: false, error: `Login rejected after security check (${errBody?.[0]?.result?.slice(0, 80) || "unknown"})` };
         }
 
-        // Check if 2FA input appeared (security check completed, page transitioned)
-        const transitionCheck = await chrome.scripting.executeScript({
-          target: { tabId },
-          func: () => {
-            const body = document.body?.innerText?.toLowerCase() || "";
-            // Only the heading/spinner text means still checking — footer text stays forever
-            const stillChecking = body.includes("running security checks") || body.includes("please wait while we verify");
-            // Check if 2FA input has appeared
-            const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
-              'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
-            const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
-            // Also check for 2FA text
-            const has2FAText = body.includes("enter the code") || body.includes("authentication code") ||
-                               body.includes("two-factor") || body.includes("verify your identity") || body.includes("masukkan kode");
-            return { stillChecking, has2FAInput, has2FAText, bodySnippet: body.slice(0, 200) };
-          },
-        });
-        const tc = transitionCheck?.[0]?.result;
-        if (tc?.has2FAInput || tc?.has2FAText) {
-          console.log(`[SocyBase Login] 2FA input appeared during security check wait (input=${tc.has2FAInput}, text=${tc.has2FAText})`);
-          if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
-          return await handle2FA(tabId, totpSecret, twoFaWaitSeconds);
-        }
-        if (!tc?.stillChecking) {
-          console.log(`[SocyBase Login] Security check completed, new page: ${tc?.bodySnippet?.slice(0, 100)}`);
-          break;
-        }
+        // Still on checkpoint/two_step URL but no indicators yet — keep scanning
+        console.log(`[SocyBase Login] No indicators at ${secs}s, URL=${url?.slice(0, 80)} — continuing scan...`);
       }
 
-      // After security check, re-evaluate: check cookies, URL, page content
-      const postCheckCookies = await extractFacebookCookies();
-      if (postCheckCookies.fbUserId) return { success: true, cookieString: postCheckCookies.cookieString, fbUserId: postCheckCookies.fbUserId };
-
-      const postCheckTab = await chrome.tabs.get(tabId);
-      const postCheckUrl = postCheckTab?.url || "";
-      console.log(`[SocyBase Login] Post-security-check URL: ${postCheckUrl}`);
-
-      if (isHomeUrl(postCheckUrl)) {
-        const cookies = await extractFacebookCookies();
-        if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
-        return { success: false, error: "Home page reached after security check but no c_user cookie" };
-      }
-
-      if (postCheckUrl.includes("/login")) {
-        const errorResult = await chrome.scripting.executeScript({
-          target: { tabId },
-          func: () => {
-            for (const sel of ["#login_error", '[data-testid="login_error"]', ".login_error_box", "._9ay7"]) {
-              const el = document.querySelector(sel);
-              if (el) return el.textContent.trim().slice(0, 120);
-            }
-            const body = document.body?.innerText || "";
-            if (body.includes("incorrect")) return "The login information you entered is incorrect";
-            return "";
-          },
-        });
-        const errorText = errorResult?.[0]?.result || "";
-        return { success: false, error: `Login rejected after security check${errorText ? ` (${errorText})` : ""}` };
-      }
-
-      // Maybe redirected to actual 2FA or trust page — keep scanning with remaining time
-      // The 2FA input may take extra time to render after security check clears
-      const postScanMax = Math.max(5, Math.ceil(twoFaWaitSeconds / 3));
-      for (let ps = 0; ps < postScanMax; ps++) {
-        const recheck = await chrome.scripting.executeScript({
-          target: { tabId },
-          func: () => {
-            const body = document.body?.innerText?.toLowerCase() || "";
-            const is2FA = body.includes("enter the code") || body.includes("authentication code") ||
-                          body.includes("approvals_code") || body.includes("two-factor") ||
-                          body.includes("verify your identity") || body.includes("masukkan kode");
-            const isTrust = body.includes("trust") || body.includes("save browser") ||
-                            body.includes("remember browser") || body.includes("this was me");
-            const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
-              'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
-            const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
-            return { is2FA: is2FA || has2FAInput, isTrust, has2FAInput };
-          },
-        });
-        const recheckRes = recheck?.[0]?.result;
-        if (recheckRes?.isTrust && !recheckRes?.is2FA) return await handleFollowUpScreens(tabId);
-        if (recheckRes?.is2FA) {
-          if (!totpSecret) return { success: false, error: "2FA required but no TOTP secret provided" };
-          return await handle2FA(tabId, totpSecret, twoFaWaitSeconds);
-        }
-
-        // Check cookies — maybe got logged in during transition
-        const transitCookies = await extractFacebookCookies();
-        if (transitCookies.fbUserId) return { success: true, cookieString: transitCookies.cookieString, fbUserId: transitCookies.fbUserId };
-
-        // Check if redirected away
-        const currentTab = await chrome.tabs.get(tabId);
-        const curUrl = currentTab?.url || "";
-        if (isHomeUrl(curUrl)) {
-          const c = await extractFacebookCookies();
-          if (c.fbUserId) return { success: true, cookieString: c.cookieString, fbUserId: c.fbUserId };
-          break;
-        }
-        if (curUrl.includes("/login") && !curUrl.includes("/two_step") && !curUrl.includes("/checkpoint")) {
-          return { success: false, error: "Redirected to login page — credentials rejected" };
-        }
-
-        console.log(`[SocyBase Login] Post-security-check scan ${ps + 1}/${postScanMax}: waiting for 2FA input...`);
-        await new Promise(r => setTimeout(r, 3000));
-      }
-
-      return { success: false, error: `2FA input not found after security check: url=${postCheckUrl}` };
+      return { success: false, error: `2FA input not found after security check (waited ${twoFaWaitSeconds}s)` };
     }
 
     if (trustRes?.isTrust && !trustRes?.is2FA) {
@@ -1421,88 +1371,39 @@ async function handle2FA(tabId, totpSecret, twoFaWaitSeconds = 60) {
     // Wait for initial 2FA page render
     await new Promise(r => setTimeout(r, 2000));
 
-    // Step 0: Wait for security checks to clear (but skip if 2FA input already visible)
+    // Step 0: Quick check — security check handling is done by the caller,
+    // but if handle2FA is called directly (non-security-check path), do a quick wait
     const secCheckResult = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
         const body = document.body?.innerText?.toLowerCase() || "";
-        // For initial detection, include footer text too — heading may not have loaded yet
-        const hasSecurityCheck = body.includes("running security checks") || body.includes("please wait while we verify") ||
-                                 body.includes("combat harmful conduct") || body.includes("arkose") || body.includes("matchkey");
-        // Also check if 2FA input is already visible
+        const hasHeading = body.includes("running security checks") || body.includes("please wait while we verify");
         const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
           'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
         const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
-        return { hasSecurityCheck, has2FAInput };
+        return { hasHeading, has2FAInput };
       },
     });
     const secRes = secCheckResult?.[0]?.result;
     if (secRes?.has2FAInput) {
-      console.log(`[SocyBase Login] 2FA input already visible — skipping security check wait`);
-    } else if (secRes?.hasSecurityCheck) {
-      console.log(`[SocyBase Login] Security check/CAPTCHA detected before 2FA — waiting up to ${twoFaWaitSeconds}s for it to clear...`);
-      const maxWaits = Math.ceil(twoFaWaitSeconds / 3);
-      for (let wait = 0; wait < maxWaits; wait++) {
+      console.log(`[SocyBase Login] 2FA input already visible — skipping to code entry`);
+    } else if (secRes?.hasHeading) {
+      // Rare: handle2FA called while security check heading is still present — wait briefly
+      console.log(`[SocyBase Login] Security check heading still present in handle2FA — waiting for it to clear...`);
+      for (let wait = 0; wait < 20; wait++) {
         await new Promise(r => setTimeout(r, 3000));
-        const tab = await chrome.tabs.get(tabId);
-        const url = tab?.url || "";
-
-        // Check cookies first — maybe security check passed and we're logged in
-        const cookies = await extractFacebookCookies();
-        if (cookies.fbUserId) {
-          console.log(`[SocyBase Login] Got cookies during security check wait`);
-          return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
-        }
-
-        // If redirected to login page → failed
-        if (url.includes("/login") && !url.includes("/two_step") && !url.includes("/checkpoint")) {
-          const errResult = await chrome.scripting.executeScript({
-            target: { tabId },
-            func: () => document.body?.innerText?.slice(0, 200) || "",
-          });
-          return { success: false, error: `Login rejected after security check (${errResult?.[0]?.result?.slice(0, 100) || "unknown"})` };
-        }
-
-        // Check if security check cleared or 2FA input appeared
-        const checkResult = await chrome.scripting.executeScript({
+        const cr = await chrome.scripting.executeScript({
           target: { tabId },
           func: () => {
             const body = document.body?.innerText?.toLowerCase() || "";
-            // Only heading text — footer about Arkose stays forever
-            const stillActive = body.includes("running security checks") || body.includes("please wait while we verify");
-            // Check if 2FA input has appeared on the page
-            const twoFaSelectors = ['input[name="approvals_code"]', 'input[name="code"]', 'input[type="tel"]',
-              'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
-            const has2FAInput = twoFaSelectors.some(sel => document.querySelector(sel));
-            return { stillActive, has2FAInput };
+            return { hasHeading: body.includes("running security checks") || body.includes("please wait while we verify") };
           },
         });
-        const cr = checkResult?.[0]?.result;
-        if (cr?.has2FAInput) {
-          console.log(`[SocyBase Login] 2FA input appeared during security check wait — proceeding to fill code`);
-          await new Promise(r => setTimeout(r, 1000)); // Let page settle
+        if (!cr?.[0]?.result?.hasHeading) {
+          console.log(`[SocyBase Login] Security check heading cleared in handle2FA`);
+          await new Promise(r => setTimeout(r, 2000));
           break;
         }
-        if (!cr?.stillActive) {
-          console.log(`[SocyBase Login] Security check cleared after ${(wait + 1) * 3}s`);
-          await new Promise(r => setTimeout(r, 2000)); // Let page settle
-          break;
-        }
-        console.log(`[SocyBase Login] Security check still active (${(wait + 1) * 3}/${twoFaWaitSeconds}s)...`);
-      }
-
-      // Re-check cookies & URL after security check
-      const postCookies = await extractFacebookCookies();
-      if (postCookies.fbUserId) return { success: true, cookieString: postCookies.cookieString, fbUserId: postCookies.fbUserId };
-
-      const postTab = await chrome.tabs.get(tabId);
-      if (isHomeUrl(postTab?.url || "")) {
-        const c = await extractFacebookCookies();
-        if (c.fbUserId) return { success: true, cookieString: c.cookieString, fbUserId: c.fbUserId };
-        return { success: false, error: "Home page reached after security check but no cookies" };
-      }
-      if ((postTab?.url || "").includes("/login") && !(postTab?.url || "").includes("/two_step")) {
-        return { success: false, error: "Redirected to login page after security check — credentials rejected" };
       }
     }
 
@@ -1909,94 +1810,126 @@ async function processLoginBatch(batchId, twoFaWaitSeconds = 60) {
     // Apply proxy before clearing cookies & opening tab
     await applyProxy(proxy);
 
-    // Clear cookies before each login
-    await clearFacebookCookies();
+    // Retry loop — retry login up to 3 times when Arkose/security check causes rejection
+    const MAX_LOGIN_ATTEMPTS = 3;
+    let result = null;
+    let tabUA = ua;
+    let tab = null;
 
-    // Handle cookie consent — open tab
-    let tab;
-    try {
-      tab = await chrome.tabs.create({ url: "https://www.facebook.com/login/", active: false });
-      await waitForTabLoad(tab.id);
-      await new Promise(r => setTimeout(r, 1500)); // Wait for React to render
+    for (let attempt = 1; attempt <= MAX_LOGIN_ATTEMPTS; attempt++) {
+      if (loginBatchState.cancelled) break;
 
-      // Click cookie consent if present
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => {
-          const selectors = '[data-cookiebanner="accept_button"], button[title="Allow all cookies"], button[title="Accept All"]';
-          const btn = document.querySelector(selectors);
-          if (btn) btn.click();
-        },
-      });
-      await new Promise(r => setTimeout(r, 500));
+      // Clear cookies before each attempt
+      await clearFacebookCookies();
 
-      // Login
-      const result = await loginSingleAccount(email, password, totpSecret || null, tab.id, twoFaWaitSeconds);
-
-      // Grab actual user agent from the tab
-      let tabUA = ua;
       try {
-        const uaResult = await chrome.scripting.executeScript({
+        tab = await chrome.tabs.create({ url: "https://www.facebook.com/login/", active: false });
+        await waitForTabLoad(tab.id);
+        await new Promise(r => setTimeout(r, 1500)); // Wait for React to render
+
+        // Click cookie consent if present
+        await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: () => navigator.userAgent,
+          func: () => {
+            const selectors = '[data-cookiebanner="accept_button"], button[title="Allow all cookies"], button[title="Accept All"]';
+            const btn = document.querySelector(selectors);
+            if (btn) btn.click();
+          },
         });
-        if (uaResult?.[0]?.result) tabUA = uaResult[0].result;
-      } catch {}
+        await new Promise(r => setTimeout(r, 500));
 
-      if (result.success) {
-        // Wait 15s for Facebook to finish setting all cookies (xs, fr, datr, etc.)
-        console.log(`[SocyBase Login] Login successful — waiting 15s for cookies to settle...`);
-        await new Promise(r => setTimeout(r, 15000));
+        // Login
+        result = await loginSingleAccount(email, password, totpSecret || null, tab.id, twoFaWaitSeconds);
 
-        // Re-extract the full cookie jar
-        const settled = await extractFacebookCookies();
-        if (settled.fbUserId) {
-          result.cookieString = settled.cookieString;
-          result.fbUserId = settled.fbUserId;
+        // Grab actual user agent from the tab
+        try {
+          const uaResult = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => navigator.userAgent,
+          });
+          if (uaResult?.[0]?.result) tabUA = uaResult[0].result;
+        } catch {}
+
+        if (result.success) {
+          // Success — no retry needed
+          break;
         }
 
-        loginBatchState.success++;
-        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId}, cookies=${result.cookieString?.length || 0} chars, proxy=${proxyLabel})`);
-      } else {
-        loginBatchState.failed++;
-        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] FAILED: ${email} — ${result.error} (proxy=${proxyLabel})`);
-      }
+        // Check if this is a retryable error (login page rejection after security check)
+        const err = (result.error || "").toLowerCase();
+        const isRetryable = err.includes("rejected") || err.includes("security check") ||
+                            err.includes("redirected to login") || err.includes("incorrect");
+        // Don't retry errors that won't be fixed by retrying (2FA missing, form not found, etc.)
+        const isNonRetryable = err.includes("2fa required") || err.includes("totp") ||
+                               err.includes("form not found") || err.includes("button not found");
 
-      // Report to server
-      try {
-        await apiPostWithRetry(`/fb-action/login-batch/${batchId}/worker-result`, {
-          email,
-          success: result.success,
-          cookie_string: result.cookieString || null,
-          fb_user_id: result.fbUserId || null,
-          user_agent: tabUA,
-          error: result.error || null,
-          proxy_used: proxy || null,
-        });
-      } catch (e) {
-        console.error(`[SocyBase Login] Failed to report result for ${email}:`, e.message);
-      }
+        if (isNonRetryable || !isRetryable || attempt >= MAX_LOGIN_ATTEMPTS) {
+          // Final attempt or non-retryable — stop
+          console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] Attempt ${attempt}/${MAX_LOGIN_ATTEMPTS} FAILED (no retry): ${email} — ${result.error}`);
+          break;
+        }
 
-    } catch (e) {
-      loginBatchState.failed++;
-      console.error(`[SocyBase Login] Error for ${email}:`, e.message);
-      try {
-        await apiPostWithRetry(`/fb-action/login-batch/${batchId}/worker-result`, {
-          email,
-          success: false,
-          error: e.message,
-          user_agent: ua,
-          proxy_used: proxy || null,
-        });
-      } catch {}
-    } finally {
-      // Close tab
-      if (tab?.id) {
+        // Retryable failure — close tab, wait, and try again
+        console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] Attempt ${attempt}/${MAX_LOGIN_ATTEMPTS} failed: ${result.error} — retrying in 5s...`);
         try { await chrome.tabs.remove(tab.id); } catch {}
+        tab = null;
+        await new Promise(r => setTimeout(r, 5000));
+
+      } catch (e) {
+        // Exception during this attempt
+        console.error(`[SocyBase Login] [${i + 1}/${accounts.length}] Attempt ${attempt}/${MAX_LOGIN_ATTEMPTS} error: ${e.message}`);
+        try { if (tab?.id) await chrome.tabs.remove(tab.id); } catch {}
+        tab = null;
+
+        if (attempt >= MAX_LOGIN_ATTEMPTS) {
+          // Out of retries — report as failed
+          result = { success: false, error: e.message };
+          break;
+        }
+        await new Promise(r => setTimeout(r, 5000));
       }
-      // Clear proxy after each account
-      await clearProxy();
     }
+
+    // Process final result
+    if (result?.success) {
+      // Wait 15s for Facebook to finish setting all cookies (xs, fr, datr, etc.)
+      console.log(`[SocyBase Login] Login successful — waiting 15s for cookies to settle...`);
+      await new Promise(r => setTimeout(r, 15000));
+
+      // Re-extract the full cookie jar
+      const settled = await extractFacebookCookies();
+      if (settled.fbUserId) {
+        result.cookieString = settled.cookieString;
+        result.fbUserId = settled.fbUserId;
+      }
+
+      loginBatchState.success++;
+      console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] SUCCESS: ${email} (uid=${result.fbUserId}, cookies=${result.cookieString?.length || 0} chars, proxy=${proxyLabel})`);
+    } else {
+      loginBatchState.failed++;
+      console.log(`[SocyBase Login] [${i + 1}/${accounts.length}] FAILED: ${email} — ${result?.error || "unknown"} (proxy=${proxyLabel})`);
+    }
+
+    // Report to server
+    try {
+      await apiPostWithRetry(`/fb-action/login-batch/${batchId}/worker-result`, {
+        email,
+        success: result?.success || false,
+        cookie_string: result?.cookieString || null,
+        fb_user_id: result?.fbUserId || null,
+        user_agent: tabUA,
+        error: result?.error || null,
+        proxy_used: proxy || null,
+      });
+    } catch (e) {
+      console.error(`[SocyBase Login] Failed to report result for ${email}:`, e.message);
+    }
+
+    // Cleanup
+    if (tab?.id) {
+      try { await chrome.tabs.remove(tab.id); } catch {}
+    }
+    await clearProxy();
 
     loginBatchState.current = i + 1;
     broadcastLoginProgress();
