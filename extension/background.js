@@ -1061,27 +1061,28 @@ function isHomeUrl(url) {
 }
 
 async function handleFollowUpScreens(tabId) {
-  // Click through trust/save/review screens until we get cookies or give up
+  // Click through trust/save/review screens until we reach home or give up
   for (let i = 0; i < 5; i++) {
     const tabInfo = await chrome.tabs.get(tabId);
     const currentUrl = tabInfo?.url || "";
     console.log(`[SocyBase Login] Follow-up screen ${i + 1}: ${currentUrl}`);
 
-    // Check cookies first
-    const cookies = await extractFacebookCookies();
-    if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
-
     if (isHomeUrl(currentUrl)) {
-      // On home but no c_user cookie yet — unlikely but wait a beat
-      await new Promise(r => setTimeout(r, 1000));
-      const retry = await extractFacebookCookies();
-      if (retry.fbUserId) return { success: true, cookieString: retry.cookieString, fbUserId: retry.fbUserId };
+      // Reached home — wait for cookies to settle then extract
+      await new Promise(r => setTimeout(r, 3000));
+      const cookies = await extractFacebookCookies();
+      if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
       break;
     }
 
-    if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/two_factor") && !currentUrl.includes("/auth")) break;
+    if (!currentUrl.includes("/checkpoint") && !currentUrl.includes("/two_step") && !currentUrl.includes("/two_factor") && !currentUrl.includes("/auth")) {
+      // Not a follow-up page — check cookies and exit
+      const cookies = await extractFacebookCookies();
+      if (cookies.fbUserId) return { success: true, cookieString: cookies.cookieString, fbUserId: cookies.fbUserId };
+      break;
+    }
 
-    // Click follow-up button — prefer "always confirm" over "trust this device"
+    // Click follow-up button FIRST — prefer "always confirm" over "trust this device"
     await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
