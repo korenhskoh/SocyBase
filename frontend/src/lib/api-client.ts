@@ -573,6 +573,13 @@ export const fbActionApi = {
     api.get(`/fb-action/login-batch/${batchId}/export`, { responseType: "blob" }),
   downloadWorkerScript: () =>
     api.get("/fb-action/login-batch/worker-script", { responseType: "blob" }),
+  // Warm-up Batch
+  createWarmupBatch: (data: { login_batch_id: string; preset: string; delay_seconds: number }) =>
+    api.post("/fb-action/warmup-batch", data),
+  getWarmupBatchStatus: (batchId: string) =>
+    api.get(`/fb-action/warmup-batch/${batchId}`),
+  getWarmupBatchHistory: (params?: { page?: number; page_size?: number }) =>
+    api.get("/fb-action/warmup-batch/history", { params }),
   // AI Planner
   aiPlanGenerate: (data: {
     posts: Array<{ post_id: string; message?: string | null; from_name?: string | null; reaction_count?: number; comment_count?: number; share_count?: number; attachment_type?: string | null; post_url?: string | null }>;

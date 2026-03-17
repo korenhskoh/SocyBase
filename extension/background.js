@@ -2093,6 +2093,378 @@ async function processLoginBatch(batchId, twoFaWaitSeconds = 60) {
   loginBatchState = null;
 }
 
+// ── Warm-Up Batch Processor ──────────────────────────────────────────
+
+let warmupBatchState = null; // { batchId, current, total, success, failed, cancelled }
+
+function broadcastWarmupProgress() {
+  if (!warmupBatchState) return;
+  const progress = {
+    batchId: warmupBatchState.batchId,
+    current: warmupBatchState.current,
+    total: warmupBatchState.total,
+    success: warmupBatchState.success,
+    failed: warmupBatchState.failed,
+    status: warmupBatchState.cancelled ? "cancelled" :
+            warmupBatchState.current >= warmupBatchState.total ? "completed" : "running",
+  };
+  chrome.runtime.sendMessage({ type: "SOCYBASE_WARMUP_PROGRESS", progress }).catch(() => {});
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, { type: "SOCYBASE_WARMUP_PROGRESS", progress }).catch(() => {});
+    }
+  });
+}
+
+async function injectFacebookCookies(cookieString) {
+  // Clear existing FB cookies first
+  await clearFacebookCookies();
+  // Parse "name=value; name=value" → set each cookie
+  for (const pair of cookieString.split("; ")) {
+    const eqIdx = pair.indexOf("=");
+    if (eqIdx < 1) continue;
+    const name = pair.slice(0, eqIdx).trim();
+    const value = pair.slice(eqIdx + 1).trim();
+    if (!name) continue;
+    try {
+      await chrome.cookies.set({
+        url: "https://www.facebook.com",
+        domain: ".facebook.com",
+        path: "/",
+        name,
+        value,
+        secure: true,
+        sameSite: "no_restriction",
+      });
+    } catch (e) {
+      console.warn(`[SocyBase Warmup] Cookie set failed for ${name}:`, e.message);
+    }
+  }
+}
+
+function randomDelay(minSec, maxSec) {
+  const ms = (minSec + Math.random() * (maxSec - minSec)) * 1000;
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function warmupScrollFeed(tabId, count, minDelay = 2, maxDelay = 5) {
+  // Get viewport for scroll target
+  await new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, "1.3", () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
+
+  try {
+    const layoutMetrics = await cdp(tabId, "Page.getLayoutMetrics");
+    const vw = layoutMetrics.cssVisualViewport?.clientWidth || 800;
+    const vh = layoutMetrics.cssVisualViewport?.clientHeight || 600;
+    const scrollX = Math.round(vw / 2);
+    const scrollY = Math.round(vh / 2);
+
+    for (let i = 0; i < count; i++) {
+      // Random scroll distance (400-800px)
+      const deltaY = 400 + Math.round(Math.random() * 400);
+      await cdpScroll(tabId, scrollX, scrollY, deltaY);
+      console.log(`[SocyBase Warmup] Scroll ${i + 1}/${count} (${deltaY}px)`);
+      if (i < count - 1) {
+        await randomDelay(minDelay, maxDelay);
+      }
+    }
+  } finally {
+    try { await chrome.debugger.detach({ tabId }); } catch {}
+  }
+}
+
+async function warmupLikePosts(tabId, count, minDelay = 3, maxDelay = 6) {
+  const liked = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (maxLikes) => {
+      // Find unliked Like buttons in the feed
+      const likeButtons = [];
+      for (const el of document.querySelectorAll('[aria-label="Like"]')) {
+        // Skip already-pressed (liked) buttons
+        if (el.getAttribute("aria-pressed") === "true") continue;
+        // Must be visible
+        if (el.offsetParent === null) continue;
+        likeButtons.push(el);
+      }
+
+      // Shuffle and pick up to maxLikes
+      for (let i = likeButtons.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [likeButtons[i], likeButtons[j]] = [likeButtons[j], likeButtons[i]];
+      }
+
+      const toClick = likeButtons.slice(0, maxLikes);
+      const results = [];
+      for (const btn of toClick) {
+        try {
+          btn.scrollIntoView({ behavior: "smooth", block: "center" });
+          btn.click();
+          results.push("liked");
+        } catch {
+          results.push("error");
+        }
+      }
+      return { found: likeButtons.length, clicked: results.length, results };
+    },
+    args: [count],
+  });
+
+  const res = liked?.[0]?.result;
+  console.log(`[SocyBase Warmup] Like: found=${res?.found}, clicked=${res?.clicked}`);
+
+  // Wait between likes
+  if (res?.clicked > 0) {
+    await randomDelay(minDelay, maxDelay);
+  }
+  return res?.clicked || 0;
+}
+
+async function warmupViewProfiles(tabId, count, minDelay = 5, maxDelay = 10) {
+  let viewed = 0;
+
+  for (let i = 0; i < count; i++) {
+    // Find random profile link in the feed
+    const linkResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const links = [];
+        for (const a of document.querySelectorAll('a[role="link"]')) {
+          const href = a.getAttribute("href") || "";
+          const text = a.textContent?.trim() || "";
+          // Profile-like links: profile.php or facebook.com/username
+          if (text.length > 1 && text.length < 60 &&
+              (href.includes("profile.php") || (href.includes("facebook.com/") && !href.includes("/photo") && !href.includes("/story") && !href.includes("/groups") && !href.includes("/pages")))) {
+            if (a.offsetParent !== null) links.push(href);
+          }
+        }
+        if (links.length === 0) return null;
+        return links[Math.floor(Math.random() * links.length)];
+      },
+    });
+
+    const profileUrl = linkResult?.[0]?.result;
+    if (!profileUrl) {
+      console.log("[SocyBase Warmup] No profile links found in feed");
+      break;
+    }
+
+    // Navigate to the profile
+    console.log(`[SocyBase Warmup] Viewing profile: ${profileUrl.slice(0, 60)}`);
+    await chrome.tabs.update(tabId, { url: profileUrl });
+    await waitForTabLoad(tabId, 20000);
+
+    // Pause on profile page
+    await randomDelay(minDelay, maxDelay);
+    viewed++;
+
+    // Navigate back to feed
+    await chrome.tabs.update(tabId, { url: "https://www.facebook.com/" });
+    await waitForTabLoad(tabId, 15000);
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  console.log(`[SocyBase Warmup] Viewed ${viewed} profiles`);
+  return viewed;
+}
+
+async function executeWarmupActions(tabId, config) {
+  const actions = config?.actions || [];
+  const completed = [];
+
+  for (const action of actions) {
+    try {
+      switch (action.type) {
+        case "scroll_feed":
+          await warmupScrollFeed(tabId, action.count || 3, action.min_delay || 2, action.max_delay || 5);
+          completed.push(`scroll_feed(${action.count})`);
+          break;
+
+        case "like_posts": {
+          const liked = await warmupLikePosts(tabId, action.count || 2, action.min_delay || 3, action.max_delay || 6);
+          completed.push(`like_posts(${liked}/${action.count})`);
+          break;
+        }
+
+        case "view_profiles": {
+          const viewed = await warmupViewProfiles(tabId, action.count || 1, action.min_delay || 5, action.max_delay || 10);
+          completed.push(`view_profiles(${viewed}/${action.count})`);
+          break;
+        }
+
+        case "pause":
+          await randomDelay(action.min_delay || 3, action.max_delay || 8);
+          completed.push("pause");
+          break;
+
+        default:
+          console.warn(`[SocyBase Warmup] Unknown action: ${action.type}`);
+      }
+    } catch (e) {
+      console.error(`[SocyBase Warmup] Action ${action.type} failed:`, e.message);
+      completed.push(`${action.type}(error: ${e.message.slice(0, 50)})`);
+    }
+  }
+
+  return completed;
+}
+
+async function processWarmupBatch(batchId) {
+  console.log(`[SocyBase Warmup] Starting batch: ${batchId}`);
+
+  // 1. Fetch batch data
+  let data;
+  try {
+    data = await apiGet(`/fb-action/warmup-batch/${batchId}/worker-data`);
+  } catch (e) {
+    console.error("[SocyBase Warmup] Failed to fetch batch:", e.message);
+    return;
+  }
+
+  const accounts = data.accounts;
+  const config = data.config;
+  const delaySeconds = data.delay_seconds || 10;
+  console.log(`[SocyBase Warmup] ${accounts.length} accounts, preset=${data.preset}, delay=${delaySeconds}s`);
+
+  warmupBatchState = {
+    batchId,
+    current: 0,
+    total: accounts.length,
+    success: 0,
+    failed: 0,
+    cancelled: false,
+  };
+  broadcastWarmupProgress();
+
+  // 2. Mark batch as running
+  try {
+    await apiPost(`/fb-action/warmup-batch/${batchId}/worker-start`, {});
+  } catch (e) {
+    console.error("[SocyBase Warmup] Failed to start batch:", e.message);
+    warmupBatchState = null;
+    return;
+  }
+
+  // 3. Process each account sequentially
+  for (let i = 0; i < accounts.length; i++) {
+    if (warmupBatchState.cancelled) break;
+
+    const account = accounts[i];
+    const email = account.email || "";
+    const cookie = account.cookie || "";
+    const proxyHost = account.proxy_host || "";
+
+    // Build proxy config
+    const proxy = proxyHost ? {
+      host: proxyHost,
+      port: account.proxy_port || "",
+      username: account.proxy_username || "",
+      password: account.proxy_password || "",
+    } : null;
+    const proxyLabel = proxy ? `${proxy.host}:${proxy.port}` : "direct";
+
+    console.log(`[SocyBase Warmup] [${i + 1}/${accounts.length}] ${email} (proxy=${proxyLabel})`);
+
+    let success = false;
+    let actionsCompleted = [];
+    let error = null;
+    let tab = null;
+
+    try {
+      // Apply proxy
+      await applyProxy(proxy);
+
+      // Clear cookies and inject account's cookies
+      await clearFacebookCookies();
+      await injectFacebookCookies(cookie);
+
+      // Open Facebook in a new tab
+      tab = await chrome.tabs.create({ url: "https://www.facebook.com/", active: false });
+      await waitForTabLoad(tab.id, 20000);
+      await new Promise(r => setTimeout(r, 3000)); // Wait for React to render
+
+      // Verify we're logged in (check for login page)
+      const loginCheck = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          const url = window.location.href;
+          const body = document.body?.innerText?.toLowerCase() || "";
+          const isLogin = url.includes("/login") || body.includes("log in to facebook") || body.includes("masuk ke facebook");
+          return { isLogin, url: url.slice(0, 100) };
+        },
+      });
+      const checkRes = loginCheck?.[0]?.result;
+      if (checkRes?.isLogin) {
+        throw new Error(`Session expired — redirected to login (${checkRes.url})`);
+      }
+
+      // Execute warm-up actions
+      actionsCompleted = await executeWarmupActions(tab.id, config);
+      success = true;
+      console.log(`[SocyBase Warmup] [${i + 1}/${accounts.length}] SUCCESS: ${email} — ${actionsCompleted.join(", ")}`);
+
+    } catch (e) {
+      error = e.message;
+      success = false;
+      console.error(`[SocyBase Warmup] [${i + 1}/${accounts.length}] FAILED: ${email} — ${error}`);
+    }
+
+    // Cleanup tab
+    if (tab?.id) {
+      try { await chrome.tabs.remove(tab.id); } catch {}
+    }
+
+    // Report result to server
+    try {
+      await apiPostWithRetry(`/fb-action/warmup-batch/${batchId}/worker-result`, {
+        email,
+        success,
+        actions_completed: actionsCompleted,
+        error,
+      });
+    } catch (e) {
+      console.error(`[SocyBase Warmup] Failed to report result for ${email}:`, e.message);
+    }
+
+    // Update state
+    if (success) {
+      warmupBatchState.success++;
+    } else {
+      warmupBatchState.failed++;
+    }
+    warmupBatchState.current = i + 1;
+    broadcastWarmupProgress();
+
+    // Cleanup between accounts
+    await clearFacebookCookies();
+    await clearProxy();
+
+    // Delay between accounts (skip after last)
+    if (i < accounts.length - 1 && !warmupBatchState.cancelled) {
+      await new Promise(r => setTimeout(r, delaySeconds * 1000));
+    }
+  }
+
+  // 4. Final cleanup
+  await clearFacebookCookies();
+  await clearProxy();
+
+  // 5. Mark batch complete
+  try {
+    await apiPost(`/fb-action/warmup-batch/${batchId}/worker-complete`, {});
+  } catch (e) {
+    console.error("[SocyBase Warmup] Failed to complete batch:", e.message);
+  }
+
+  console.log(`[SocyBase Warmup] Batch done: ${warmupBatchState.success} ok, ${warmupBatchState.failed} fail`);
+  broadcastWarmupProgress();
+  warmupBatchState = null;
+}
+
+
 // ── Message handling ────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -2121,6 +2493,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           failed: loginBatchState.failed,
           status: loginBatchState.cancelled ? "cancelled" :
                   loginBatchState.current >= loginBatchState.total ? "completed" : "running",
+        } : null,
+        warmupBatch: warmupBatchState ? {
+          batchId: warmupBatchState.batchId,
+          current: warmupBatchState.current,
+          total: warmupBatchState.total,
+          success: warmupBatchState.success,
+          failed: warmupBatchState.failed,
+          status: warmupBatchState.cancelled ? "cancelled" :
+                  warmupBatchState.current >= warmupBatchState.total ? "completed" : "running",
         } : null,
       });
     })();
@@ -2186,6 +2567,63 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     loginBatchState = null;
     console.log("[SocyBase Login] Login batch state reset");
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // ── Warm-up batch messages ──────────────────────────────────────
+  if (msg.type === "SOCYBASE_START_WARMUP_BATCH") {
+    if (warmupBatchState) {
+      sendResponse({ success: false, error: "A warm-up batch is already running" });
+      return true;
+    }
+    if (loginBatchState) {
+      sendResponse({ success: false, error: "A login batch is running — wait for it to finish" });
+      return true;
+    }
+    const { batchId, apiUrl, authToken } = msg;
+    if (apiUrl && authToken) {
+      chrome.storage.local.set({ apiUrl, authToken }, () => {
+        sendResponse({ success: true });
+        processWarmupBatch(batchId);
+      });
+    } else {
+      sendResponse({ success: true });
+      processWarmupBatch(batchId);
+    }
+    return true;
+  }
+
+  if (msg.type === "SOCYBASE_WARMUP_BATCH_STATUS") {
+    sendResponse({
+      active: !!warmupBatchState,
+      progress: warmupBatchState ? {
+        batchId: warmupBatchState.batchId,
+        current: warmupBatchState.current,
+        total: warmupBatchState.total,
+        success: warmupBatchState.success,
+        failed: warmupBatchState.failed,
+      } : null,
+    });
+    return true;
+  }
+
+  if (msg.type === "SOCYBASE_CANCEL_WARMUP_BATCH") {
+    if (warmupBatchState) {
+      warmupBatchState.cancelled = true;
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false, error: "No active warm-up batch" });
+    }
+    return true;
+  }
+
+  if (msg.type === "SOCYBASE_RESET_WARMUP_BATCH") {
+    if (warmupBatchState) {
+      warmupBatchState.cancelled = true;
+    }
+    warmupBatchState = null;
+    console.log("[SocyBase Warmup] Warm-up batch state reset");
     sendResponse({ success: true });
     return true;
   }

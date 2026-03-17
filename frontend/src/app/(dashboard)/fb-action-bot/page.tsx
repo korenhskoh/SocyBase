@@ -154,7 +154,7 @@ interface BatchInfo {
 export default function FBActionBotPage() {
   // Tab state
   const [activeTab, setActiveTab] = useState<"single" | "batch" | "livestream">("single");
-  const [batchSubTab, setBatchSubTab] = useState<"accounts" | "manual" | "ai-planner">("accounts");
+  const [batchSubTab, setBatchSubTab] = useState<"accounts" | "manual" | "ai-planner" | "warmup">("accounts");
 
   // Config state
   const [hasCookies, setHasCookies] = useState(false);
@@ -271,6 +271,17 @@ export default function FBActionBotPage() {
   const [leMaxDelay, setLeMaxDelay] = useState(60);
   const [leStarting, setLeStarting] = useState(false);
   const lePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Warm-up Batch state
+  const [warmupPreset, setWarmupPreset] = useState<"light" | "medium" | "heavy">("light");
+  const [warmupDelay, setWarmupDelay] = useState(10);
+  const [warmupLoginBatchId, setWarmupLoginBatchId] = useState("");
+  const [warmupLoginBatches, setWarmupLoginBatches] = useState<any[]>([]);
+  const [warmupStarting, setWarmupStarting] = useState(false);
+  const [warmupActive, setWarmupActive] = useState<{ id: string; status: string; preset: string; total_accounts: number; completed_accounts: number; success_count: number; failed_count: number } | null>(null);
+  const [warmupHistory, setWarmupHistory] = useState<any[]>([]);
+  const [warmupHistoryTotal, setWarmupHistoryTotal] = useState(0);
+  const [warmupHistoryPage, setWarmupHistoryPage] = useState(1);
+  const warmupPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // Toast
@@ -348,6 +359,42 @@ export default function FBActionBotPage() {
     }
   }, [activeTab, batchSubTab, loadLoginHistory]);
 
+  // Load warmup history
+  const loadWarmupHistory = useCallback(() => {
+    fbActionApi.getWarmupBatchHistory({ page: warmupHistoryPage, page_size: 10 }).then((res) => {
+      setWarmupHistory(res.data.items || []);
+      setWarmupHistoryTotal(res.data.total || 0);
+    }).catch(() => {});
+  }, [warmupHistoryPage]);
+
+  useEffect(() => {
+    if (activeTab === "batch" && batchSubTab === "warmup") {
+      loadWarmupHistory();
+      // Also load login batch options for the selector
+      fbActionApi.getLoginBatchHistory({ page: 1, page_size: 50 }).then((res) => {
+        const items = (res.data.items || []).filter((b: any) => b.success_count > 0);
+        setWarmupLoginBatches(items);
+        if (items.length > 0 && !warmupLoginBatchId) setWarmupLoginBatchId(items[0].id);
+      }).catch(() => {});
+    }
+  }, [activeTab, batchSubTab, warmupHistoryPage, loadWarmupHistory]);
+
+  // Poll active warmup batch
+  useEffect(() => {
+    if (warmupActive && (warmupActive.status === "pending" || warmupActive.status === "running")) {
+      warmupPollRef.current = setInterval(() => {
+        fbActionApi.getWarmupBatchStatus(warmupActive.id).then((res) => {
+          setWarmupActive(res.data);
+          if (res.data.status !== "pending" && res.data.status !== "running") {
+            if (warmupPollRef.current) clearInterval(warmupPollRef.current);
+            loadWarmupHistory();
+          }
+        }).catch(() => {});
+      }, 3000);
+      return () => { if (warmupPollRef.current) clearInterval(warmupPollRef.current); };
+    }
+  }, [warmupActive?.id, warmupActive?.status, loadWarmupHistory]);
+
   // Detect Chrome extension
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
@@ -378,6 +425,21 @@ export default function FBActionBotPage() {
             failed_count: p.failed,
             status: p.status === "completed" || p.status === "cancelled" ? p.status : prev.status,
           } : prev);
+        }
+      }
+      if (event.data?.type === "SOCYBASE_WARMUP_PROGRESS" && event.data.progress) {
+        const p = event.data.progress;
+        setWarmupActive(prev => prev && p.batchId === prev.id ? {
+          ...prev,
+          completed_accounts: p.current,
+          success_count: p.success,
+          failed_count: p.failed,
+          status: p.status === "completed" || p.status === "cancelled" || p.status === "failed" ? p.status : prev.status,
+        } : prev);
+      }
+      if (event.data?.type === "SOCYBASE_WARMUP_STARTED") {
+        if (!event.data.success) {
+          showToast("error", event.data.error || "Failed to start warm-up via extension");
         }
       }
     }
@@ -884,10 +946,10 @@ export default function FBActionBotPage() {
                   </span>
                   {result.status_code != null ? (<span className="text-xs text-white/30">Code: {String(result.status_code)}</span>) : null}
                 </div>
-                {result.result_url && (
-                  <a href={result.result_url as string} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-amber-400/80 hover:text-amber-400 mb-2">
+                {typeof result.result_url === "string" && result.result_url && (
+                  <a href={result.result_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-amber-400/80 hover:text-amber-400 mb-2">
                     <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
-                    {String(result.result_url)}
+                    {result.result_url}
                   </a>
                 )}
                 {result.data && typeof result.data === "object" ? (
@@ -984,6 +1046,7 @@ export default function FBActionBotPage() {
               { key: "accounts" as const, label: "Accounts" },
               { key: "manual" as const, label: "Manual Actions" },
               { key: "ai-planner" as const, label: "AI Planner" },
+              { key: "warmup" as const, label: "Warm-up" },
             ]).map((t) => (
               <button
                 key={t.key}
@@ -2616,6 +2679,219 @@ export default function FBActionBotPage() {
           )}
         </>
           )}
+
+          {/* ── Warm-up sub-tab ── */}
+          {batchSubTab === "warmup" && (
+            <div className="space-y-4 max-w-3xl">
+              {/* Active warm-up progress */}
+              {warmupActive && (warmupActive.status === "running" || warmupActive.status === "pending") && (
+                <div className="glass-card p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+                      <svg className="h-4 w-4 text-amber-400 animate-pulse" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                      Warm-up Running — {warmupActive.preset}
+                    </h3>
+                    <span className="text-xs text-amber-400/80 bg-amber-400/10 px-2 py-0.5 rounded">
+                      {warmupActive.completed_accounts}/{warmupActive.total_accounts}
+                    </span>
+                  </div>
+                  <div className="w-full bg-white/5 rounded-full h-2">
+                    <div
+                      className="bg-amber-400/70 h-2 rounded-full transition-all"
+                      style={{ width: `${warmupActive.total_accounts ? (warmupActive.completed_accounts / warmupActive.total_accounts) * 100 : 0}%` }}
+                    />
+                  </div>
+                  <div className="flex gap-4 text-xs text-white/40">
+                    <span className="text-green-400">{warmupActive.success_count} success</span>
+                    <span className="text-red-400">{warmupActive.failed_count} failed</span>
+                    <span>{warmupActive.total_accounts - warmupActive.completed_accounts} remaining</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Warm-up completed message */}
+              {warmupActive && warmupActive.status !== "running" && warmupActive.status !== "pending" && (
+                <div className={`glass-card p-4 border ${warmupActive.status === "completed" ? "border-green-500/20" : "border-red-500/20"}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-white/60">
+                      Warm-up {warmupActive.status}: {warmupActive.success_count} ok, {warmupActive.failed_count} failed
+                    </span>
+                    <button onClick={() => setWarmupActive(null)} className="text-xs text-white/30 hover:text-white/60">Dismiss</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Start new warm-up */}
+              {(!warmupActive || (warmupActive.status !== "running" && warmupActive.status !== "pending")) && (
+                <div className="glass-card p-5 space-y-4">
+                  <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+                    <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /><path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" /></svg>
+                    Start Warm-up
+                  </h3>
+
+                  {/* Login batch selector */}
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1">Select Login Batch (accounts to warm up)</label>
+                    <select
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+                      value={warmupLoginBatchId}
+                      onChange={(e) => setWarmupLoginBatchId(e.target.value)}
+                    >
+                      <option value="">Select a login batch...</option>
+                      {warmupLoginBatches.map((b: any) => (
+                        <option key={b.id} value={b.id}>
+                          {b.id.slice(0, 8)} — {b.success_count} accounts ({b.status})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Preset selector */}
+                  <div>
+                    <label className="text-xs text-white/40 block mb-2">Warm-up Preset</label>
+                    <div className="flex gap-2">
+                      {([
+                        { key: "light" as const, label: "Light", desc: "Scroll feed x3, pause" },
+                        { key: "medium" as const, label: "Medium", desc: "Scroll x5, like x2, scroll x3" },
+                        { key: "heavy" as const, label: "Heavy", desc: "Scroll x8, like x3, view profiles, scroll x5, like x2" },
+                      ]).map((p) => (
+                        <button
+                          key={p.key}
+                          onClick={() => setWarmupPreset(p.key)}
+                          className={`flex-1 p-3 rounded-lg border text-left transition ${
+                            warmupPreset === p.key
+                              ? "border-amber-400/40 bg-amber-400/10"
+                              : "border-white/10 bg-white/[0.02] hover:bg-white/5"
+                          }`}
+                        >
+                          <div className={`text-xs font-medium ${warmupPreset === p.key ? "text-amber-400" : "text-white/60"}`}>{p.label}</div>
+                          <div className="text-[10px] text-white/30 mt-0.5">{p.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Delay slider */}
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1">Delay between accounts: {warmupDelay}s</label>
+                    <input
+                      type="range"
+                      min={5}
+                      max={30}
+                      step={1}
+                      value={warmupDelay}
+                      onChange={(e) => setWarmupDelay(Number(e.target.value))}
+                      className="w-full accent-amber-400"
+                    />
+                    <div className="flex justify-between text-[10px] text-white/20">
+                      <span>5s</span>
+                      <span>30s</span>
+                    </div>
+                  </div>
+
+                  {/* Extension notice */}
+                  {!extensionDetected && (
+                    <div className="text-xs text-amber-400/60 bg-amber-400/5 p-3 rounded-lg border border-amber-400/10">
+                      Chrome extension required — warm-up runs in your browser for realistic activity.
+                    </div>
+                  )}
+
+                  {/* Start button */}
+                  <button
+                    disabled={!warmupLoginBatchId || warmupStarting || !extensionDetected}
+                    onClick={async () => {
+                      setWarmupStarting(true);
+                      try {
+                        const res = await fbActionApi.createWarmupBatch({
+                          login_batch_id: warmupLoginBatchId,
+                          preset: warmupPreset,
+                          delay_seconds: warmupDelay,
+                        });
+                        const batchId = res.data.id;
+                        setWarmupActive({ ...res.data, completed_accounts: 0, success_count: 0, failed_count: 0 });
+
+                        // Tell extension to start
+                        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                        const authToken = localStorage.getItem("access_token") || "";
+                        window.postMessage({
+                          type: "SOCYBASE_START_WARMUP_BATCH",
+                          batchId,
+                          apiUrl,
+                          authToken,
+                        }, "*");
+
+                        showToast("success", "Warm-up batch started via Chrome extension");
+                      } catch (e: any) {
+                        showToast("error", e.response?.data?.detail || "Failed to start warm-up");
+                      } finally {
+                        setWarmupStarting(false);
+                      }
+                    }}
+                    className="w-full py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-sm rounded-lg border border-amber-500/20 transition disabled:opacity-30 flex items-center justify-center gap-2"
+                  >
+                    {warmupStarting ? (
+                      <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    ) : (
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /></svg>
+                    )}
+                    Start Warm-up
+                  </button>
+                </div>
+              )}
+
+              {/* Warm-up History */}
+              <div className="glass-card p-5 space-y-3">
+                <h3 className="text-sm font-medium text-white/40">Warm-up History</h3>
+                {warmupHistory.length === 0 ? (
+                  <p className="text-xs text-white/20">No warm-up batches yet</p>
+                ) : (
+                  <>
+                    <div className="overflow-auto">
+                      <table className="w-full text-xs">
+                        <thead><tr className="text-white/30 border-b border-white/5">
+                          <th className="text-left py-1.5 pr-3">ID</th>
+                          <th className="text-left py-1.5 pr-3">Preset</th>
+                          <th className="text-left py-1.5 pr-3">Status</th>
+                          <th className="text-right py-1.5 pr-3">Accounts</th>
+                          <th className="text-right py-1.5 pr-3">OK</th>
+                          <th className="text-right py-1.5">Fail</th>
+                        </tr></thead>
+                        <tbody>
+                          {warmupHistory.map((b: any) => (
+                            <tr key={b.id} className="border-b border-white/[0.03] text-white/50 hover:bg-white/[0.02]">
+                              <td className="py-1.5 pr-3 font-mono">{b.id.slice(0, 8)}</td>
+                              <td className="py-1.5 pr-3 capitalize">{b.preset}</td>
+                              <td className="py-1.5 pr-3">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                  b.status === "completed" ? "bg-green-500/10 text-green-400" :
+                                  b.status === "running" ? "bg-amber-500/10 text-amber-400" :
+                                  b.status === "failed" ? "bg-red-500/10 text-red-400" :
+                                  "bg-white/5 text-white/30"
+                                }`}>{b.status}</span>
+                              </td>
+                              <td className="py-1.5 pr-3 text-right">{b.total_accounts}</td>
+                              <td className="py-1.5 pr-3 text-right text-green-400/60">{b.success_count}</td>
+                              <td className="py-1.5 text-right text-red-400/60">{b.failed_count}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {warmupHistoryTotal > 10 && (
+                      <div className="flex items-center justify-between pt-2">
+                        <span className="text-xs text-white/30">Page {warmupHistoryPage} of {Math.ceil(warmupHistoryTotal / 10)}</span>
+                        <div className="flex gap-2">
+                          <button onClick={() => setWarmupHistoryPage((p) => Math.max(1, p - 1))} disabled={warmupHistoryPage <= 1} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs rounded-lg transition disabled:opacity-30">Previous</button>
+                          <button onClick={() => setWarmupHistoryPage((p) => p + 1)} disabled={warmupHistoryPage * 10 >= warmupHistoryTotal} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs rounded-lg transition disabled:opacity-30">Next</button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
         </>
       )}
 

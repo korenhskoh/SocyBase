@@ -92,6 +92,29 @@ window.addEventListener("message", (event) => {
     });
   }
 
+  // Warm-up batch: start via extension
+  if (event.data?.type === "SOCYBASE_START_WARMUP_BATCH") {
+    const { batchId, apiUrl, authToken } = event.data;
+    if (!batchId) return;
+    chrome.runtime.sendMessage({ type: "SOCYBASE_START_WARMUP_BATCH", batchId, apiUrl, authToken }, (response) => {
+      window.postMessage({
+        type: "SOCYBASE_WARMUP_STARTED",
+        success: response?.success || false,
+        error: response?.error || null,
+      }, "*");
+    });
+  }
+
+  // Warm-up batch: cancel
+  if (event.data?.type === "SOCYBASE_CANCEL_WARMUP_BATCH") {
+    chrome.runtime.sendMessage({ type: "SOCYBASE_CANCEL_WARMUP_BATCH" }, (response) => {
+      window.postMessage({
+        type: "SOCYBASE_WARMUP_CANCELLED",
+        success: response?.success || false,
+      }, "*");
+    });
+  }
+
   // Login batch: cancel
   if (event.data?.type === "SOCYBASE_EXTENSION_CANCEL_LOGIN") {
     chrome.runtime.sendMessage({ type: "SOCYBASE_CANCEL_LOGIN_BATCH" }, (response) => {
@@ -103,11 +126,17 @@ window.addEventListener("message", (event) => {
   }
 });
 
-// Listen for login progress from background → forward to page
+// Listen for login/warmup progress from background → forward to page
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "SOCYBASE_LOGIN_PROGRESS") {
     window.postMessage({
       type: "SOCYBASE_LOGIN_PROGRESS",
+      progress: msg.progress,
+    }, "*");
+  }
+  if (msg.type === "SOCYBASE_WARMUP_PROGRESS") {
+    window.postMessage({
+      type: "SOCYBASE_WARMUP_PROGRESS",
       progress: msg.progress,
     }, "*");
   }

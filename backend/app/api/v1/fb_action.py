@@ -1273,6 +1273,333 @@ async def download_worker_script(_user: User = Depends(get_current_user)):
     )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Warm-Up Batch — browser-based warm-up via Chrome extension
+# ══════════════════════════════════════════════════════════════════════
+
+WARMUP_PRESETS = {
+    "light": {
+        "label": "Light",
+        "actions": [
+            {"type": "scroll_feed", "count": 3, "min_delay": 2, "max_delay": 5},
+            {"type": "pause", "min_delay": 5, "max_delay": 10},
+        ],
+    },
+    "medium": {
+        "label": "Medium",
+        "actions": [
+            {"type": "scroll_feed", "count": 5, "min_delay": 2, "max_delay": 5},
+            {"type": "like_posts", "count": 2, "min_delay": 3, "max_delay": 6},
+            {"type": "pause", "min_delay": 3, "max_delay": 8},
+            {"type": "scroll_feed", "count": 3, "min_delay": 2, "max_delay": 4},
+        ],
+    },
+    "heavy": {
+        "label": "Heavy",
+        "actions": [
+            {"type": "scroll_feed", "count": 8, "min_delay": 2, "max_delay": 5},
+            {"type": "like_posts", "count": 3, "min_delay": 3, "max_delay": 6},
+            {"type": "view_profiles", "count": 1, "min_delay": 5, "max_delay": 10},
+            {"type": "scroll_feed", "count": 5, "min_delay": 2, "max_delay": 4},
+            {"type": "like_posts", "count": 2, "min_delay": 3, "max_delay": 6},
+        ],
+    },
+}
+
+
+class WarmupBatchRequest(BaseModel):
+    login_batch_id: str
+    preset: str = "light"
+    delay_seconds: float = Field(10.0, ge=3, le=60)
+
+
+@router.post("/warmup-batch")
+async def create_warmup_batch(
+    body: WarmupBatchRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a warm-up batch from a login batch's successful accounts."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+    from app.models.fb_login_batch import FBLoginBatch
+    from app.models.fb_login_result import FBLoginResult
+
+    if body.preset not in WARMUP_PRESETS:
+        raise HTTPException(status_code=400, detail=f"Invalid preset. Use: {', '.join(WARMUP_PRESETS)}")
+
+    # Verify login batch
+    result = await db.execute(
+        select(FBLoginBatch).where(
+            FBLoginBatch.id == UUID(body.login_batch_id),
+            FBLoginBatch.tenant_id == user.tenant_id,
+        )
+    )
+    login_batch = result.scalar_one_or_none()
+    if not login_batch:
+        raise HTTPException(status_code=404, detail="Login batch not found")
+
+    # Count successful logins
+    count_q = select(func.count(FBLoginResult.id)).where(
+        FBLoginResult.login_batch_id == UUID(body.login_batch_id),
+        FBLoginResult.status == "success",
+    )
+    account_count = (await db.execute(count_q)).scalar() or 0
+    if account_count == 0:
+        raise HTTPException(status_code=400, detail="No successful logins in this batch")
+
+    warmup = FBWarmupBatch(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        login_batch_id=UUID(body.login_batch_id),
+        status="pending",
+        preset=body.preset,
+        total_accounts=account_count,
+        delay_seconds=body.delay_seconds,
+        config=WARMUP_PRESETS[body.preset],
+    )
+    db.add(warmup)
+    await db.commit()
+    await db.refresh(warmup)
+
+    return {
+        "id": str(warmup.id),
+        "status": warmup.status,
+        "preset": warmup.preset,
+        "total_accounts": warmup.total_accounts,
+        "delay_seconds": warmup.delay_seconds,
+    }
+
+
+@router.get("/warmup-batch/{batch_id}")
+async def get_warmup_batch(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get warm-up batch status."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+
+    result = await db.execute(
+        select(FBWarmupBatch).where(
+            FBWarmupBatch.id == batch_id,
+            FBWarmupBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Warm-up batch not found")
+
+    return {
+        "id": str(batch.id),
+        "login_batch_id": str(batch.login_batch_id),
+        "status": batch.status,
+        "preset": batch.preset,
+        "total_accounts": batch.total_accounts,
+        "completed_accounts": batch.completed_accounts,
+        "success_count": batch.success_count,
+        "failed_count": batch.failed_count,
+        "delay_seconds": batch.delay_seconds,
+        "config": batch.config,
+        "error_message": batch.error_message,
+        "created_at": batch.created_at.isoformat() if batch.created_at else None,
+        "started_at": batch.started_at.isoformat() if batch.started_at else None,
+        "completed_at": batch.completed_at.isoformat() if batch.completed_at else None,
+    }
+
+
+@router.get("/warmup-batch/{batch_id}/worker-data")
+async def get_warmup_worker_data(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Extension fetches accounts + config for warm-up execution."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+    from app.models.fb_login_result import FBLoginResult
+
+    result = await db.execute(
+        select(FBWarmupBatch).where(
+            FBWarmupBatch.id == batch_id,
+            FBWarmupBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Warm-up batch not found")
+
+    # Fetch successful login results
+    meta = MetaAPIService()
+    results = await db.execute(
+        select(FBLoginResult)
+        .where(
+            FBLoginResult.login_batch_id == batch.login_batch_id,
+            FBLoginResult.status == "success",
+        )
+        .order_by(FBLoginResult.created_at)
+    )
+    accounts = []
+    for r in results.scalars().all():
+        try:
+            cookie_str = meta.decrypt_token(r.cookie_encrypted)
+        except Exception:
+            continue
+        proxy = r.proxy_used or {}
+        accounts.append({
+            "email": r.email,
+            "fb_user_id": r.fb_user_id,
+            "cookie": cookie_str,
+            "user_agent": r.user_agent or "",
+            "proxy_host": proxy.get("host", ""),
+            "proxy_port": proxy.get("port", ""),
+            "proxy_username": proxy.get("username", ""),
+            "proxy_password": proxy.get("password", ""),
+        })
+
+    return {
+        "accounts": accounts,
+        "preset": batch.preset,
+        "config": batch.config,
+        "delay_seconds": batch.delay_seconds,
+    }
+
+
+@router.post("/warmup-batch/{batch_id}/worker-start")
+async def warmup_worker_start(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark warm-up batch as running."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+
+    result = await db.execute(
+        select(FBWarmupBatch).where(
+            FBWarmupBatch.id == batch_id,
+            FBWarmupBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Warm-up batch not found")
+    batch.status = "running"
+    batch.started_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"success": True}
+
+
+class WarmupResultPayload(BaseModel):
+    email: str
+    success: bool
+    actions_completed: list[str] = []
+    error: str | None = None
+
+
+@router.post("/warmup-batch/{batch_id}/worker-result")
+async def post_warmup_result(
+    batch_id: UUID,
+    payload: WarmupResultPayload,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Extension reports warm-up result for a single account."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+
+    result = await db.execute(
+        select(FBWarmupBatch).where(
+            FBWarmupBatch.id == batch_id,
+            FBWarmupBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Warm-up batch not found")
+
+    batch.completed_accounts += 1
+    if payload.success:
+        batch.success_count += 1
+    else:
+        batch.failed_count += 1
+    await db.commit()
+
+    logger.info("[Warmup] %s: %s (%s) — actions: %s",
+                payload.email, "OK" if payload.success else "FAIL",
+                payload.error or "", ", ".join(payload.actions_completed))
+    return {"success": True}
+
+
+@router.post("/warmup-batch/{batch_id}/worker-complete")
+async def warmup_worker_complete(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark warm-up batch as complete."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+
+    result = await db.execute(
+        select(FBWarmupBatch).where(
+            FBWarmupBatch.id == batch_id,
+            FBWarmupBatch.tenant_id == user.tenant_id,
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Warm-up batch not found")
+
+    if batch.failed_count == batch.total_accounts:
+        batch.status = "failed"
+    else:
+        batch.status = "completed"
+    batch.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"success": True}
+
+
+@router.get("/warmup-batch/history")
+async def get_warmup_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+):
+    """Get warm-up batch history."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+
+    filters = [FBWarmupBatch.tenant_id == user.tenant_id]
+    count_q = select(func.count(FBWarmupBatch.id)).where(*filters)
+    total = (await db.execute(count_q)).scalar() or 0
+
+    q = (
+        select(FBWarmupBatch)
+        .where(*filters)
+        .order_by(FBWarmupBatch.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await db.execute(q)
+    batches = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": str(b.id),
+                "login_batch_id": str(b.login_batch_id),
+                "status": b.status,
+                "preset": b.preset,
+                "total_accounts": b.total_accounts,
+                "completed_accounts": b.completed_accounts,
+                "success_count": b.success_count,
+                "failed_count": b.failed_count,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+            }
+            for b in batches
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 # ── AI Action Planner Endpoints ──────────────────────────────────────
 
 # ── GET /fb-action/ai-plan/login-batches ─────────────────────────────
