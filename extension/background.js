@@ -2104,7 +2104,44 @@ const FALLBACK_SELECTORS = {
     href_include: ["profile.php", "facebook.com/"],
     href_exclude: ["/photo", "/story", "/groups", "/pages"],
   },
+  reaction_trigger: {
+    selector: '[aria-label="Like"]',
+    hover_duration_ms: 1500,
+  },
+  reaction_popup: {
+    selector: '[role="dialog"] [aria-label], [data-testid="reaction_picker"] [aria-label]',
+    reaction_labels: ["Love", "Haha", "Wow", "Sad", "Angry"],
+  },
+  video_post: {
+    selector: '[role="article"] video, [role="article"] [data-video-id], [role="article"] [aria-label*="video" i]',
+    play_button: '[aria-label="Play video"], [aria-label="Play"], [data-testid="video_play_button"]',
+  },
+  story_tray: {
+    selector: '[aria-label="Stories"] a, [aria-label*="story" i] a, [data-testid="story_card"]',
+  },
+  notification_icon: {
+    selector: '[aria-label="Notifications"], [aria-label*="notif" i][role="button"]',
+    panel_selector: '[role="dialog"][aria-label*="Notif" i], [aria-label="Notifications"] + div',
+  },
+  search_input: {
+    selector: '[aria-label="Search Facebook"], input[placeholder*="Search" i], [role="search"] input',
+  },
+  comment_input: {
+    selector: '[contenteditable="true"][aria-label*="comment" i], [contenteditable="true"][aria-label*="komentar" i], [aria-label*="Write a comment" i]',
+  },
+  share_button: {
+    selector: '[aria-label*="Share" i][role="button"], [aria-label="Send this to friends or post it on your timeline."]',
+  },
 };
+
+const SAFE_SEARCH_QUERIES = [
+  "food near me", "funny videos", "local news", "weather today",
+  "cute animals", "cooking recipes", "travel tips", "music videos",
+  "fitness tips", "home decor ideas", "movie trailers", "photography tips",
+  "diy projects", "gardening tips", "book recommendations",
+];
+
+const SAFE_COMMENTS = ["\u{1F44D}", "\u{1F60A}", "\u{2764}\u{FE0F}", "\u{1F525}", "\u{1F44F}", "\u{1F4AF}", "nice", "cool", "awesome", "great"];
 
 // Selector cache (1 hour TTL)
 let cachedSelectors = null;
@@ -2135,7 +2172,10 @@ function extractDOMSnapshot() {
   const snapshot = {
     timestamp: Date.now(),
     url: window.location.href,
-    elements: { feed_articles: [], like_buttons: [], profile_links: [], comment_inputs: [] },
+    elements: {
+      feed_articles: [], like_buttons: [], profile_links: [], comment_inputs: [],
+      video_posts: [], story_tray: null, notification_icon: null, search_input: null, reaction_buttons: [],
+    },
   };
 
   const articles = Array.from(document.querySelectorAll('[role="article"]')).slice(0, 5);
@@ -2197,6 +2237,56 @@ function extractDOMSnapshot() {
     aria_label: el.getAttribute("aria-label"),
     role: el.getAttribute("role"),
     placeholder: el.getAttribute("placeholder") || el.getAttribute("data-placeholder") || "",
+  }));
+
+  // Video posts detection
+  const videoPosts = Array.from(document.querySelectorAll('[role="article"]')).filter(
+    (art) => art.querySelector('video, [data-video-id], [aria-label*="video" i]')
+  ).slice(0, 5);
+  snapshot.elements.video_posts = videoPosts.map((el, idx) => ({
+    article_index: idx,
+    has_video_tag: !!el.querySelector("video"),
+    has_video_id: !!el.querySelector("[data-video-id]"),
+    video_aria_label: el.querySelector("[aria-label*='video' i]")?.getAttribute("aria-label") || "",
+    play_button: !!el.querySelector('[aria-label*="Play" i]'),
+  }));
+
+  // Story tray
+  const storyTray = document.querySelector('[aria-label="Stories"], [aria-label*="story" i]');
+  snapshot.elements.story_tray = storyTray ? {
+    tag: storyTray.tagName,
+    aria_label: storyTray.getAttribute("aria-label"),
+    child_count: storyTray.children.length,
+    links_count: storyTray.querySelectorAll("a").length,
+    role: storyTray.getAttribute("role"),
+  } : null;
+
+  // Notification icon
+  const notifIcon = document.querySelector('[aria-label="Notifications"], [aria-label*="notif" i][role="button"]');
+  snapshot.elements.notification_icon = notifIcon ? {
+    tag: notifIcon.tagName,
+    aria_label: notifIcon.getAttribute("aria-label"),
+    role: notifIcon.getAttribute("role"),
+    class_sample: Array.from(notifIcon.classList).slice(0, 3).join(" "),
+  } : null;
+
+  // Search input
+  const searchInput = document.querySelector('[aria-label="Search Facebook"], input[placeholder*="Search" i], [role="search"] input');
+  snapshot.elements.search_input = searchInput ? {
+    tag: searchInput.tagName,
+    aria_label: searchInput.getAttribute("aria-label"),
+    placeholder: searchInput.getAttribute("placeholder") || "",
+    role: searchInput.getAttribute("role"),
+    type: searchInput.getAttribute("type") || "",
+  } : null;
+
+  // Share buttons
+  const shareBtns = Array.from(document.querySelectorAll('[aria-label*="Share" i][role="button"]')).slice(0, 3);
+  snapshot.elements.share_buttons = shareBtns.map((el) => ({
+    tag: el.tagName,
+    aria_label: el.getAttribute("aria-label"),
+    role: el.getAttribute("role"),
+    parent_tag: el.parentElement?.tagName,
   }));
 
   return snapshot;
@@ -2471,6 +2561,515 @@ async function warmupViewProfiles(tabId, count, minDelay = 5, maxDelay = 10) {
   return viewed;
 }
 
+// ── React to posts (Love, Haha, Wow, Sad, Angry) ──────────────────
+async function warmupReactPosts(tabId, count, minDelay = 3, maxDelay = 6) {
+  const selectors = await getActiveSelectors();
+
+  await new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, "1.3", () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
+
+  let reacted = 0;
+
+  try {
+    for (let i = 0; i < count; i++) {
+      // Find an unliked Like button and get its screen coordinates
+      const btnInfo = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (selCfg) => {
+          const likeSelector = selCfg?.like_button?.selector || '[aria-label="Like"]';
+          const stateAttr = selCfg?.like_button?.state_check || "aria-pressed";
+          const stateVal = selCfg?.like_button?.state_value_liked || "true";
+
+          const buttons = [];
+          for (const el of document.querySelectorAll(likeSelector)) {
+            if (el.getAttribute(stateAttr) === stateVal) continue;
+            if (el.offsetParent === null) continue;
+            buttons.push(el);
+          }
+          if (buttons.length === 0) return null;
+
+          const btn = buttons[Math.floor(Math.random() * buttons.length)];
+          btn.scrollIntoView({ behavior: "smooth", block: "center" });
+          const rect = btn.getBoundingClientRect();
+          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+        },
+        args: [selectors],
+      });
+
+      const coords = btnInfo?.[0]?.result;
+      if (!coords) { console.log("[SocyBase Warmup] No unliked buttons for reaction"); break; }
+
+      // Hover over the like button for ~1.5s to trigger reaction popup
+      await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: coords.x, y: coords.y });
+      const hoverMs = selectors?.reaction_trigger?.hover_duration_ms || 1500;
+      await new Promise((r) => setTimeout(r, hoverMs));
+
+      // Find a random reaction from the popup and click it
+      const reactionResult = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (selCfg) => {
+          const reactionLabels = selCfg?.reaction_popup?.reaction_labels || ["Love", "Haha", "Wow", "Sad", "Angry"];
+          const popupSelector = selCfg?.reaction_popup?.selector ||
+            '[role="dialog"] [aria-label], [data-testid="reaction_picker"] [aria-label]';
+
+          const allReactions = Array.from(document.querySelectorAll(popupSelector))
+            .filter((el) => reactionLabels.includes(el.getAttribute("aria-label")));
+
+          if (allReactions.length === 0) return null;
+          const chosen = allReactions[Math.floor(Math.random() * allReactions.length)];
+          const label = chosen.getAttribute("aria-label");
+          chosen.click();
+          return label;
+        },
+        args: [selectors],
+      });
+
+      const reactionLabel = reactionResult?.[0]?.result;
+      if (reactionLabel) {
+        console.log(`[SocyBase Warmup] Reacted with: ${reactionLabel}`);
+        reacted++;
+      } else {
+        // Popup didn't appear — fallback to normal like
+        console.log("[SocyBase Warmup] Reaction popup not found, falling back to like");
+        await cdp(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x: coords.x, y: coords.y, button: "left", clickCount: 1 });
+        await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x: coords.x, y: coords.y, button: "left", clickCount: 1 });
+        reacted++;
+      }
+
+      if (i < count - 1) await randomDelay(minDelay, maxDelay);
+    }
+  } finally {
+    try { await chrome.debugger.detach({ tabId }); } catch {}
+  }
+
+  console.log(`[SocyBase Warmup] Reacted on ${reacted} posts`);
+  return reacted;
+}
+
+// ── Watch videos in feed ───────────────────────────────────────────
+async function warmupWatchVideos(tabId, count, minDelay = 10, maxDelay = 30) {
+  let watched = 0;
+
+  for (let i = 0; i < count; i++) {
+    const videoResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const articles = Array.from(document.querySelectorAll('[role="article"]'));
+        const videoArticles = articles.filter(
+          (art) => art.querySelector('video, [data-video-id], [aria-label*="video" i]')
+        );
+        if (videoArticles.length === 0) return null;
+
+        const chosen = videoArticles[Math.floor(Math.random() * videoArticles.length)];
+        chosen.scrollIntoView({ behavior: "smooth", block: "center" });
+
+        // Try to play if paused
+        const video = chosen.querySelector("video");
+        if (video && video.paused) { try { video.play(); } catch {} }
+        const playBtn = chosen.querySelector('[aria-label*="Play" i]');
+        if (playBtn) { try { playBtn.click(); } catch {} }
+
+        return { found: true };
+      },
+    });
+
+    if (!videoResult?.[0]?.result) {
+      console.log("[SocyBase Warmup] No video posts found, scrolling to load more");
+      await warmupScrollFeed(tabId, 3, 1, 2);
+      continue;
+    }
+
+    const watchTime = minDelay + Math.random() * (maxDelay - minDelay);
+    console.log(`[SocyBase Warmup] Watching video ${i + 1}/${count} for ${Math.round(watchTime)}s`);
+    await new Promise((r) => setTimeout(r, watchTime * 1000));
+    watched++;
+
+    if (i < count - 1) await warmupScrollFeed(tabId, 2, 1, 2);
+  }
+
+  console.log(`[SocyBase Warmup] Watched ${watched} videos`);
+  return watched;
+}
+
+// ── View stories ───────────────────────────────────────────────────
+async function warmupViewStories(tabId, count, minDelay = 4, maxDelay = 8) {
+  const selectors = await getActiveSelectors();
+  let viewed = 0;
+
+  // Click a story from the tray
+  const storyResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (selCfg) => {
+      const storySelector = selCfg?.story_tray?.selector ||
+        '[aria-label="Stories"] a, [aria-label*="story" i] a, [data-testid="story_card"]';
+      const stories = Array.from(document.querySelectorAll(storySelector))
+        .filter((el) => el.offsetParent !== null);
+
+      if (stories.length === 0) return null;
+
+      // Skip the first (usually "Create story" / own story)
+      const available = stories.length > 1 ? stories.slice(1) : stories;
+      const chosen = available[Math.floor(Math.random() * available.length)];
+      chosen.scrollIntoView({ behavior: "smooth", block: "center" });
+      chosen.click();
+      return { found: true, total: stories.length };
+    },
+    args: [selectors],
+  });
+
+  if (!storyResult?.[0]?.result) {
+    console.log("[SocyBase Warmup] No stories found in tray");
+    return 0;
+  }
+
+  await new Promise((r) => setTimeout(r, 3000));
+
+  for (let i = 0; i < count; i++) {
+    await randomDelay(minDelay, maxDelay);
+    viewed++;
+
+    if (i < count - 1) {
+      // Advance to next story
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const nextBtn = document.querySelector(
+            '[aria-label="Next card"], [aria-label="Next story"], [aria-label*="Next" i][role="button"]'
+          );
+          if (nextBtn) { nextBtn.click(); return "clicked_next"; }
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          const ev = new MouseEvent("click", { clientX: vw * 0.75, clientY: vh / 2, bubbles: true });
+          document.elementFromPoint(vw * 0.75, vh / 2)?.dispatchEvent(ev);
+          return "clicked_screen";
+        },
+      });
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+
+  // Return to feed
+  console.log(`[SocyBase Warmup] Viewed ${viewed} stories, returning to feed`);
+  await chrome.tabs.update(tabId, { url: "https://www.facebook.com/" });
+  await waitForTabLoad(tabId, 15000);
+  await new Promise((r) => setTimeout(r, 2000));
+
+  return viewed;
+}
+
+// ── Browse marketplace ─────────────────────────────────────────────
+async function warmupBrowseMarketplace(tabId, minDelay = 8, maxDelay = 15) {
+  console.log("[SocyBase Warmup] Browsing marketplace");
+
+  await chrome.tabs.update(tabId, { url: "https://www.facebook.com/marketplace/" });
+  await waitForTabLoad(tabId, 20000);
+  await new Promise((r) => setTimeout(r, 3000));
+
+  // Scroll through listings
+  await warmupScrollFeed(tabId, 4, 1, 3);
+
+  // Click a random listing
+  const clickResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const links = Array.from(document.querySelectorAll('a[href*="/marketplace/item/"]'))
+        .filter((a) => a.offsetParent !== null);
+      if (links.length === 0) return null;
+      const chosen = links[Math.floor(Math.random() * links.length)];
+      chosen.scrollIntoView({ behavior: "smooth", block: "center" });
+      chosen.click();
+      return { clicked: true, total: links.length };
+    },
+  });
+
+  if (clickResult?.[0]?.result?.clicked) {
+    await new Promise((r) => setTimeout(r, 2000));
+    await randomDelay(minDelay, maxDelay);
+    console.log("[SocyBase Warmup] Viewed marketplace listing");
+  } else {
+    console.log("[SocyBase Warmup] No marketplace listings found to click");
+    await randomDelay(3, 6);
+  }
+
+  // Return to feed
+  await chrome.tabs.update(tabId, { url: "https://www.facebook.com/" });
+  await waitForTabLoad(tabId, 15000);
+  await new Promise((r) => setTimeout(r, 2000));
+
+  console.log("[SocyBase Warmup] Marketplace browsing complete");
+  return 1;
+}
+
+// ── Check notifications ────────────────────────────────────────────
+async function warmupCheckNotifications(tabId, minDelay = 3, maxDelay = 6) {
+  const selectors = await getActiveSelectors();
+
+  const clickResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (selCfg) => {
+      const notifSelector = selCfg?.notification_icon?.selector ||
+        '[aria-label="Notifications"], [aria-label*="notif" i][role="button"]';
+      const icon = document.querySelector(notifSelector);
+      if (!icon || icon.offsetParent === null) return null;
+      icon.click();
+      return { clicked: true };
+    },
+    args: [selectors],
+  });
+
+  if (!clickResult?.[0]?.result) {
+    console.log("[SocyBase Warmup] Notification icon not found");
+    return 0;
+  }
+
+  await new Promise((r) => setTimeout(r, 2000));
+
+  // Scroll through notifications
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const panel = document.querySelector(
+        '[role="dialog"][aria-label*="Notif" i], [aria-label="Notifications"] ~ div, [role="menu"]'
+      );
+      if (panel) panel.scrollTop += 300;
+    },
+  });
+
+  await randomDelay(minDelay, maxDelay);
+
+  // Close panel
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); },
+  });
+
+  await new Promise((r) => setTimeout(r, 500));
+  console.log("[SocyBase Warmup] Checked notifications");
+  return 1;
+}
+
+// ── Search feed ────────────────────────────────────────────────────
+async function warmupSearchFeed(tabId, minDelay = 5, maxDelay = 10) {
+  const selectors = await getActiveSelectors();
+  const query = SAFE_SEARCH_QUERIES[Math.floor(Math.random() * SAFE_SEARCH_QUERIES.length)];
+
+  const searchResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (selCfg) => {
+      const searchSelector = selCfg?.search_input?.selector ||
+        '[aria-label="Search Facebook"], input[placeholder*="Search" i], [role="search"] input';
+      const input = document.querySelector(searchSelector);
+      if (!input || input.offsetParent === null) return null;
+      input.click();
+      input.focus();
+      return { found: true };
+    },
+    args: [selectors],
+  });
+
+  if (!searchResult?.[0]?.result) {
+    console.log("[SocyBase Warmup] Search input not found");
+    return 0;
+  }
+
+  await new Promise((r) => setTimeout(r, 1000));
+
+  // Type query character by character via CDP
+  await new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, "1.3", () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
+
+  try {
+    for (const char of query) {
+      await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyDown", key: char, text: char });
+      await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", key: char });
+      await new Promise((r) => setTimeout(r, 50 + Math.random() * 100));
+    }
+
+    // Press Enter
+    await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  } finally {
+    try { await chrome.debugger.detach({ tabId }); } catch {}
+  }
+
+  await new Promise((r) => setTimeout(r, 3000));
+
+  console.log(`[SocyBase Warmup] Searched for: "${query}"`);
+  await randomDelay(minDelay, maxDelay);
+
+  // Return to feed
+  await chrome.tabs.update(tabId, { url: "https://www.facebook.com/" });
+  await waitForTabLoad(tabId, 15000);
+  await new Promise((r) => setTimeout(r, 2000));
+
+  return 1;
+}
+
+// ── Comment on posts (emoji/safe text only) ────────────────────────
+async function warmupCommentPosts(tabId, count, minDelay = 4, maxDelay = 8) {
+  const selectors = await getActiveSelectors();
+  let commented = 0;
+
+  for (let i = 0; i < count; i++) {
+    // Find a comment input (or click "Comment" button to expand it)
+    const inputResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (selCfg) => {
+        const commentSelector = selCfg?.comment_input?.selector ||
+          '[contenteditable="true"][aria-label*="comment" i], [contenteditable="true"][aria-label*="komentar" i], [aria-label*="Write a comment" i]';
+
+        const inputs = Array.from(document.querySelectorAll(commentSelector))
+          .filter((el) => el.offsetParent !== null);
+
+        if (inputs.length === 0) {
+          // Try clicking a "Comment" button to expand
+          const commentBtns = Array.from(document.querySelectorAll('[aria-label*="Comment" i][role="button"], [aria-label*="Komentar" i][role="button"]'))
+            .filter((el) => el.offsetParent !== null);
+          if (commentBtns.length > 0) {
+            const btn = commentBtns[Math.floor(Math.random() * commentBtns.length)];
+            btn.scrollIntoView({ behavior: "smooth", block: "center" });
+            btn.click();
+            return { needsRetry: true };
+          }
+          return null;
+        }
+
+        const chosen = inputs[Math.floor(Math.random() * inputs.length)];
+        chosen.scrollIntoView({ behavior: "smooth", block: "center" });
+        chosen.focus();
+        chosen.click();
+        return { found: true };
+      },
+      args: [selectors],
+    });
+
+    const result = inputResult?.[0]?.result;
+
+    if (result?.needsRetry) {
+      await new Promise((r) => setTimeout(r, 1500));
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (selCfg) => {
+          const commentSelector = selCfg?.comment_input?.selector ||
+            '[contenteditable="true"][aria-label*="comment" i], [contenteditable="true"][aria-label*="komentar" i]';
+          const input = document.querySelector(commentSelector);
+          if (input) { input.focus(); input.click(); }
+        },
+        args: [selectors],
+      });
+    } else if (!result) {
+      console.log("[SocyBase Warmup] No comment input found");
+      break;
+    }
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Type safe comment
+    const comment = SAFE_COMMENTS[Math.floor(Math.random() * SAFE_COMMENTS.length)];
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (text) => {
+        const active = document.activeElement;
+        if (active && active.getAttribute("contenteditable") === "true") {
+          active.textContent = text;
+          active.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      },
+      args: [comment],
+    });
+
+    await new Promise((r) => setTimeout(r, 800));
+
+    // Submit with Enter via CDP
+    await new Promise((resolve, reject) => {
+      chrome.debugger.attach({ tabId }, "1.3", () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+    try {
+      await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+      await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    } finally {
+      try { await chrome.debugger.detach({ tabId }); } catch {}
+    }
+
+    console.log(`[SocyBase Warmup] Commented: "${comment}"`);
+    commented++;
+
+    if (i < count - 1) await randomDelay(minDelay, maxDelay);
+  }
+
+  console.log(`[SocyBase Warmup] Commented on ${commented} posts`);
+  return commented;
+}
+
+// ── Share posts (infrastructure only, not in any preset) ───────────
+async function warmupSharePosts(tabId, count, minDelay = 5, maxDelay = 10) {
+  const selectors = await getActiveSelectors();
+  let shared = 0;
+
+  for (let i = 0; i < Math.min(count, 1); i++) { // Hard cap at 1
+    const shareResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (selCfg) => {
+        const shareSelector = selCfg?.share_button?.selector ||
+          '[aria-label*="Share" i][role="button"]';
+        const buttons = Array.from(document.querySelectorAll(shareSelector))
+          .filter((el) => el.offsetParent !== null);
+
+        if (buttons.length === 0) return null;
+        const chosen = buttons[Math.floor(Math.random() * buttons.length)];
+        chosen.scrollIntoView({ behavior: "smooth", block: "center" });
+        chosen.click();
+        return { clicked: true };
+      },
+      args: [selectors],
+    });
+
+    if (!shareResult?.[0]?.result) {
+      console.log("[SocyBase Warmup] No share buttons found");
+      break;
+    }
+
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // Click "Share now"
+    const dialogResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const shareNow = document.querySelector(
+          '[aria-label*="Share now" i], [role="menuitem"][aria-label*="Share now" i]'
+        );
+        if (shareNow) { shareNow.click(); return "shared"; }
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        return "cancelled";
+      },
+    });
+
+    const status = dialogResult?.[0]?.result;
+    if (status === "shared") {
+      shared++;
+      console.log("[SocyBase Warmup] Shared a post");
+    } else {
+      console.log("[SocyBase Warmup] Share cancelled — dialog not matched");
+    }
+
+    if (i < count - 1) await randomDelay(minDelay, maxDelay);
+  }
+
+  return shared;
+}
+
 async function executeWarmupActions(tabId, config) {
   const actions = config?.actions || [];
   const completed = [];
@@ -2499,6 +3098,54 @@ async function executeWarmupActions(tabId, config) {
           await randomDelay(action.min_delay || 3, action.max_delay || 8);
           completed.push("pause");
           break;
+
+        case "react_posts": {
+          const reacted = await warmupReactPosts(tabId, action.count || 1, action.min_delay || 3, action.max_delay || 6);
+          completed.push(`react_posts(${reacted}/${action.count})`);
+          break;
+        }
+
+        case "watch_videos": {
+          const watched = await warmupWatchVideos(tabId, action.count || 1, action.min_delay || 10, action.max_delay || 25);
+          completed.push(`watch_videos(${watched}/${action.count})`);
+          break;
+        }
+
+        case "view_stories": {
+          const stories = await warmupViewStories(tabId, action.count || 1, action.min_delay || 4, action.max_delay || 8);
+          completed.push(`view_stories(${stories}/${action.count})`);
+          break;
+        }
+
+        case "browse_marketplace": {
+          const browsed = await warmupBrowseMarketplace(tabId, action.min_delay || 8, action.max_delay || 15);
+          completed.push(`browse_marketplace(${browsed})`);
+          break;
+        }
+
+        case "check_notifications": {
+          const checked = await warmupCheckNotifications(tabId, action.min_delay || 3, action.max_delay || 6);
+          completed.push(`check_notifications(${checked})`);
+          break;
+        }
+
+        case "search_feed": {
+          const searched = await warmupSearchFeed(tabId, action.min_delay || 5, action.max_delay || 10);
+          completed.push(`search_feed(${searched})`);
+          break;
+        }
+
+        case "comment_posts": {
+          const comments = await warmupCommentPosts(tabId, action.count || 1, action.min_delay || 4, action.max_delay || 8);
+          completed.push(`comment_posts(${comments}/${action.count})`);
+          break;
+        }
+
+        case "share_posts": {
+          const shares = await warmupSharePosts(tabId, action.count || 1, action.min_delay || 5, action.max_delay || 10);
+          completed.push(`share_posts(${shares}/${action.count})`);
+          break;
+        }
 
         default:
           console.warn(`[SocyBase Warmup] Unknown action: ${action.type}`);

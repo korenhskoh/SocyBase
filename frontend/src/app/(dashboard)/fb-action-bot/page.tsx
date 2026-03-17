@@ -2871,9 +2871,9 @@ export default function FBActionBotPage() {
                     <label className="text-xs text-white/40 block mb-2">Warm-up Preset</label>
                     <div className="flex gap-2">
                       {([
-                        { key: "light" as const, label: "Light", desc: "Scroll feed x3, pause" },
-                        { key: "medium" as const, label: "Medium", desc: "Scroll x5, like x2, scroll x3" },
-                        { key: "heavy" as const, label: "Heavy", desc: "Scroll x8, like x3, view profiles, scroll x5, like x2" },
+                        { key: "light" as const, label: "Light", desc: "Scroll x3, pause, watch video x1" },
+                        { key: "medium" as const, label: "Medium", desc: "Scroll x5, like x2, video, stories, notifications" },
+                        { key: "heavy" as const, label: "Heavy", desc: "Full simulation: reactions, videos, stories, marketplace, search, comment" },
                       ]).map((p) => (
                         <button
                           key={p.key}

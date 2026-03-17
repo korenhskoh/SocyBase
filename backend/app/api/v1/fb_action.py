@@ -1283,6 +1283,8 @@ WARMUP_PRESETS = {
         "actions": [
             {"type": "scroll_feed", "count": 3, "min_delay": 2, "max_delay": 5},
             {"type": "pause", "min_delay": 5, "max_delay": 10},
+            {"type": "watch_videos", "count": 1, "min_delay": 10, "max_delay": 20},
+            {"type": "pause", "min_delay": 3, "max_delay": 8},
         ],
     },
     "medium": {
@@ -1290,18 +1292,26 @@ WARMUP_PRESETS = {
         "actions": [
             {"type": "scroll_feed", "count": 5, "min_delay": 2, "max_delay": 5},
             {"type": "like_posts", "count": 2, "min_delay": 3, "max_delay": 6},
-            {"type": "pause", "min_delay": 3, "max_delay": 8},
+            {"type": "watch_videos", "count": 1, "min_delay": 10, "max_delay": 25},
+            {"type": "view_stories", "count": 1, "min_delay": 4, "max_delay": 8},
             {"type": "scroll_feed", "count": 3, "min_delay": 2, "max_delay": 4},
+            {"type": "check_notifications", "min_delay": 3, "max_delay": 6},
         ],
     },
     "heavy": {
         "label": "Heavy",
         "actions": [
             {"type": "scroll_feed", "count": 8, "min_delay": 2, "max_delay": 5},
-            {"type": "like_posts", "count": 3, "min_delay": 3, "max_delay": 6},
+            {"type": "react_posts", "count": 2, "min_delay": 3, "max_delay": 6},
+            {"type": "like_posts", "count": 2, "min_delay": 3, "max_delay": 6},
+            {"type": "watch_videos", "count": 2, "min_delay": 10, "max_delay": 30},
+            {"type": "view_stories", "count": 2, "min_delay": 4, "max_delay": 8},
+            {"type": "browse_marketplace", "min_delay": 8, "max_delay": 15},
             {"type": "view_profiles", "count": 1, "min_delay": 5, "max_delay": 10},
             {"type": "scroll_feed", "count": 5, "min_delay": 2, "max_delay": 4},
-            {"type": "like_posts", "count": 2, "min_delay": 3, "max_delay": 6},
+            {"type": "search_feed", "min_delay": 5, "max_delay": 10},
+            {"type": "comment_posts", "count": 1, "min_delay": 4, "max_delay": 8},
+            {"type": "check_notifications", "min_delay": 3, "max_delay": 6},
         ],
     },
 }
