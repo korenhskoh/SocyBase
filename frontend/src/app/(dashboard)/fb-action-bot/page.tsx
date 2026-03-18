@@ -2802,43 +2802,58 @@ export default function FBActionBotPage() {
                   <p className="text-xs text-white/30">No verified selectors. Using default (hardcoded) selectors.</p>
                 )}
 
-                <button
-                  disabled={!warmupLoginBatchId || selectorChecking || !extensionDetected}
-                  onClick={async () => {
-                    setSelectorChecking(true);
-                    try {
-                      const res = await fbActionApi.startDOMCheck({ login_batch_id: warmupLoginBatchId });
-                      const checkData = res.data;
-                      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-                      const authToken = localStorage.getItem("access_token") || "";
-                      window.postMessage({
-                        type: "SOCYBASE_START_DOM_CHECK",
-                        checkData,
-                        apiUrl,
-                        authToken,
-                      }, "*");
-                    } catch (e: any) {
-                      setSelectorChecking(false);
-                      showToast("error", e.response?.data?.detail || "Failed to start DOM check");
-                    }
-                  }}
-                  className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs rounded-lg border border-purple-500/20 transition disabled:opacity-30 flex items-center gap-2"
-                >
-                  {selectorChecking ? (
+                {(() => {
+                  const selectedBatch = warmupLoginBatches.find((b: any) => b.id === warmupLoginBatchId);
+                  const hasAccounts = selectedBatch && selectedBatch.success_count > 0;
+                  return (
                     <>
-                      <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                      Checking DOM...
+                      {warmupLoginBatchId && !hasAccounts && (
+                        <div className="text-xs text-amber-400/60 bg-amber-400/5 p-2.5 rounded-lg border border-amber-400/10 flex items-center gap-2">
+                          <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                          No logged-in accounts in this batch. Run a login batch first to get accounts with valid cookies.
+                        </div>
+                      )}
+                      <button
+                        disabled={!warmupLoginBatchId || !hasAccounts || selectorChecking || !extensionDetected}
+                        onClick={async () => {
+                          setSelectorChecking(true);
+                          try {
+                            const res = await fbActionApi.startDOMCheck({ login_batch_id: warmupLoginBatchId });
+                            const checkData = res.data;
+                            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                            const authToken = localStorage.getItem("access_token") || "";
+                            window.postMessage({
+                              type: "SOCYBASE_START_DOM_CHECK",
+                              checkData,
+                              apiUrl,
+                              authToken,
+                            }, "*");
+                          } catch (e: any) {
+                            setSelectorChecking(false);
+                            showToast("error", e.response?.data?.detail || "Failed to start DOM check");
+                          }
+                        }}
+                        className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs rounded-lg border border-purple-500/20 transition disabled:opacity-30 flex items-center gap-2"
+                      >
+                        {selectorChecking ? (
+                          <>
+                            <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            Logging in &amp; checking DOM...
+                          </>
+                        ) : (
+                          <>
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" /></svg>
+                            Check Selectors
+                          </>
+                        )}
+                      </button>
+                      {!extensionDetected && (
+                        <p className="text-[10px] text-white/20">Extension required to check selectors</p>
+                      )}
+                      <p className="text-[10px] text-white/20">Logs in one account, opens Facebook, extracts DOM, then keeps the tab open.</p>
                     </>
-                  ) : (
-                    <>
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" /></svg>
-                      Check Selectors
-                    </>
-                  )}
-                </button>
-                {!extensionDetected && (
-                  <p className="text-[10px] text-white/20">Extension required to check selectors</p>
-                )}
+                  );
+                })()}
               </div>
 
               {/* Start new warm-up */}

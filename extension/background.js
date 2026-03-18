@@ -2360,17 +2360,20 @@ async function handleDOMCheck(checkData) {
     cachedSelectors = null;
     selectorsFetchedAt = null;
 
+    // Keep tab open — user can see the logged-in Facebook page
+    console.log("[SocyBase DOM Check] Complete — tab kept open for user review");
+
     return { success: true, result: submitResult };
 
   } catch (e) {
     console.error("[SocyBase DOM Check] Error:", e.message);
-    return { success: false, error: e.message };
-  } finally {
+    // On error, clean up
     if (tab?.id) {
       try { await chrome.tabs.remove(tab.id); } catch {}
     }
     await clearFacebookCookies();
     await clearProxy();
+    return { success: false, error: e.message };
   }
 }
 
