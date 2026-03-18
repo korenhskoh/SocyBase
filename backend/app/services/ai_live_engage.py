@@ -101,23 +101,49 @@ class AILiveEngageService:
     def _generate_order_comment(
         self, recent_comments: list[dict], posted_history: list[str] | None = None,
     ) -> str:
-        """Generate a place-order comment — prefer patterns from current livestream.
+        """Generate a place-order comment by copying real viewer patterns.
 
-        Avoids picking the same order comment we recently posted.
+        Strategy:
+        1. Scan scraped comments for short messages (≤40 chars) — in a livestream
+           these are almost always order/interest comments (+1, nak, want, pm, etc.)
+        2. Use these real comments as candidates — they already match the language,
+           slang, and ordering style of THIS specific livestream audience
+        3. Only fall back to static templates if no real patterns found
+        4. Filter out anything we already posted to avoid repetition
         """
-        # Extract short order-like comments from the current livestream
-        order_keywords = {"+1", "nak", "order", "want", "beli", "pm", "interested"}
-        live_order_comments = []
-        for c in recent_comments[-20:]:
+        # ── Phase 1: Extract real order-like patterns from scraped comments ──
+        # Short comments in a livestream are naturally order/reaction comments.
+        # Use a broad scan — any short message is likely an order pattern.
+        order_signals = {
+            "+1", "nak", "order", "want", "beli", "pm", "interested",
+            "mau", "cod", "buy", "book", "reserved", "mine", "me",
+            "saya", "aku", "confirm", "done", "paid", "bayar",
+        }
+
+        live_patterns: list[str] = []
+        for c in recent_comments[-30:]:
             msg = c.get("message", "").strip()
-            if not msg or len(msg) > 30:
+            if not msg:
                 continue
             msg_lower = msg.lower()
-            if any(kw in msg_lower for kw in order_keywords):
-                live_order_comments.append(msg)
+            # Short messages (≤40 chars) with any order signal
+            if len(msg) <= 40 and any(kw in msg_lower for kw in order_signals):
+                live_patterns.append(msg)
+            # Very short messages (≤15 chars) are almost always orders even without keywords
+            elif len(msg) <= 15:
+                live_patterns.append(msg)
 
-        # Build candidate pool: prefer livestream patterns, fall back to static
-        candidates = live_order_comments if live_order_comments else list(ORDER_PATTERNS)
+        # Deduplicate while preserving order
+        seen = set()
+        unique_patterns: list[str] = []
+        for p in live_patterns:
+            key = p.lower().strip()
+            if key not in seen:
+                seen.add(key)
+                unique_patterns.append(p)
+
+        # ── Phase 2: Pick from real patterns, fall back to static ──
+        candidates = unique_patterns if unique_patterns else list(ORDER_PATTERNS)
 
         # Filter out recently posted to avoid repetition
         if posted_history:
