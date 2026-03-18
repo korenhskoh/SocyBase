@@ -491,9 +491,36 @@ async def _engage_loop(
         except Exception as exc:
             logger.warning(f"[LiveEngage] Engage loop error: {exc}")
 
-        # Delay between comments (natural pacing)
-        delay = random.uniform(config["min_delay"], config["max_delay"])
+        # Delay between comments — role-based for natural pacing
+        # Order comments come fast (viewers rush to order), other roles are slower
+        base_min = config["min_delay"]
+        base_max = config["max_delay"]
+        delay = _role_delay(role, base_min, base_max)
         await asyncio.sleep(delay)
+
+
+def _role_delay(role: str, base_min: float, base_max: float) -> float:
+    """Return a randomized delay based on the comment role.
+
+    Real livestream behavior:
+    - Order comments (place_order) come FAST — viewers rush to type product codes
+    - Good vibes / reactions are medium — casual viewers chime in naturally
+    - Questions / share experience are SLOWER — takes time to think and type
+    """
+    # Role-specific multiplier ranges (min_mult, max_mult)
+    role_multipliers = {
+        "place_order":       (0.3, 0.6),    # Fast — order rush
+        "good_vibe":         (0.7, 1.2),    # Medium — casual reaction
+        "react_comment":     (0.8, 1.3),    # Medium — responding to someone
+        "ask_question":      (1.0, 1.8),    # Slower — thinking of a question
+        "repeat_question":   (1.0, 1.5),    # Slower — rephrasing takes time
+        "share_experience":  (1.2, 2.0),    # Slowest — typing a longer thought
+    }
+    min_mult, max_mult = role_multipliers.get(role, (0.8, 1.2))
+    multiplier = random.uniform(min_mult, max_mult)
+    delay = random.uniform(base_min, base_max) * multiplier
+    # Clamp: never faster than 2s (anti-spam), never slower than 3x max
+    return max(2.0, min(delay, base_max * 3))
 
 
 def _parse_response(resp: dict) -> tuple[bool, str | None]:

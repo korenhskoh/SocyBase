@@ -3,6 +3,7 @@
 import json
 import logging
 import random
+import re
 from difflib import SequenceMatcher
 
 from openai import AsyncOpenAI
@@ -112,13 +113,18 @@ class AILiveEngageService:
         4. Filter out anything we already posted to avoid repetition
         """
         # ── Phase 1: Extract real order-like patterns from scraped comments ──
-        # Short comments in a livestream are naturally order/reaction comments.
-        # Use a broad scan — any short message is likely an order pattern.
+        # Real livestream orders look like: m763, E769, G1024 +1, R2000, nak 2, +1
+        # They are short messages that are either product codes, keywords, or both.
         order_signals = {
             "+1", "nak", "order", "want", "beli", "pm", "interested",
             "mau", "cod", "buy", "book", "reserved", "mine", "me",
             "saya", "aku", "confirm", "done", "paid", "bayar",
         }
+        # Product code pattern: letter(s) + number(s), optionally followed by +N quantity
+        # Matches: m763, E769, G1024, R2000, G1024 +1, AB123 +3
+        product_code_re = re.compile(
+            r"^[A-Za-z]{1,4}\d{2,5}(?:\s*[+]\s*\d{1,3})?$"
+        )
 
         live_patterns: list[str] = []
         for c in recent_comments[-30:]:
@@ -126,11 +132,14 @@ class AILiveEngageService:
             if not msg:
                 continue
             msg_lower = msg.lower()
-            # Short messages (≤40 chars) with any order signal
-            if len(msg) <= 40 and any(kw in msg_lower for kw in order_signals):
+            # Product code orders (e.g. m763, G1024 +2)
+            if product_code_re.match(msg):
                 live_patterns.append(msg)
-            # Very short messages (≤15 chars) are almost always orders even without keywords
-            elif len(msg) <= 15:
+            # Short messages (≤40 chars) with any order signal keyword
+            elif len(msg) <= 40 and any(kw in msg_lower for kw in order_signals):
+                live_patterns.append(msg)
+            # Very short messages (≤12 chars) are almost always orders in livestream
+            elif len(msg) <= 12:
                 live_patterns.append(msg)
 
         # Deduplicate while preserving order
