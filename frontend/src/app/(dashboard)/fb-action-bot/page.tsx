@@ -269,6 +269,7 @@ export default function FBActionBotPage() {
   const [leInstructions, setLeInstructions] = useState("");
   const [leScrapeInterval, setLeScrapeInterval] = useState(8);
   const [lePageOwnerId, setLePageOwnerId] = useState("");
+  const [leProductCodes, setLeProductCodes] = useState("");
   const [leMinDelay, setLeMinDelay] = useState(15);
   const [leMaxDelay, setLeMaxDelay] = useState(60);
   const [leMaxDuration, setLeMaxDuration] = useState(180);
@@ -3380,6 +3381,16 @@ export default function FBActionBotPage() {
                     onChange={(e) => setLeInstructions(e.target.value)}
                   />
                 </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Seed Product Codes (optional)</label>
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    placeholder="e.g. m763, E769, R2000, G1024"
+                    value={leProductCodes}
+                    onChange={(e) => setLeProductCodes(e.target.value)}
+                  />
+                  <p className="text-xs text-white/30 mt-1">Comma-separated. Bot also auto-detects codes from real viewer comments.</p>
+                </div>
               </div>
 
               {/* Timing */}
@@ -3453,6 +3464,7 @@ export default function FBActionBotPage() {
                       training_comments: leTrainingComments || undefined,
                       ai_instructions: leInstructions || undefined,
                       scrape_interval_seconds: leScrapeInterval,
+                      product_codes: leProductCodes.trim() || undefined,
                       min_delay_seconds: leMinDelay,
                       max_delay_seconds: leMaxDelay,
                       max_duration_minutes: leMaxDuration,

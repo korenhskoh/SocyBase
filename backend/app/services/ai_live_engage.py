@@ -80,6 +80,7 @@ class AILiveEngageService:
         ai_instructions: str = "",
         reference_comment: str | None = None,
         posted_history: list[str] | None = None,
+        detected_codes: list[str] | None = None,
     ) -> str:
         """Generate a single livestream comment for the given role.
 
@@ -91,7 +92,7 @@ class AILiveEngageService:
                 AI can avoid repeating similar content.
         """
         if role == "place_order":
-            return self._generate_order_comment(recent_comments, posted_history)
+            return self._generate_order_comment(recent_comments, posted_history, detected_codes)
 
         return await self._generate_ai_comment(
             role, recent_comments, business_context, training_comments, ai_instructions,
@@ -99,21 +100,29 @@ class AILiveEngageService:
         )
 
     def _generate_order_comment(
-        self, recent_comments: list[dict], posted_history: list[str] | None = None,
+        self,
+        recent_comments: list[dict],
+        posted_history: list[str] | None = None,
+        detected_codes: list[str] | None = None,
     ) -> str:
-        """Generate a place-order comment by copying real viewer patterns.
+        """Generate a place-order comment.
 
-        Strategy:
-        1. Scan scraped comments for short messages (≤40 chars) — in a livestream
-           these are almost always order/interest comments (+1, nak, want, pm, etc.)
-        2. Use these real comments as candidates — they already match the language,
-           slang, and ordering style of THIS specific livestream audience
-        3. Only fall back to static templates if no real patterns found
-        4. Filter out anything we already posted to avoid repetition
+        Priority: detected product codes > real viewer patterns > static templates.
+        Filters out recently posted content to avoid repetition.
         """
-        # ── Phase 1: Extract real order-like patterns from scraped comments ──
-        # Short comments in a livestream are naturally order/reaction comments.
-        # Use a broad scan — any short message is likely an order pattern.
+        # ── Priority 1: Use detected product codes ~80% of the time ──
+        if detected_codes and random.random() < 0.8:
+            code = random.choice(detected_codes)
+            roll = random.random()
+            if roll < 0.3:
+                qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
+                return f"{code} +{qty}"
+            elif roll < 0.5:
+                phrase = random.choice(["nak", "want", "order", "beli", "pm"])
+                return f"{code} {phrase}"
+            return code
+
+        # ── Priority 2: Copy real viewer order patterns from scraped comments ──
         order_signals = {
             "+1", "nak", "order", "want", "beli", "pm", "interested",
             "mau", "cod", "buy", "book", "reserved", "mine", "me",
@@ -126,10 +135,8 @@ class AILiveEngageService:
             if not msg:
                 continue
             msg_lower = msg.lower()
-            # Short messages (≤40 chars) with any order signal
             if len(msg) <= 40 and any(kw in msg_lower for kw in order_signals):
                 live_patterns.append(msg)
-            # Very short messages (≤15 chars) are almost always orders even without keywords
             elif len(msg) <= 15:
                 live_patterns.append(msg)
 
@@ -142,7 +149,6 @@ class AILiveEngageService:
                 seen.add(key)
                 unique_patterns.append(p)
 
-        # ── Phase 2: Pick from real patterns, fall back to static ──
         candidates = unique_patterns if unique_patterns else list(ORDER_PATTERNS)
 
         # Filter out recently posted to avoid repetition

@@ -1,17 +1,55 @@
 """Celery task for livestream engagement — monitor comments + post AI-generated comments."""
 
 import asyncio
-import json
 import logging
 import random
+import re
 import uuid
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from time import monotonic
 
 from app.celery_app import celery_app
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Regex: 1-3 letters followed by 2-5 digits, optionally +N quantity
+# Matches: m763, E769, R2000, G1024, g1024 +1, AB123 +2
+PRODUCT_CODE_RE = re.compile(
+    r'\b([a-zA-Z]{1,3}\d{2,5})\b'
+    r'(?:\s*\+\s*(\d{1,2}))?'
+)
+
+
+@dataclass
+class AdaptiveState:
+    """Shared mutable state for adaptive behavior between monitor and engage loops."""
+    detected_codes: list = field(default_factory=list)
+    comment_timestamps: deque = field(default_factory=lambda: deque(maxlen=200))
+    code_comment_timestamps: deque = field(default_factory=lambda: deque(maxlen=200))
+    velocity_cpm: float = 0.0
+    code_ratio: float = 0.0
+    last_recalc: float = 0.0
+
+
+def _extract_product_codes(message: str) -> list[str]:
+    """Extract product code patterns from a comment message."""
+    matches = PRODUCT_CODE_RE.findall(message)
+    return [m[0] for m in matches]
+
+
+def _recalculate_adaptive(adaptive: AdaptiveState, window_seconds: int = 60):
+    """Recalculate velocity and code ratio from recent timestamps."""
+    now = monotonic()
+    cutoff = now - window_seconds
+    recent_all = sum(1 for t in adaptive.comment_timestamps if t > cutoff)
+    recent_codes = sum(1 for t in adaptive.code_comment_timestamps if t > cutoff)
+    adaptive.velocity_cpm = (recent_all / window_seconds) * 60 if window_seconds > 0 else 0
+    adaptive.code_ratio = (recent_codes / recent_all) if recent_all > 0 else 0.0
+    adaptive.last_recalc = now
 
 
 @celery_app.task(name="app.scraping.fb_live_engage_tasks.run_live_engagement", bind=True)
@@ -74,6 +112,7 @@ async def _execute_engagement(session_id: str):
                 "login_batch_id": session.login_batch_id,
                 "tenant_id": session.tenant_id,
                 "user_id": session.user_id,
+                "product_codes": session.product_codes or "",
             }
 
         # ── Load accounts from login batch ───────────────────
@@ -147,6 +186,12 @@ async def _execute_engagement(session_id: str):
         stop_event = asyncio.Event()
         new_comments_event = asyncio.Event()  # Signalled when fresh comments arrive
         last_seen_count = [0]  # Mutable counter for engage loop to track what it has processed
+        adaptive = AdaptiveState()
+
+        # Seed product codes from user config
+        seed_codes_str = config.get("product_codes", "") or ""
+        if seed_codes_str:
+            adaptive.detected_codes = [c.strip() for c in seed_codes_str.split(",") if c.strip()]
 
         client = FacebookGraphClient()
 
@@ -156,12 +201,12 @@ async def _execute_engagement(session_id: str):
                 _monitor_loop(
                     client, config, recent_comments, seen_comment_ids,
                     our_content, stop_event, new_comments_event,
-                    session_id, SessionLocal,
+                    session_id, SessionLocal, adaptive,
                 ),
                 _engage_loop(
                     client, config, recent_comments, our_content,
                     stop_event, new_comments_event, last_seen_count,
-                    account_pool, session_id, SessionLocal,
+                    account_pool, session_id, SessionLocal, adaptive,
                 ),
             )
         finally:
@@ -200,7 +245,7 @@ async def _execute_engagement(session_id: str):
 
 async def _monitor_loop(
     client, config, recent_comments, seen_comment_ids, our_content,
-    stop_event, new_comments_event, session_id, SessionLocal,
+    stop_event, new_comments_event, session_id, SessionLocal, adaptive,
 ):
     """Poll comments via AKNG scrape API at configurable interval.
 
@@ -299,6 +344,21 @@ async def _monitor_loop(
                 })
                 new_count += 1
 
+                # ── Product code detection ──
+                now_ts = monotonic()
+                adaptive.comment_timestamps.append(now_ts)
+                codes_in_msg = _extract_product_codes(message)
+                if codes_in_msg:
+                    adaptive.code_comment_timestamps.append(now_ts)
+                    known_upper = {c.upper() for c in adaptive.detected_codes}
+                    for code in codes_in_msg:
+                        if code.upper() not in known_upper:
+                            adaptive.detected_codes.append(code)
+                            known_upper.add(code.upper())
+                    # Bound to last 50 unique codes
+                    if len(adaptive.detected_codes) > 50:
+                        adaptive.detected_codes = adaptive.detected_codes[-50:]
+
             # Advance cursor only when we got results
             if next_cursor and comments_data:
                 after_cursor = next_cursor
@@ -332,14 +392,9 @@ async def _monitor_loop(
 async def _engage_loop(
     client, config, recent_comments, our_content,
     stop_event, new_comments_event, last_seen_count,
-    account_pool, session_id, SessionLocal,
+    account_pool, session_id, SessionLocal, adaptive,
 ):
-    """Generate and post AI comments only when new scraped comments arrive.
-
-    Waits for ``new_comments_event`` from the monitor loop before generating.
-    This ensures we never repeat comments when the livestream is quiet —
-    we only engage when there is fresh viewer activity to respond to.
-    """
+    """Generate and post AI comments when new comments arrive, with adaptive behavior."""
     from sqlalchemy import select
     from app.models.fb_live_engage import FBLiveEngageSession, FBLiveEngageLog
     from app.services.ai_live_engage import AILiveEngageService
@@ -351,9 +406,9 @@ async def _engage_loop(
     max_duration_secs = config["max_duration_minutes"] * 60
 
     # Build role weights for random.choices
-    role_dist = config["role_distribution"]
-    roles = list(role_dist.keys())
-    weights = [role_dist[r] for r in roles]
+    base_role_dist = config["role_distribution"]
+    roles = list(base_role_dist.keys())
+    weights = [base_role_dist[r] for r in roles]
 
     # Track posted comments for anti-repetition
     posted_history: list[str] = []  # Ordered list of our posted comment texts
@@ -390,6 +445,37 @@ async def _engage_loop(
                 continue
             last_seen_count[0] = current_count
 
+            # ── Adaptive recalculation (every ~30s) ──
+            now_mono = monotonic()
+            if now_mono - adaptive.last_recalc > 30:
+                _recalculate_adaptive(adaptive)
+                base_order_weight = base_role_dist.get("place_order", 10)
+                if adaptive.code_ratio > 0:
+                    target_order_pct = min(adaptive.code_ratio * 100, 50)
+                    new_order_weight = int(base_order_weight * 0.4 + target_order_pct * 0.6)
+                    new_order_weight = max(base_order_weight, min(new_order_weight, 50))
+                else:
+                    new_order_weight = base_order_weight
+
+                total_other = sum(v for k, v in base_role_dist.items() if k != "place_order")
+                if total_other > 0 and new_order_weight != base_order_weight:
+                    scale = (100 - new_order_weight) / total_other
+                    weights = []
+                    for r in roles:
+                        if r == "place_order":
+                            weights.append(new_order_weight)
+                        else:
+                            weights.append(max(1, int(base_role_dist[r] * scale)))
+                else:
+                    weights = [base_role_dist[r] for r in roles]
+
+                logger.debug(
+                    "[LiveEngage] Adaptive: velocity=%.1fcpm, code_ratio=%.2f, "
+                    "order_weight=%d, detected_codes=%d",
+                    adaptive.velocity_cpm, adaptive.code_ratio,
+                    new_order_weight, len(adaptive.detected_codes),
+                )
+
             # Pick role via weighted random, avoiding consecutive same role
             role = random.choices(roles, weights=weights, k=1)[0]
             if role == last_role and len(roles) > 1:
@@ -420,6 +506,7 @@ async def _engage_loop(
                     ai_instructions=config["ai_instructions"],
                     reference_comment=reference_comment,
                     posted_history=posted_history,
+                    detected_codes=adaptive.detected_codes,
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] AI generation error: {exc}")
@@ -491,8 +578,17 @@ async def _engage_loop(
         except Exception as exc:
             logger.warning(f"[LiveEngage] Engage loop error: {exc}")
 
-        # Delay between comments (natural pacing)
-        delay = random.uniform(config["min_delay"], config["max_delay"])
+        # ── Adaptive delay ──
+        base_min = config["min_delay"]
+        base_max = config["max_delay"]
+        if adaptive.velocity_cpm > 5:
+            speed_factor = max(0.3, 1.0 - (adaptive.velocity_cpm - 5) / 100)
+            adj_min = max(5, base_min * speed_factor)
+            adj_max = max(adj_min + 5, base_max * speed_factor)
+        else:
+            adj_min = base_min
+            adj_max = base_max
+        delay = random.uniform(adj_min, adj_max)
         await asyncio.sleep(delay)
 
 

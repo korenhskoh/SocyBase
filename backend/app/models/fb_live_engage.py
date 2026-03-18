@@ -55,6 +55,7 @@ class FBLiveEngageSession(Base):
     business_context: Mapped[str] = mapped_column(Text, default="")
     training_comments: Mapped[str | None] = mapped_column(Text)
     ai_instructions: Mapped[str] = mapped_column(Text, default="")
+    product_codes: Mapped[str | None] = mapped_column(Text)  # comma-separated seed codes e.g. "m763, E769"
 
     # Page owner — comments from this ID are ignored (livestream host)
     page_owner_id: Mapped[str | None] = mapped_column(String(100))

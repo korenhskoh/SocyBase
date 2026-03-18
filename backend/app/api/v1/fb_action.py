@@ -2340,6 +2340,7 @@ class LiveEngageStartRequest(BaseModel):
     ai_instructions: str = ""
     page_owner_id: str | None = None
     scrape_interval_seconds: int = Field(default=8, ge=3, le=30)
+    product_codes: str | None = None  # comma-separated seed codes e.g. "m763, E769"
     min_delay_seconds: int = Field(default=15, ge=5, le=120)
     max_delay_seconds: int = Field(default=60, ge=10, le=300)
     max_duration_minutes: int = Field(default=180, ge=10, le=720)
@@ -2402,6 +2403,7 @@ async def live_engage_start(
         ai_instructions=req.ai_instructions,
         page_owner_id=req.page_owner_id,
         scrape_interval_seconds=req.scrape_interval_seconds,
+        product_codes=req.product_codes,
         min_delay_seconds=req.min_delay_seconds,
         max_delay_seconds=req.max_delay_seconds,
         max_duration_minutes=req.max_duration_minutes,

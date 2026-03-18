@@ -625,6 +625,7 @@ export const fbActionApi = {
     ai_instructions?: string;
     page_owner_id?: string;
     scrape_interval_seconds?: number;
+    product_codes?: string;
     min_delay_seconds?: number;
     max_delay_seconds?: number;
     max_duration_minutes?: number;
