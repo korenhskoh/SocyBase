@@ -623,8 +623,11 @@ export const fbActionApi = {
     business_context?: string;
     training_comments?: string;
     ai_instructions?: string;
+    page_owner_id?: string;
+    scrape_interval_seconds?: number;
     min_delay_seconds?: number;
     max_delay_seconds?: number;
+    max_duration_minutes?: number;
   }) => api.post("/fb-action/live-engage/start", data),
   liveEngageStatus: (sessionId: string) =>
     api.get(`/fb-action/live-engage/${sessionId}`),

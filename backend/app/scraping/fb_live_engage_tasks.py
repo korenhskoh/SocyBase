@@ -355,6 +355,10 @@ async def _engage_loop(
     roles = list(role_dist.keys())
     weights = [role_dist[r] for r in roles]
 
+    # Track posted comments for anti-repetition
+    posted_history: list[str] = []  # Ordered list of our posted comment texts
+    last_role: str | None = None     # Avoid picking the same role consecutively
+
     while not stop_event.is_set():
         try:
             # Check max duration
@@ -365,7 +369,6 @@ async def _engage_loop(
                 break
 
             # ── Wait for new comments from monitor loop ──────
-            # This is the key change: we don't post on a blind timer.
             # We wait until the monitor signals fresh viewer comments,
             # then clear the event so we wait again next round.
             try:
@@ -387,8 +390,15 @@ async def _engage_loop(
                 continue
             last_seen_count[0] = current_count
 
-            # Pick role via weighted random
+            # Pick role via weighted random, avoiding consecutive same role
             role = random.choices(roles, weights=weights, k=1)[0]
+            if role == last_role and len(roles) > 1:
+                # Re-roll once to avoid consecutive same role
+                for _ in range(3):
+                    role = random.choices(roles, weights=weights, k=1)[0]
+                    if role != last_role:
+                        break
+            last_role = role
 
             # Pick account (round-robin)
             account = account_pool[account_idx % len(account_pool)]
@@ -409,6 +419,7 @@ async def _engage_loop(
                     training_comments=config["training_comments"],
                     ai_instructions=config["ai_instructions"],
                     reference_comment=reference_comment,
+                    posted_history=posted_history,
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] AI generation error: {exc}")
@@ -417,8 +428,12 @@ async def _engage_loop(
             if not content:
                 continue
 
-            # Track our content so monitor can skip it
+            # Track our content so monitor can skip it + AI can avoid repeating
             our_content.add(content)
+            posted_history.append(content)
+            # Keep history bounded to last 30 comments
+            if len(posted_history) > 30:
+                posted_history[:] = posted_history[-30:]
 
             # Execute via AKNG
             try:
