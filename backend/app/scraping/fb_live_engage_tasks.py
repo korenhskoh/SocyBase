@@ -55,15 +55,22 @@ async def _execute_engagement(session_id: str):
             await db.commit()
 
             # Capture config before leaving db context
+            # Derive page owner ID: explicit > extracted from post_id ({page_id}_{post_id})
+            page_owner_id = session.page_owner_id or ""
+            if not page_owner_id and "_" in session.post_id:
+                page_owner_id = session.post_id.split("_")[0]
+
             config = {
                 "post_id": session.post_id,
                 "role_distribution": session.role_distribution or {},
                 "business_context": session.business_context or "",
                 "training_comments": session.training_comments,
                 "ai_instructions": session.ai_instructions or "",
+                "scrape_interval": session.scrape_interval_seconds or 8,
                 "min_delay": session.min_delay_seconds,
                 "max_delay": session.max_delay_seconds,
                 "max_duration_minutes": session.max_duration_minutes or 180,
+                "page_owner_id": page_owner_id,
                 "login_batch_id": session.login_batch_id,
                 "tenant_id": session.tenant_id,
                 "user_id": session.user_id,
@@ -138,6 +145,8 @@ async def _execute_engagement(session_id: str):
         seen_comment_ids: set[str] = set()
         our_content: set[str] = set()
         stop_event = asyncio.Event()
+        new_comments_event = asyncio.Event()  # Signalled when fresh comments arrive
+        last_seen_count = [0]  # Mutable counter for engage loop to track what it has processed
 
         client = FacebookGraphClient()
 
@@ -145,12 +154,14 @@ async def _execute_engagement(session_id: str):
         try:
             await asyncio.gather(
                 _monitor_loop(
-                    client, config["post_id"], recent_comments, seen_comment_ids,
-                    our_content, stop_event, session_id, SessionLocal,
+                    client, config, recent_comments, seen_comment_ids,
+                    our_content, stop_event, new_comments_event,
+                    session_id, SessionLocal,
                 ),
                 _engage_loop(
-                    client, config["post_id"], recent_comments, our_content,
-                    stop_event, account_pool, config, session_id, SessionLocal,
+                    client, config, recent_comments, our_content,
+                    stop_event, new_comments_event, last_seen_count,
+                    account_pool, session_id, SessionLocal,
                 ),
             )
         finally:
@@ -188,26 +199,31 @@ async def _execute_engagement(session_id: str):
 
 
 async def _monitor_loop(
-    client, post_id, recent_comments, seen_comment_ids, our_content,
-    stop_event, session_id, SessionLocal,
+    client, config, recent_comments, seen_comment_ids, our_content,
+    stop_event, new_comments_event, session_id, SessionLocal,
 ):
-    """Poll comments via AKNG scrape API with cursor tracking.
+    """Poll comments via AKNG scrape API at configurable interval.
 
     Uses ``get_post_comments`` (no Facebook account needed — pure AKNG scrape).
-    Tracks the ``after`` cursor so each poll only fetches NEW comments since the
-    last successful fetch, avoiding re-scraping from the beginning every time.
+    Tracks the ``after`` cursor so each poll only fetches NEW comments.
+    Filters out page owner comments. Signals ``new_comments_event`` when
+    fresh viewer comments arrive so the engage loop knows when to act.
     """
     from sqlalchemy import select
     from app.models.fb_live_engage import FBLiveEngageSession
 
+    post_id = config["post_id"]
+    scrape_interval = config["scrape_interval"]
+    page_owner_id = config.get("page_owner_id", "")
     iteration = 0
-    after_cursor: str | None = None  # Track pagination cursor for incremental fetching
+    after_cursor: str | None = None
 
     while not stop_event.is_set():
         try:
-            # Check session status every ~30s (every 4th iteration)
+            # Check session status periodically (~30s)
             iteration += 1
-            if iteration % 4 == 0:
+            status_check_every = max(2, int(30 / scrape_interval))
+            if iteration % status_check_every == 0:
                 try:
                     async with SessionLocal() as db:
                         result = await db.execute(
@@ -223,8 +239,7 @@ async def _monitor_loop(
                 except Exception as exc:
                     logger.warning(f"[LiveEngage] Monitor: DB check failed: {exc}")
 
-            # Fetch comments via AKNG scrape API (no FB account needed)
-            # Use cursor to only fetch new comments since last poll
+            # Fetch comments via AKNG scrape API
             try:
                 response = await client.get_post_comments(
                     post_id, limit=50, comment_filter="stream",
@@ -232,20 +247,18 @@ async def _monitor_loop(
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] Monitor: fetch failed: {exc}")
-                await asyncio.sleep(8)
+                await asyncio.sleep(scrape_interval)
                 continue
 
             # Parse AKNG response — unwrap wrapper
             comments_data = []
             next_cursor = None
             if isinstance(response, dict):
-                # AKNG wraps: {success, data: {comments: {data: [...], paging: {...}}}}
                 data = response.get("data", response)
                 if isinstance(data, dict):
                     comments_obj = data.get("comments", data)
                     if isinstance(comments_obj, dict):
                         comments_data = comments_obj.get("data", [])
-                        # Extract next cursor for incremental polling
                         paging = comments_obj.get("paging", {})
                         cursors = paging.get("cursors", {})
                         next_cursor = cursors.get("after")
@@ -262,23 +275,31 @@ async def _monitor_loop(
                     continue
                 if cid in seen_comment_ids:
                     continue
+
+                from_data = c.get("from", {})
+                from_id = from_data.get("id", "")
+
+                # Skip page owner (livestream host) comments
+                if page_owner_id and from_id == page_owner_id:
+                    seen_comment_ids.add(cid)
+                    continue
+
                 # Skip our own comments
                 if message in our_content:
                     seen_comment_ids.add(cid)
                     continue
 
                 seen_comment_ids.add(cid)
-                from_data = c.get("from", {})
                 recent_comments.append({
                     "id": cid,
                     "from_name": from_data.get("name", ""),
-                    "from_id": from_data.get("id", ""),
+                    "from_id": from_id,
                     "message": message,
                     "created_time": c.get("created_time", ""),
                 })
                 new_count += 1
 
-            # Advance cursor only when we got results (avoids losing position on empty polls)
+            # Advance cursor only when we got results
             if next_cursor and comments_data:
                 after_cursor = next_cursor
 
@@ -286,8 +307,9 @@ async def _monitor_loop(
             if len(recent_comments) > 50:
                 recent_comments[:] = recent_comments[-50:]
 
-            # Update monitored count
+            # Signal engage loop that new viewer comments arrived
             if new_count > 0:
+                new_comments_event.set()
                 try:
                     async with SessionLocal() as db:
                         result = await db.execute(
@@ -304,20 +326,27 @@ async def _monitor_loop(
         except Exception as exc:
             logger.warning(f"[LiveEngage] Monitor: unexpected error: {exc}")
 
-        await asyncio.sleep(8)
+        await asyncio.sleep(scrape_interval)
 
 
 async def _engage_loop(
-    client, post_id, recent_comments, our_content,
-    stop_event, account_pool, config, session_id, SessionLocal,
+    client, config, recent_comments, our_content,
+    stop_event, new_comments_event, last_seen_count,
+    account_pool, session_id, SessionLocal,
 ):
-    """Generate and post AI comments at random intervals."""
+    """Generate and post AI comments only when new scraped comments arrive.
+
+    Waits for ``new_comments_event`` from the monitor loop before generating.
+    This ensures we never repeat comments when the livestream is quiet —
+    we only engage when there is fresh viewer activity to respond to.
+    """
     from sqlalchemy import select
     from app.models.fb_live_engage import FBLiveEngageSession, FBLiveEngageLog
     from app.services.ai_live_engage import AILiveEngageService
 
     ai_service = AILiveEngageService()
     account_idx = 0
+    post_id = config["post_id"]
     session_start = datetime.now(timezone.utc)
     max_duration_secs = config["max_duration_minutes"] * 60
 
@@ -335,10 +364,28 @@ async def _engage_loop(
                 stop_event.set()
                 break
 
-            # Warm-up: wait until we have some real comments for context
-            if len(recent_comments) < 3:
-                await asyncio.sleep(5)
+            # ── Wait for new comments from monitor loop ──────
+            # This is the key change: we don't post on a blind timer.
+            # We wait until the monitor signals fresh viewer comments,
+            # then clear the event so we wait again next round.
+            try:
+                await asyncio.wait_for(new_comments_event.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                # No new comments in 30s — loop back to check stop/duration
                 continue
+
+            # Clear event — we'll wait for the next batch of new comments
+            new_comments_event.clear()
+
+            # Need at least 3 comments for meaningful context
+            if len(recent_comments) < 3:
+                continue
+
+            # Check if there are actually new comments since our last action
+            current_count = len(recent_comments)
+            if current_count <= last_seen_count[0]:
+                continue
+            last_seen_count[0] = current_count
 
             # Pick role via weighted random
             role = random.choices(roles, weights=weights, k=1)[0]
@@ -351,7 +398,7 @@ async def _engage_loop(
             reference_comment = None
             try:
                 if role in ("react_comment", "repeat_question") and recent_comments:
-                    # Pick a random recent comment as reference
+                    # Pick from the most recent comments as reference
                     ref = random.choice(recent_comments[-10:]) if len(recent_comments) >= 3 else recent_comments[-1]
                     reference_comment = f"{ref.get('from_name', '')}: {ref.get('message', '')}"
 
@@ -368,7 +415,6 @@ async def _engage_loop(
                 content = None
 
             if not content:
-                await asyncio.sleep(5)
                 continue
 
             # Track our content so monitor can skip it
@@ -430,7 +476,7 @@ async def _engage_loop(
         except Exception as exc:
             logger.warning(f"[LiveEngage] Engage loop error: {exc}")
 
-        # Random delay
+        # Delay between comments (natural pacing)
         delay = random.uniform(config["min_delay"], config["max_delay"])
         await asyncio.sleep(delay)
 

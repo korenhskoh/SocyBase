@@ -56,7 +56,11 @@ class FBLiveEngageSession(Base):
     training_comments: Mapped[str | None] = mapped_column(Text)
     ai_instructions: Mapped[str] = mapped_column(Text, default="")
 
+    # Page owner — comments from this ID are ignored (livestream host)
+    page_owner_id: Mapped[str | None] = mapped_column(String(100))
+
     # Timing
+    scrape_interval_seconds: Mapped[int] = mapped_column(Integer, default=8)
     min_delay_seconds: Mapped[int] = mapped_column(Integer, default=15)
     max_delay_seconds: Mapped[int] = mapped_column(Integer, default=60)
     max_duration_minutes: Mapped[int] = mapped_column(Integer, default=180)

@@ -267,6 +267,8 @@ export default function FBActionBotPage() {
   const [leContext, setLeContext] = useState("");
   const [leTrainingComments, setLeTrainingComments] = useState("");
   const [leInstructions, setLeInstructions] = useState("");
+  const [leScrapeInterval, setLeScrapeInterval] = useState(8);
+  const [lePageOwnerId, setLePageOwnerId] = useState("");
   const [leMinDelay, setLeMinDelay] = useState(15);
   const [leMaxDelay, setLeMaxDelay] = useState(60);
   const [leMaxDuration, setLeMaxDuration] = useState(180);
@@ -3267,6 +3269,16 @@ export default function FBActionBotPage() {
                     onChange={(e) => setLeTitle(e.target.value)}
                   />
                 </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Page Owner ID (optional — auto-detected from Post ID)</label>
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    placeholder="Facebook Page ID — comments from this ID will be ignored"
+                    value={lePageOwnerId}
+                    onChange={(e) => setLePageOwnerId(e.target.value)}
+                  />
+                  <p className="text-xs text-white/30 mt-1">Livestream host comments are filtered out so AI only responds to viewers</p>
+                </div>
               </div>
 
               {/* Accounts */}
@@ -3373,6 +3385,15 @@ export default function FBActionBotPage() {
               {/* Timing */}
               <div className="glass-card p-5 space-y-3">
                 <h3 className="text-sm font-medium text-white/60">Timing</h3>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Scrape Interval: {leScrapeInterval}s</label>
+                  <input
+                    type="range" min={3} max={30} step={1} value={leScrapeInterval}
+                    className="w-full accent-amber-400"
+                    onChange={(e) => setLeScrapeInterval(parseInt(e.target.value))}
+                  />
+                  <p className="text-xs text-white/30 mt-1">How often to fetch new livestream comments — AI only responds when new comments arrive</p>
+                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs text-white/40 block mb-1">Min Delay: {leMinDelay}s</label>
@@ -3425,11 +3446,13 @@ export default function FBActionBotPage() {
                       post_id: lePostId.trim(),
                       post_url: lePostUrl.trim() || undefined,
                       title: leTitle.trim() || undefined,
+                      page_owner_id: lePageOwnerId.trim() || undefined,
                       login_batch_id: leLoginBatchId,
                       role_distribution: leRoles,
                       business_context: leContext,
                       training_comments: leTrainingComments || undefined,
                       ai_instructions: leInstructions || undefined,
+                      scrape_interval_seconds: leScrapeInterval,
                       min_delay_seconds: leMinDelay,
                       max_delay_seconds: leMaxDelay,
                       max_duration_minutes: leMaxDuration,
