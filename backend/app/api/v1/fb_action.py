@@ -1321,6 +1321,7 @@ class WarmupBatchRequest(BaseModel):
     login_batch_id: str
     preset: str = "light"
     delay_seconds: float = Field(10.0, ge=3, le=60)
+    scheduled_at: str | None = None
 
 
 @router.post("/warmup-batch")
@@ -1357,15 +1358,24 @@ async def create_warmup_batch(
     if account_count == 0:
         raise HTTPException(status_code=400, detail="No successful logins in this batch")
 
+    # Parse scheduled_at if provided
+    sched_dt = None
+    if body.scheduled_at:
+        try:
+            sched_dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid scheduled_at datetime format")
+
     warmup = FBWarmupBatch(
         tenant_id=user.tenant_id,
         user_id=user.id,
         login_batch_id=UUID(body.login_batch_id),
-        status="pending",
+        status="scheduled" if sched_dt else "pending",
         preset=body.preset,
         total_accounts=account_count,
         delay_seconds=body.delay_seconds,
         config=WARMUP_PRESETS[body.preset],
+        scheduled_at=sched_dt,
     )
     db.add(warmup)
     await db.commit()
@@ -1377,6 +1387,7 @@ async def create_warmup_batch(
         "preset": warmup.preset,
         "total_accounts": warmup.total_accounts,
         "delay_seconds": warmup.delay_seconds,
+        "scheduled_at": warmup.scheduled_at.isoformat() if warmup.scheduled_at else None,
     }
 
 
@@ -1414,6 +1425,7 @@ async def get_warmup_batch(
         "created_at": batch.created_at.isoformat() if batch.created_at else None,
         "started_at": batch.started_at.isoformat() if batch.started_at else None,
         "completed_at": batch.completed_at.isoformat() if batch.completed_at else None,
+        "scheduled_at": batch.scheduled_at.isoformat() if batch.scheduled_at else None,
     }
 
 
@@ -1601,6 +1613,7 @@ async def get_warmup_history(
                 "success_count": b.success_count,
                 "failed_count": b.failed_count,
                 "created_at": b.created_at.isoformat() if b.created_at else None,
+                "scheduled_at": b.scheduled_at.isoformat() if b.scheduled_at else None,
             }
             for b in batches
         ],
@@ -1608,6 +1621,63 @@ async def get_warmup_history(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.get("/warmup-batch/scheduled")
+async def get_scheduled_warmups(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get pending scheduled warm-ups."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+
+    result = await db.execute(
+        select(FBWarmupBatch)
+        .where(
+            FBWarmupBatch.tenant_id == user.tenant_id,
+            FBWarmupBatch.status == "scheduled",
+        )
+        .order_by(FBWarmupBatch.scheduled_at)
+    )
+    batches = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(b.id),
+                "login_batch_id": str(b.login_batch_id),
+                "preset": b.preset,
+                "total_accounts": b.total_accounts,
+                "delay_seconds": b.delay_seconds,
+                "scheduled_at": b.scheduled_at.isoformat() if b.scheduled_at else None,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+            }
+            for b in batches
+        ],
+    }
+
+
+@router.delete("/warmup-batch/{batch_id}/cancel-schedule")
+async def cancel_scheduled_warmup(
+    batch_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a scheduled warm-up."""
+    from app.models.fb_warmup_batch import FBWarmupBatch
+
+    result = await db.execute(
+        select(FBWarmupBatch).where(
+            FBWarmupBatch.id == batch_id,
+            FBWarmupBatch.tenant_id == user.tenant_id,
+            FBWarmupBatch.status == "scheduled",
+        )
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Scheduled warm-up not found")
+    await db.delete(batch)
+    await db.commit()
+    return {"success": True}
 
 
 # ── DOM Selector Verification ────────────────────────────────────────

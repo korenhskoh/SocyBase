@@ -2392,6 +2392,10 @@ function broadcastWarmupProgress() {
     failed: warmupBatchState.failed,
     status: warmupBatchState.cancelled ? "cancelled" :
             warmupBatchState.current >= warmupBatchState.total ? "completed" : "running",
+    currentEmail: warmupBatchState.currentEmail,
+    currentAction: warmupBatchState.currentAction,
+    startedAt: warmupBatchState.startedAt,
+    accountResults: warmupBatchState.accountResults,
   };
   chrome.runtime.sendMessage({ type: "SOCYBASE_WARMUP_PROGRESS", progress }).catch(() => {});
   chrome.tabs.query({}, (tabs) => {
@@ -3073,12 +3077,32 @@ async function warmupSharePosts(tabId, count, minDelay = 5, maxDelay = 10) {
   return shared;
 }
 
+const WARMUP_ACTION_LABELS = {
+  scroll_feed: "Scrolling feed...",
+  like_posts: "Liking posts...",
+  view_profiles: "Viewing profiles...",
+  pause: "Pausing...",
+  react_posts: "Reacting to posts...",
+  watch_videos: "Watching videos...",
+  view_stories: "Viewing stories...",
+  browse_marketplace: "Browsing Marketplace...",
+  check_notifications: "Checking notifications...",
+  search_feed: "Searching feed...",
+  comment_posts: "Commenting on posts...",
+  share_posts: "Sharing posts...",
+};
+
 async function executeWarmupActions(tabId, config) {
   const actions = config?.actions || [];
   const completed = [];
 
   for (const action of actions) {
     try {
+      if (warmupBatchState) {
+        warmupBatchState.currentAction = WARMUP_ACTION_LABELS[action.type] || action.type;
+        broadcastWarmupProgress();
+      }
+
       switch (action.type) {
         case "scroll_feed":
           await warmupScrollFeed(tabId, action.count || 3, action.min_delay || 2, action.max_delay || 5);
@@ -3159,6 +3183,10 @@ async function executeWarmupActions(tabId, config) {
     }
   }
 
+  if (warmupBatchState) {
+    warmupBatchState.currentAction = null;
+  }
+
   return completed;
 }
 
@@ -3186,6 +3214,10 @@ async function processWarmupBatch(batchId) {
     success: 0,
     failed: 0,
     cancelled: false,
+    currentEmail: null,
+    currentAction: null,
+    startedAt: Date.now(),
+    accountResults: [],
   };
   broadcastWarmupProgress();
 
@@ -3217,6 +3249,12 @@ async function processWarmupBatch(batchId) {
     const proxyLabel = proxy ? `${proxy.host}:${proxy.port}` : "direct";
 
     console.log(`[SocyBase Warmup] [${i + 1}/${accounts.length}] ${email} (proxy=${proxyLabel})`);
+
+    if (warmupBatchState) {
+      warmupBatchState.currentEmail = email;
+      warmupBatchState.currentAction = "Logging in...";
+      broadcastWarmupProgress();
+    }
 
     let success = false;
     let actionsCompleted = [];
@@ -3286,6 +3324,14 @@ async function processWarmupBatch(batchId) {
       warmupBatchState.failed++;
     }
     warmupBatchState.current = i + 1;
+    warmupBatchState.currentEmail = null;
+    warmupBatchState.currentAction = null;
+    warmupBatchState.accountResults.push({
+      email,
+      success,
+      actions: actionsCompleted,
+      error: error || null,
+    });
     broadcastWarmupProgress();
 
     // Cleanup between accounts

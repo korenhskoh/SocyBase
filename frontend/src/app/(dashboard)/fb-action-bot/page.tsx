@@ -277,15 +277,33 @@ export default function FBActionBotPage() {
   const [warmupLoginBatchId, setWarmupLoginBatchId] = useState("");
   const [warmupLoginBatches, setWarmupLoginBatches] = useState<any[]>([]);
   const [warmupStarting, setWarmupStarting] = useState(false);
-  const [warmupActive, setWarmupActive] = useState<{ id: string; status: string; preset: string; total_accounts: number; completed_accounts: number; success_count: number; failed_count: number } | null>(null);
+  const [warmupActive, setWarmupActive] = useState<{
+    id: string; status: string; preset: string;
+    total_accounts: number; completed_accounts: number;
+    success_count: number; failed_count: number;
+    currentEmail?: string | null; currentAction?: string | null;
+    startedAt?: number | null;
+    accountResults?: Array<{ email: string; success: boolean; actions: string[]; error: string | null }>;
+  } | null>(null);
   const [warmupHistory, setWarmupHistory] = useState<any[]>([]);
   const [warmupHistoryTotal, setWarmupHistoryTotal] = useState(0);
   const [warmupHistoryPage, setWarmupHistoryPage] = useState(1);
   const warmupPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [warmupLogExpanded, setWarmupLogExpanded] = useState(false);
+  const [warmupElapsed, setWarmupElapsed] = useState(0);
+  const warmupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Schedule state
+  const [warmupScheduleMode, setWarmupScheduleMode] = useState(false);
+  const [warmupScheduleAt, setWarmupScheduleAt] = useState("");
+  const [scheduledWarmups, setScheduledWarmups] = useState<any[]>([]);
+  const scheduledCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // DOM Selector check state
   const [selectorConfig, setSelectorConfig] = useState<any>(null);
   const [selectorChecking, setSelectorChecking] = useState(false);
   const [selectorExpanded, setSelectorExpanded] = useState(false);
+  const [domBatchPickerOpen, setDomBatchPickerOpen] = useState(false);
+  const [domBatchPickerBatches, setDomBatchPickerBatches] = useState<any[]>([]);
+  const [domBatchPickerLoading, setDomBatchPickerLoading] = useState(false);
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // Toast
@@ -371,9 +389,16 @@ export default function FBActionBotPage() {
     }).catch(() => {});
   }, [warmupHistoryPage]);
 
+  const loadScheduledWarmups = useCallback(() => {
+    fbActionApi.getScheduledWarmups().then((res) => {
+      setScheduledWarmups(res.data.items || []);
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (activeTab === "batch" && batchSubTab === "warmup") {
       loadWarmupHistory();
+      loadScheduledWarmups();
       // Also load login batch options for the selector
       fbActionApi.getLoginBatchHistory({ page: 1, page_size: 50 }).then((res) => {
         const items = (res.data.items || []).filter((b: any) => b.success_count > 0);
@@ -385,7 +410,7 @@ export default function FBActionBotPage() {
         setSelectorConfig(res.data);
       }).catch(() => setSelectorConfig(null));
     }
-  }, [activeTab, batchSubTab, warmupHistoryPage, loadWarmupHistory]);
+  }, [activeTab, batchSubTab, warmupHistoryPage, loadWarmupHistory, loadScheduledWarmups]);
 
   // Poll active warmup batch
   useEffect(() => {
@@ -402,6 +427,37 @@ export default function FBActionBotPage() {
       return () => { if (warmupPollRef.current) clearInterval(warmupPollRef.current); };
     }
   }, [warmupActive?.id, warmupActive?.status, loadWarmupHistory]);
+
+  // Elapsed timer for active warmup
+  useEffect(() => {
+    if (warmupActive && (warmupActive.status === "running" || warmupActive.status === "pending") && warmupActive.startedAt) {
+      const tick = () => setWarmupElapsed(Math.floor((Date.now() - (warmupActive.startedAt || Date.now())) / 1000));
+      tick();
+      warmupTimerRef.current = setInterval(tick, 1000);
+      return () => { if (warmupTimerRef.current) clearInterval(warmupTimerRef.current); };
+    } else {
+      setWarmupElapsed(0);
+    }
+  }, [warmupActive?.id, warmupActive?.status, warmupActive?.startedAt]);
+
+  // Auto-trigger scheduled warmups
+  useEffect(() => {
+    if (activeTab !== "batch" || batchSubTab !== "warmup") return;
+    scheduledCheckRef.current = setInterval(() => {
+      if (!extensionDetected || warmupActive) return;
+      const now = new Date();
+      const due = scheduledWarmups.find((s: any) => new Date(s.scheduled_at) <= now);
+      if (due) {
+        setWarmupActive({ id: due.id, status: "pending", preset: due.preset, total_accounts: due.total_accounts, completed_accounts: 0, success_count: 0, failed_count: 0 });
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const authToken = localStorage.getItem("access_token") || "";
+        window.postMessage({ type: "SOCYBASE_START_WARMUP_BATCH", batchId: due.id, apiUrl, authToken }, "*");
+        setScheduledWarmups((prev: any[]) => prev.filter((s: any) => s.id !== due.id));
+        showToast("success", `Scheduled warm-up started: ${due.preset}`);
+      }
+    }, 30000);
+    return () => { if (scheduledCheckRef.current) clearInterval(scheduledCheckRef.current); };
+  }, [activeTab, batchSubTab, extensionDetected, warmupActive, scheduledWarmups]);
 
   // Detect Chrome extension
   useEffect(() => {
@@ -443,6 +499,10 @@ export default function FBActionBotPage() {
           success_count: p.success,
           failed_count: p.failed,
           status: p.status === "completed" || p.status === "cancelled" || p.status === "failed" ? p.status : prev.status,
+          currentEmail: p.currentEmail || null,
+          currentAction: p.currentAction || null,
+          startedAt: p.startedAt || prev.startedAt,
+          accountResults: p.accountResults || prev.accountResults,
         } : prev);
       }
       if (event.data?.type === "SOCYBASE_WARMUP_STARTED") {
@@ -2711,30 +2771,97 @@ export default function FBActionBotPage() {
           {batchSubTab === "warmup" && (
             <div className="space-y-4 max-w-3xl">
               {/* Active warm-up progress */}
-              {warmupActive && (warmupActive.status === "running" || warmupActive.status === "pending") && (
-                <div className="glass-card p-5 space-y-3">
+              {warmupActive && (warmupActive.status === "running" || warmupActive.status === "pending") && (() => {
+                const maskEmail = (email: string) => {
+                  if (!email) return "---";
+                  const [local, domain] = email.split("@");
+                  if (!domain) return email[0] + "***";
+                  return local[0] + "***@" + domain;
+                };
+                const formatTime = (seconds: number) => {
+                  const h = Math.floor(seconds / 3600);
+                  const m = Math.floor((seconds % 3600) / 60);
+                  const s = seconds % 60;
+                  return h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+                };
+                return (
+                <div className="glass-card p-5 space-y-3 border border-amber-500/20">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
                       <svg className="h-4 w-4 text-amber-400 animate-pulse" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
                       Warm-up Running — {warmupActive.preset}
                     </h3>
-                    <span className="text-xs text-amber-400/80 bg-amber-400/10 px-2 py-0.5 rounded">
-                      {warmupActive.completed_accounts}/{warmupActive.total_accounts}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-amber-400/80 bg-amber-400/10 px-2 py-0.5 rounded">
+                        {warmupActive.completed_accounts}/{warmupActive.total_accounts}
+                      </span>
+                      <button
+                        onClick={() => window.postMessage({ type: "SOCYBASE_CANCEL_WARMUP_BATCH" }, "*")}
+                        className="text-xs text-red-400/60 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20 px-2 py-0.5 rounded transition"
+                      >Cancel</button>
+                    </div>
                   </div>
+
+                  {/* Current account + action */}
+                  {warmupActive.currentEmail && (
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="text-white/40">Account:</span>
+                      <span className="text-white/70 font-mono">{maskEmail(warmupActive.currentEmail)}</span>
+                      {warmupActive.currentAction && (
+                        <>
+                          <span className="text-white/20">|</span>
+                          <span className="text-amber-400/70 italic">{warmupActive.currentAction}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   <div className="w-full bg-white/5 rounded-full h-2">
                     <div
                       className="bg-amber-400/70 h-2 rounded-full transition-all"
                       style={{ width: `${warmupActive.total_accounts ? (warmupActive.completed_accounts / warmupActive.total_accounts) * 100 : 0}%` }}
                     />
                   </div>
-                  <div className="flex gap-4 text-xs text-white/40">
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
                     <span className="text-green-400">{warmupActive.success_count} success</span>
                     <span className="text-red-400">{warmupActive.failed_count} failed</span>
                     <span>{warmupActive.total_accounts - warmupActive.completed_accounts} remaining</span>
+                    <span className="text-white/20">|</span>
+                    <span>Elapsed: {formatTime(warmupElapsed)}</span>
+                    {warmupActive.completed_accounts > 0 && (
+                      <span>ETA: {formatTime(Math.round((warmupElapsed / warmupActive.completed_accounts) * (warmupActive.total_accounts - warmupActive.completed_accounts)))}</span>
+                    )}
                   </div>
+
+                  {/* Per-account result log */}
+                  {warmupActive.accountResults && warmupActive.accountResults.length > 0 && (
+                    <div>
+                      <button
+                        onClick={() => setWarmupLogExpanded(!warmupLogExpanded)}
+                        className="text-xs text-amber-400/60 hover:text-amber-400 transition"
+                      >
+                        {warmupLogExpanded ? "Hide" : "Show"} account log ({warmupActive.accountResults.length})
+                      </button>
+                      {warmupLogExpanded && (
+                        <div className="mt-2 max-h-48 overflow-y-auto space-y-1 bg-white/[0.02] rounded-lg p-2 border border-white/5">
+                          {warmupActive.accountResults.map((r, idx) => (
+                            <div key={idx} className="flex items-center gap-2 text-[10px]">
+                              <span className={r.success ? "text-green-400" : "text-red-400"}>
+                                {r.success ? "OK" : "FAIL"}
+                              </span>
+                              <span className="text-white/50 font-mono">{maskEmail(r.email)}</span>
+                              <span className="text-white/30 truncate">{r.actions.join(", ")}</span>
+                              {r.error && <span className="text-red-400/60 truncate" title={r.error}>{r.error.slice(0, 40)}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
+                );
+              })()}
 
               {/* Warm-up completed message */}
               {warmupActive && warmupActive.status !== "running" && warmupActive.status !== "pending" && (
@@ -2745,6 +2872,39 @@ export default function FBActionBotPage() {
                     </span>
                     <button onClick={() => setWarmupActive(null)} className="text-xs text-white/30 hover:text-white/60">Dismiss</button>
                   </div>
+                </div>
+              )}
+
+              {/* Scheduled Warm-ups */}
+              {scheduledWarmups.length > 0 && (
+                <div className="glass-card p-5 space-y-3">
+                  <h3 className="text-sm font-medium text-white/40 flex items-center gap-2">
+                    <svg className="h-4 w-4 text-amber-400/60" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    Scheduled Warm-ups
+                  </h3>
+                  <div className="space-y-2">
+                    {scheduledWarmups.map((s: any) => (
+                      <div key={s.id} className="flex items-center justify-between bg-white/[0.02] rounded-lg p-3 border border-white/5">
+                        <div className="flex items-center gap-3 text-xs">
+                          <span className="text-white/50 font-mono">{s.id.slice(0, 8)}</span>
+                          <span className="capitalize text-amber-400/80">{s.preset}</span>
+                          <span className="text-white/40">{s.total_accounts} accounts</span>
+                          <span className="text-white/30">{new Date(s.scheduled_at).toLocaleString()}</span>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await fbActionApi.cancelScheduledWarmup(s.id);
+                              setScheduledWarmups((prev: any[]) => prev.filter((x: any) => x.id !== s.id));
+                              showToast("success", "Scheduled warm-up cancelled");
+                            } catch { showToast("error", "Failed to cancel"); }
+                          }}
+                          className="text-[10px] text-red-400/60 hover:text-red-400 transition"
+                        >Cancel</button>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-amber-400/40">Keep this page open with the extension active. Warm-up starts automatically at the scheduled time.</p>
                 </div>
               )}
 
@@ -2802,58 +2962,48 @@ export default function FBActionBotPage() {
                   <p className="text-xs text-white/30">No verified selectors. Using default (hardcoded) selectors.</p>
                 )}
 
-                {(() => {
-                  const selectedBatch = warmupLoginBatches.find((b: any) => b.id === warmupLoginBatchId);
-                  const hasAccounts = selectedBatch && selectedBatch.success_count > 0;
-                  return (
+                <button
+                  disabled={selectorChecking || domBatchPickerLoading || !extensionDetected}
+                  onClick={async () => {
+                    setDomBatchPickerLoading(true);
+                    try {
+                      const res = await fbActionApi.getLoginBatchHistory({ page: 1, page_size: 50 });
+                      const batches = (res.data.items || []).filter((b: any) => b.success_count > 0);
+                      setDomBatchPickerBatches(batches);
+                      if (batches.length === 0) {
+                        showToast("error", "No login batches with valid cookies. Go to Accounts tab to batch login first.");
+                      } else {
+                        setDomBatchPickerOpen(true);
+                      }
+                    } catch {
+                      showToast("error", "Failed to load login batches");
+                    } finally {
+                      setDomBatchPickerLoading(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs rounded-lg border border-purple-500/20 transition disabled:opacity-30 flex items-center gap-2"
+                >
+                  {selectorChecking ? (
                     <>
-                      {warmupLoginBatchId && !hasAccounts && (
-                        <div className="text-xs text-amber-400/60 bg-amber-400/5 p-2.5 rounded-lg border border-amber-400/10 flex items-center gap-2">
-                          <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                          No logged-in accounts in this batch. Run a login batch first to get accounts with valid cookies.
-                        </div>
-                      )}
-                      <button
-                        disabled={!warmupLoginBatchId || !hasAccounts || selectorChecking || !extensionDetected}
-                        onClick={async () => {
-                          setSelectorChecking(true);
-                          try {
-                            const res = await fbActionApi.startDOMCheck({ login_batch_id: warmupLoginBatchId });
-                            const checkData = res.data;
-                            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-                            const authToken = localStorage.getItem("access_token") || "";
-                            window.postMessage({
-                              type: "SOCYBASE_START_DOM_CHECK",
-                              checkData,
-                              apiUrl,
-                              authToken,
-                            }, "*");
-                          } catch (e: any) {
-                            setSelectorChecking(false);
-                            showToast("error", e.response?.data?.detail || "Failed to start DOM check");
-                          }
-                        }}
-                        className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs rounded-lg border border-purple-500/20 transition disabled:opacity-30 flex items-center gap-2"
-                      >
-                        {selectorChecking ? (
-                          <>
-                            <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            Logging in &amp; checking DOM...
-                          </>
-                        ) : (
-                          <>
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" /></svg>
-                            Check Selectors
-                          </>
-                        )}
-                      </button>
-                      {!extensionDetected && (
-                        <p className="text-[10px] text-white/20">Extension required to check selectors</p>
-                      )}
-                      <p className="text-[10px] text-white/20">Logs in one account, opens Facebook, extracts DOM, then keeps the tab open.</p>
+                      <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                      Logging in &amp; checking DOM...
                     </>
-                  );
-                })()}
+                  ) : domBatchPickerLoading ? (
+                    <>
+                      <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                      Loading batches...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" /></svg>
+                      Check Selectors
+                    </>
+                  )}
+                </button>
+                {!extensionDetected && (
+                  <p className="text-[10px] text-white/20">Extension required to check selectors</p>
+                )}
+                <p className="text-[10px] text-white/20">Select a login batch, log in one account, extract DOM, keep tab open.</p>
               </div>
 
               {/* Start new warm-up */}
@@ -2924,6 +3074,33 @@ export default function FBActionBotPage() {
                     </div>
                   </div>
 
+                  {/* Schedule toggle */}
+                  <div className="flex items-center gap-3">
+                    <label className="text-xs text-white/40 flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={warmupScheduleMode}
+                        onChange={(e) => { setWarmupScheduleMode(e.target.checked); setWarmupScheduleAt(""); }}
+                        className="accent-amber-400"
+                      />
+                      Schedule for later
+                    </label>
+                  </div>
+
+                  {warmupScheduleMode && (
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1">Schedule date & time</label>
+                      <input
+                        type="datetime-local"
+                        value={warmupScheduleAt}
+                        onChange={(e) => setWarmupScheduleAt(e.target.value)}
+                        min={new Date().toISOString().slice(0, 16)}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20 [color-scheme:dark]"
+                      />
+                      <p className="text-[10px] text-amber-400/50 mt-1">Keep this page open. Warm-up will auto-start when the time arrives (requires extension).</p>
+                    </div>
+                  )}
+
                   {/* Extension notice */}
                   {!extensionDetected && (
                     <div className="text-xs text-amber-400/60 bg-amber-400/5 p-3 rounded-lg border border-amber-400/10">
@@ -2931,31 +3108,44 @@ export default function FBActionBotPage() {
                     </div>
                   )}
 
-                  {/* Start button */}
+                  {/* Warning for accounts */}
+                  {warmupLoginBatches.length === 0 && (
+                    <div className="text-xs text-amber-400/60 bg-amber-400/5 p-2.5 rounded-lg border border-amber-400/10 flex items-center gap-2">
+                      <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                      No login batches found. Go to Accounts tab and upload CSV to batch login first.
+                    </div>
+                  )}
+
+                  {/* Start / Schedule button */}
                   <button
-                    disabled={!warmupLoginBatchId || warmupStarting || !extensionDetected}
+                    disabled={!warmupLoginBatchId || warmupStarting || !extensionDetected || (warmupScheduleMode && !warmupScheduleAt)}
                     onClick={async () => {
                       setWarmupStarting(true);
                       try {
-                        const res = await fbActionApi.createWarmupBatch({
+                        const payload: { login_batch_id: string; preset: string; delay_seconds: number; scheduled_at?: string } = {
                           login_batch_id: warmupLoginBatchId,
                           preset: warmupPreset,
                           delay_seconds: warmupDelay,
-                        });
+                        };
+                        if (warmupScheduleMode && warmupScheduleAt) {
+                          payload.scheduled_at = new Date(warmupScheduleAt).toISOString();
+                        }
+
+                        const res = await fbActionApi.createWarmupBatch(payload);
                         const batchId = res.data.id;
-                        setWarmupActive({ ...res.data, completed_accounts: 0, success_count: 0, failed_count: 0 });
 
-                        // Tell extension to start
-                        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-                        const authToken = localStorage.getItem("access_token") || "";
-                        window.postMessage({
-                          type: "SOCYBASE_START_WARMUP_BATCH",
-                          batchId,
-                          apiUrl,
-                          authToken,
-                        }, "*");
-
-                        showToast("success", "Warm-up batch started via Chrome extension");
+                        if (warmupScheduleMode) {
+                          showToast("success", "Warm-up scheduled");
+                          loadScheduledWarmups();
+                          setWarmupScheduleMode(false);
+                          setWarmupScheduleAt("");
+                        } else {
+                          setWarmupActive({ ...res.data, completed_accounts: 0, success_count: 0, failed_count: 0 });
+                          const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                          const authToken = localStorage.getItem("access_token") || "";
+                          window.postMessage({ type: "SOCYBASE_START_WARMUP_BATCH", batchId, apiUrl, authToken }, "*");
+                          showToast("success", "Warm-up batch started via Chrome extension");
+                        }
                       } catch (e: any) {
                         showToast("error", e.response?.data?.detail || "Failed to start warm-up");
                       } finally {
@@ -2966,10 +3156,12 @@ export default function FBActionBotPage() {
                   >
                     {warmupStarting ? (
                       <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    ) : warmupScheduleMode ? (
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                     ) : (
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /></svg>
                     )}
-                    Start Warm-up
+                    {warmupScheduleMode ? "Schedule Warm-up" : "Start Warm-up"}
                   </button>
                 </div>
               )}
@@ -3001,6 +3193,7 @@ export default function FBActionBotPage() {
                                   b.status === "completed" ? "bg-green-500/10 text-green-400" :
                                   b.status === "running" ? "bg-amber-500/10 text-amber-400" :
                                   b.status === "failed" ? "bg-red-500/10 text-red-400" :
+                                  b.status === "scheduled" ? "bg-purple-500/10 text-purple-400" :
                                   "bg-white/5 text-white/30"
                                 }`}>{b.status}</span>
                               </td>
@@ -3346,6 +3539,65 @@ export default function FBActionBotPage() {
       )}
 
       {/* Toast */}
+      {/* DOM Batch Picker Modal */}
+      {domBatchPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDomBatchPickerOpen(false)} />
+          <div className="relative bg-[#0f1729] border border-white/10 rounded-2xl w-full max-w-md max-h-[60vh] overflow-y-auto shadow-2xl">
+            <div className="sticky top-0 bg-[#0f1729] border-b border-white/5 p-5 flex items-center justify-between z-10">
+              <h3 className="text-sm font-semibold text-white">Select Login Batch for DOM Check</h3>
+              <button onClick={() => setDomBatchPickerOpen(false)} className="text-white/40 hover:text-white transition">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              {domBatchPickerBatches.length === 0 ? (
+                <div className="text-xs text-amber-400/60 bg-amber-400/5 p-3 rounded-lg border border-amber-400/10">
+                  No login batches with valid cookies found. Go to Accounts tab to batch login first.
+                </div>
+              ) : (
+                <>
+                  <p className="text-[10px] text-white/30 mb-2">Click a batch to start DOM check with one of its logged-in accounts.</p>
+                  {domBatchPickerBatches.map((b: any) => (
+                    <button
+                      key={b.id}
+                      onClick={async () => {
+                        setDomBatchPickerOpen(false);
+                        setSelectorChecking(true);
+                        try {
+                          const res = await fbActionApi.startDOMCheck({ login_batch_id: b.id });
+                          const checkData = res.data;
+                          const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                          const authToken = localStorage.getItem("access_token") || "";
+                          window.postMessage({ type: "SOCYBASE_START_DOM_CHECK", checkData, apiUrl, authToken }, "*");
+                        } catch (e: any) {
+                          setSelectorChecking(false);
+                          showToast("error", e.response?.data?.detail || "Failed to start DOM check");
+                        }
+                      }}
+                      className="w-full flex items-center justify-between p-3 bg-white/[0.02] hover:bg-white/[0.05] rounded-lg border border-white/5 hover:border-purple-500/20 transition text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-white/50 font-mono">{b.id.slice(0, 8)}</span>
+                        <span className="text-xs text-green-400">{b.success_count} accounts</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          b.status === "completed" ? "bg-green-500/10 text-green-400" :
+                          b.status === "running" ? "bg-amber-500/10 text-amber-400" :
+                          "bg-white/5 text-white/30"
+                        }`}>{b.status}</span>
+                      </div>
+                      <span className="text-[10px] text-white/30">
+                        {b.created_at ? new Date(b.created_at).toLocaleDateString() : ""}
+                      </span>
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
           <div className={`flex items-center gap-3 rounded-xl border px-5 py-3.5 shadow-2xl shadow-black/50 backdrop-blur-md ${

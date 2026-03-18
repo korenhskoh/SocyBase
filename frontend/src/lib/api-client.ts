@@ -574,12 +574,16 @@ export const fbActionApi = {
   downloadWorkerScript: () =>
     api.get("/fb-action/login-batch/worker-script", { responseType: "blob" }),
   // Warm-up Batch
-  createWarmupBatch: (data: { login_batch_id: string; preset: string; delay_seconds: number }) =>
+  createWarmupBatch: (data: { login_batch_id: string; preset: string; delay_seconds: number; scheduled_at?: string }) =>
     api.post("/fb-action/warmup-batch", data),
   getWarmupBatchStatus: (batchId: string) =>
     api.get(`/fb-action/warmup-batch/${batchId}`),
   getWarmupBatchHistory: (params?: { page?: number; page_size?: number }) =>
     api.get("/fb-action/warmup-batch/history", { params }),
+  getScheduledWarmups: () =>
+    api.get("/fb-action/warmup-batch/scheduled"),
+  cancelScheduledWarmup: (batchId: string) =>
+    api.delete(`/fb-action/warmup-batch/${batchId}/cancel-schedule`),
   // DOM Selectors
   startDOMCheck: (data: { login_batch_id: string }) =>
     api.post("/fb-action/dom-selectors/check", data),
