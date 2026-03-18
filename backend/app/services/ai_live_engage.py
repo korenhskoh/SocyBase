@@ -3,6 +3,7 @@
 import json
 import logging
 import random
+from difflib import SequenceMatcher
 
 from openai import AsyncOpenAI
 
@@ -20,8 +21,9 @@ ORDER_PATTERNS = [
 
 ROLE_DESCRIPTIONS = {
     "ask_question": (
-        "Ask a genuine product question. Reference something the streamer might have shown or mentioned. "
-        "Examples: price, shipping, sizes, availability, color options, material."
+        "Ask a genuine product question about something specific. "
+        "Examples: price, shipping, sizes, availability, color options, material. "
+        "Keep it casual and short — like a real person typing fast in chat."
     ),
     "place_order": (
         "Post an order comment. Keep it very short (1-5 words)."
@@ -32,16 +34,19 @@ ROLE_DESCRIPTIONS = {
         "Do NOT copy the exact wording — paraphrase naturally."
     ),
     "good_vibe": (
-        "Post a positive, enthusiastic comment about the product or streamer. "
-        "Compliment quality, price, or the stream itself. Sound genuinely excited."
+        "Post a brief positive comment about the product or stream. "
+        "Keep it grounded and casual — like a normal viewer, NOT an overly excited fan. "
+        "Avoid superlatives like 'amazing', 'incredible', 'the best ever'. "
+        "Simple and believable, e.g. 'looks nice', 'good price eh', 'quality looks ok'."
     ),
     "react_comment": (
         "React naturally to a specific recent comment. Agree with it, add to it, "
-        "or build on what they said. Reference their comment naturally without quoting it exactly."
+        "or build on what they said. Keep it short and conversational."
     ),
     "share_experience": (
-        "Share a brief personal experience or testimony about the product or brand. "
-        "Sound like a returning customer who has bought before."
+        "Share a very brief personal note about the product or brand. "
+        "Keep it casual and believable — avoid sounding like a testimonial ad. "
+        "e.g. 'bought last month still good' or 'my friend recommended this'."
     ),
 }
 
@@ -74,18 +79,23 @@ class AILiveEngageService:
         training_comments: str | None = None,
         ai_instructions: str = "",
         reference_comment: str | None = None,
+        posted_history: list[str] | None = None,
     ) -> str:
         """Generate a single livestream comment for the given role.
 
         For `place_order` role, returns a random template (no AI call).
         For all others, calls GPT-4o with role-specific prompts.
+
+        Args:
+            posted_history: List of our recently posted comments (last ~15) so
+                AI can avoid repeating similar content.
         """
         if role == "place_order":
             return self._generate_order_comment(recent_comments)
 
         return await self._generate_ai_comment(
             role, recent_comments, business_context, training_comments, ai_instructions,
-            reference_comment,
+            reference_comment, posted_history,
         )
 
     def _generate_order_comment(self, recent_comments: list[dict]) -> str:
@@ -114,8 +124,13 @@ class AILiveEngageService:
         training_comments: str | None,
         ai_instructions: str,
         reference_comment: str | None = None,
+        posted_history: list[str] | None = None,
     ) -> str:
-        """Call GPT-4o to generate a single comment."""
+        """Call GPT-4o to generate a single comment.
+
+        Includes posted_history so the AI knows what we already said and avoids
+        repeating similar content, structure, or phrasing.
+        """
         role_desc = ROLE_DESCRIPTIONS.get(role, "Post a natural comment.")
 
         # Build training sample
@@ -135,6 +150,12 @@ class AILiveEngageService:
                 for c in last_15
             )
 
+        # Build our posted history context
+        history_text = ""
+        if posted_history:
+            last_entries = posted_history[-15:]
+            history_text = "\n".join(f"- {c}" for c in last_entries)
+
         system_prompt = (
             "You generate a single Facebook livestream comment as a real viewer.\n"
             f"Your role: {role_desc}\n\n"
@@ -149,17 +170,26 @@ class AILiveEngageService:
             system_prompt += (
                 "=== CURRENT LIVESTREAM COMMENTS (this is what is happening RIGHT NOW) ===\n"
                 f"{recent_text}\n\n"
-                "IMPORTANT: These are the REAL comments from the live audience right now. "
                 "Your comment MUST be relevant to what people are currently talking about. "
-                "Follow the current topics, trends, and energy in these comments. "
-                "If viewers are saying '+1' or ordering, follow that flow. "
-                "If they are asking about a specific product or topic, engage with THAT topic.\n\n"
+                "Follow the current topics and energy in these comments.\n\n"
             )
 
         if reference_comment and role in ("react_comment", "repeat_question"):
             system_prompt += (
                 f"=== TARGET COMMENT (respond to / rephrase THIS specific comment) ===\n"
                 f"{reference_comment}\n\n"
+            )
+
+        # ── OUR POSTED HISTORY (anti-repetition context) ──
+        if history_text:
+            system_prompt += (
+                "=== COMMENTS WE ALREADY POSTED (DO NOT repeat or resemble these) ===\n"
+                f"{history_text}\n\n"
+                "CRITICAL: You must write something COMPLETELY DIFFERENT from the above. "
+                "Do not reuse the same words, sentence structure, or topic angle. "
+                "If we already asked about price, ask about something else. "
+                "If we already complimented the product, say something about the stream or seller instead. "
+                "Each comment must feel like it comes from a DIFFERENT person with a different personality.\n\n"
             )
 
         # ── TRAINING COMMENTS (style guide only) ──
@@ -175,14 +205,15 @@ class AILiveEngageService:
 
         system_prompt += (
             "Rules:\n"
-            "- Your comment MUST relate to what the current livestream audience is discussing\n"
             "- Match the language of current live comments (auto-detect Malay/English/etc.)\n"
-            "- Use the style/tone from style guide examples if provided, but NOT their content\n"
             "- 1-2 sentences max, casual livestream chat tone\n"
-            "- No hashtags, minimal emojis (0-1 max)\n"
-            "- Sound like a real viewer, not a bot or marketer\n"
-            "- Vary sentence structure and length\n"
-            "- Do NOT repeat any current comment verbatim\n\n"
+            "- No hashtags, no more than 1 emoji\n"
+            "- Sound like a NORMAL viewer — not overly enthusiastic or salesy\n"
+            "- Do NOT use exclamation marks excessively (max 1 per comment)\n"
+            "- Avoid superlatives (amazing, incredible, best ever, absolutely love)\n"
+            "- Keep it grounded and believable — imperfect grammar is OK\n"
+            "- Vary sentence structure and length from previous comments\n"
+            "- Do NOT repeat any current comment or our posted comments\n\n"
             'Return JSON: {"comment": "your comment text"}'
         )
 
@@ -193,23 +224,57 @@ class AILiveEngageService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate one {role} comment for the livestream."},
                 ],
-                temperature=0.7,
+                temperature=0.85,
                 max_tokens=300,
                 response_format={"type": "json_object"},
             )
             parsed = _parse_json_response(response.choices[0].message.content or "{}", {})
             comment = parsed.get("comment", "")
-            if comment:
+            if comment and not self._is_too_similar(comment, posted_history):
                 return comment
+            # If too similar, try once more with higher temperature
+            if comment:
+                logger.info(f"[LiveEngage] Comment too similar to history, regenerating")
+                response2 = await self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": (
+                            f"Generate one {role} comment for the livestream. "
+                            "Make it very different from anything posted before — "
+                            "use a completely different angle, tone, and wording."
+                        )},
+                    ],
+                    temperature=1.0,
+                    max_tokens=300,
+                    response_format={"type": "json_object"},
+                )
+                parsed2 = _parse_json_response(response2.choices[0].message.content or "{}", {})
+                comment2 = parsed2.get("comment", "")
+                if comment2:
+                    return comment2
+                return comment  # Use original if retry also fails
         except Exception as exc:
             logger.warning(f"[LiveEngage] AI generation failed for role={role}: {exc}")
 
         # Fallback: generic comment if AI fails
         fallbacks = {
             "ask_question": "How much is this?",
-            "good_vibe": "This looks great!",
-            "react_comment": "I agree!",
-            "repeat_question": "Yes I also want to know the price",
-            "share_experience": "I bought this before, very good quality!",
+            "good_vibe": "Looks nice",
+            "react_comment": "Same here",
+            "repeat_question": "Ya I also want to know",
+            "share_experience": "Bought before, quite good",
         }
-        return fallbacks.get(role, "Nice!")
+        return fallbacks.get(role, "Nice")
+
+    @staticmethod
+    def _is_too_similar(comment: str, posted_history: list[str] | None, threshold: float = 0.55) -> bool:
+        """Check if comment is too similar to any recently posted comment."""
+        if not posted_history:
+            return False
+        comment_lower = comment.lower().strip()
+        for prev in posted_history[-15:]:
+            ratio = SequenceMatcher(None, comment_lower, prev.lower().strip()).ratio()
+            if ratio >= threshold:
+                return True
+        return False
