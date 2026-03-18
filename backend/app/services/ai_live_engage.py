@@ -91,15 +91,20 @@ class AILiveEngageService:
                 AI can avoid repeating similar content.
         """
         if role == "place_order":
-            return self._generate_order_comment(recent_comments)
+            return self._generate_order_comment(recent_comments, posted_history)
 
         return await self._generate_ai_comment(
             role, recent_comments, business_context, training_comments, ai_instructions,
             reference_comment, posted_history,
         )
 
-    def _generate_order_comment(self, recent_comments: list[dict]) -> str:
-        """Generate a place-order comment — prefer patterns from current livestream."""
+    def _generate_order_comment(
+        self, recent_comments: list[dict], posted_history: list[str] | None = None,
+    ) -> str:
+        """Generate a place-order comment — prefer patterns from current livestream.
+
+        Avoids picking the same order comment we recently posted.
+        """
         # Extract short order-like comments from the current livestream
         order_keywords = {"+1", "nak", "order", "want", "beli", "pm", "interested"}
         live_order_comments = []
@@ -111,10 +116,17 @@ class AILiveEngageService:
             if any(kw in msg_lower for kw in order_keywords):
                 live_order_comments.append(msg)
 
-        # Prefer current livestream order patterns, fall back to static templates
-        if live_order_comments:
-            return random.choice(live_order_comments)
-        return random.choice(ORDER_PATTERNS)
+        # Build candidate pool: prefer livestream patterns, fall back to static
+        candidates = live_order_comments if live_order_comments else list(ORDER_PATTERNS)
+
+        # Filter out recently posted to avoid repetition
+        if posted_history:
+            recent_posted = set(p.lower().strip() for p in posted_history[-10:])
+            filtered = [c for c in candidates if c.lower().strip() not in recent_posted]
+            if filtered:
+                candidates = filtered
+
+        return random.choice(candidates)
 
     async def _generate_ai_comment(
         self,
@@ -192,15 +204,21 @@ class AILiveEngageService:
                 "Each comment must feel like it comes from a DIFFERENT person with a different personality.\n\n"
             )
 
-        # ── TRAINING COMMENTS (style guide only) ──
+        # ── TRAINING COMMENTS (teach AI how to reply) ──
         if training_sample:
             system_prompt += (
-                "=== STYLE GUIDE (tone and writing pattern ONLY — do NOT copy content) ===\n"
+                "=== EXAMPLE COMMENTS (learn HOW to reply from these) ===\n"
                 f"{training_sample}\n\n"
-                "These are past comment examples for STYLE REFERENCE ONLY. "
-                "Match the tone, language, and writing pattern (casual, short, emoji usage, etc.) "
-                "but do NOT use their content or topics. Your comment content must come from "
-                "the CURRENT livestream comments above.\n\n"
+                "These are real past comments that show the RIGHT way to reply. "
+                "Study them carefully and learn:\n"
+                "- The LANGUAGE to use (Malay, English, mixed, slang)\n"
+                "- The TONE (casual, formal, playful, direct)\n"
+                "- The LENGTH and STRUCTURE (short phrases vs full sentences)\n"
+                "- The STYLE of engagement (how they ask questions, react, express interest)\n"
+                "- Any common phrases, abbreviations, or patterns\n\n"
+                "Your comment should feel like it was written by the same type of person. "
+                "Do NOT copy these examples word-for-word, but deeply match their style "
+                "and adapt it to the CURRENT livestream topics above.\n\n"
             )
 
         system_prompt += (
