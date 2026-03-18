@@ -59,6 +59,7 @@ class FBLiveEngageSession(Base):
     # Timing
     min_delay_seconds: Mapped[int] = mapped_column(Integer, default=15)
     max_delay_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    max_duration_minutes: Mapped[int] = mapped_column(Integer, default=180)
 
     # Stats
     total_comments_posted: Mapped[int] = mapped_column(Integer, default=0)

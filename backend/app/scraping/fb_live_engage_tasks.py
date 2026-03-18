@@ -63,6 +63,7 @@ async def _execute_engagement(session_id: str):
                 "ai_instructions": session.ai_instructions or "",
                 "min_delay": session.min_delay_seconds,
                 "max_delay": session.max_delay_seconds,
+                "max_duration_minutes": session.max_duration_minutes or 180,
                 "login_batch_id": session.login_batch_id,
                 "tenant_id": session.tenant_id,
                 "user_id": session.user_id,
@@ -317,6 +318,8 @@ async def _engage_loop(
 
     ai_service = AILiveEngageService()
     account_idx = 0
+    session_start = datetime.now(timezone.utc)
+    max_duration_secs = config["max_duration_minutes"] * 60
 
     # Build role weights for random.choices
     role_dist = config["role_distribution"]
@@ -325,6 +328,13 @@ async def _engage_loop(
 
     while not stop_event.is_set():
         try:
+            # Check max duration
+            elapsed = (datetime.now(timezone.utc) - session_start).total_seconds()
+            if elapsed >= max_duration_secs:
+                logger.info(f"[LiveEngage] Session {session_id} reached max duration ({config['max_duration_minutes']}m), stopping")
+                stop_event.set()
+                break
+
             # Warm-up: wait until we have some real comments for context
             if len(recent_comments) < 3:
                 await asyncio.sleep(5)
@@ -351,6 +361,7 @@ async def _engage_loop(
                     business_context=config["business_context"],
                     training_comments=config["training_comments"],
                     ai_instructions=config["ai_instructions"],
+                    reference_comment=reference_comment,
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] AI generation error: {exc}")

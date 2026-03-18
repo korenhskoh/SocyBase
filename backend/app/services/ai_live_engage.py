@@ -73,6 +73,7 @@ class AILiveEngageService:
         business_context: str = "",
         training_comments: str | None = None,
         ai_instructions: str = "",
+        reference_comment: str | None = None,
     ) -> str:
         """Generate a single livestream comment for the given role.
 
@@ -83,27 +84,13 @@ class AILiveEngageService:
             return self._generate_order_comment(business_context)
 
         return await self._generate_ai_comment(
-            role, recent_comments, business_context, training_comments, ai_instructions
+            role, recent_comments, business_context, training_comments, ai_instructions,
+            reference_comment,
         )
 
     def _generate_order_comment(self, business_context: str) -> str:
         """Generate a place-order comment from templates — no AI call."""
-        # Try to extract a product keyword from context
-        product_keyword = ""
-        if business_context:
-            words = business_context.split()
-            # Pick a short noun-like word from context (simple heuristic)
-            candidates = [w.strip(".,!?") for w in words if 3 <= len(w.strip(".,!?")) <= 15]
-            if candidates:
-                product_keyword = random.choice(candidates[:10])
-
-        pattern = random.choice(ORDER_PATTERNS)
-        if "{product_keyword}" in pattern and product_keyword:
-            return pattern.replace("{product_keyword}", product_keyword)
-        elif "{product_keyword}" in pattern:
-            # Fallback to simple pattern without product keyword
-            return random.choice([p for p in ORDER_PATTERNS if "{product_keyword}" not in p])
-        return pattern
+        return random.choice(ORDER_PATTERNS)
 
     async def _generate_ai_comment(
         self,
@@ -112,6 +99,7 @@ class AILiveEngageService:
         business_context: str,
         training_comments: str | None,
         ai_instructions: str,
+        reference_comment: str | None = None,
     ) -> str:
         """Call GPT-4o to generate a single comment."""
         role_desc = ROLE_DESCRIPTIONS.get(role, "Post a natural comment.")
@@ -145,6 +133,9 @@ class AILiveEngageService:
             system_prompt += f"Style examples from past comments (match this tone and language):\n{training_sample}\n\n"
         if recent_text:
             system_prompt += f"Recent live comments (current conversation happening now):\n{recent_text}\n\n"
+
+        if reference_comment and role in ("react_comment", "repeat_question"):
+            system_prompt += f"Target comment to respond to / rephrase:\n{reference_comment}\n\n"
 
         system_prompt += (
             "Rules:\n"

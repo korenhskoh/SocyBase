@@ -2340,6 +2340,7 @@ class LiveEngageStartRequest(BaseModel):
     ai_instructions: str = ""
     min_delay_seconds: int = Field(default=15, ge=5, le=120)
     max_delay_seconds: int = Field(default=60, ge=10, le=300)
+    max_duration_minutes: int = Field(default=180, ge=10, le=720)
 
 
 @router.post("/live-engage/start")
@@ -2399,6 +2400,7 @@ async def live_engage_start(
         ai_instructions=req.ai_instructions,
         min_delay_seconds=req.min_delay_seconds,
         max_delay_seconds=req.max_delay_seconds,
+        max_duration_minutes=req.max_duration_minutes,
     )
     db.add(session)
     await db.commit()
@@ -2416,6 +2418,55 @@ async def live_engage_start(
         "post_id": session.post_id,
         "active_accounts": 0,
         "celery_task_id": task.id,
+    }
+
+
+@router.get("/live-engage/history")
+async def live_engage_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """List livestream engagement sessions (most recent first)."""
+    offset = (page - 1) * page_size
+
+    count_result = await db.execute(
+        select(func.count(FBLiveEngageSession.id)).where(
+            FBLiveEngageSession.tenant_id == user.tenant_id
+        )
+    )
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(FBLiveEngageSession)
+        .where(FBLiveEngageSession.tenant_id == user.tenant_id)
+        .order_by(FBLiveEngageSession.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    sessions = result.scalars().all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "sessions": [
+            {
+                "id": str(s.id),
+                "status": s.status,
+                "post_id": s.post_id,
+                "title": s.title,
+                "total_comments_posted": s.total_comments_posted,
+                "total_errors": s.total_errors,
+                "active_accounts": s.active_accounts,
+                "comments_monitored": s.comments_monitored,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in sessions
+        ],
     }
 
 
@@ -2503,52 +2554,3 @@ async def live_engage_stop(
     await db.commit()
 
     return {"id": str(session.id), "status": "stopped"}
-
-
-@router.get("/live-engage/history")
-async def live_engage_history(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-):
-    """List livestream engagement sessions (most recent first)."""
-    offset = (page - 1) * page_size
-
-    count_result = await db.execute(
-        select(func.count(FBLiveEngageSession.id)).where(
-            FBLiveEngageSession.tenant_id == user.tenant_id
-        )
-    )
-    total = count_result.scalar() or 0
-
-    result = await db.execute(
-        select(FBLiveEngageSession)
-        .where(FBLiveEngageSession.tenant_id == user.tenant_id)
-        .order_by(FBLiveEngageSession.created_at.desc())
-        .offset(offset)
-        .limit(page_size)
-    )
-    sessions = result.scalars().all()
-
-    return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "sessions": [
-            {
-                "id": str(s.id),
-                "status": s.status,
-                "post_id": s.post_id,
-                "title": s.title,
-                "total_comments_posted": s.total_comments_posted,
-                "total_errors": s.total_errors,
-                "active_accounts": s.active_accounts,
-                "comments_monitored": s.comments_monitored,
-                "started_at": s.started_at.isoformat() if s.started_at else None,
-                "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-                "created_at": s.created_at.isoformat() if s.created_at else None,
-            }
-            for s in sessions
-        ],
-    }

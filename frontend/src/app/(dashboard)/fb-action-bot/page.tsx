@@ -269,8 +269,14 @@ export default function FBActionBotPage() {
   const [leInstructions, setLeInstructions] = useState("");
   const [leMinDelay, setLeMinDelay] = useState(15);
   const [leMaxDelay, setLeMaxDelay] = useState(60);
+  const [leMaxDuration, setLeMaxDuration] = useState(180);
   const [leStarting, setLeStarting] = useState(false);
   const lePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (lePollRef.current) clearInterval(lePollRef.current);
+    };
+  }, []);
   // Warm-up Batch state
   const [warmupPreset, setWarmupPreset] = useState<"light" | "medium" | "heavy">("light");
   const [warmupDelay, setWarmupDelay] = useState(10);
@@ -3280,7 +3286,7 @@ export default function FBActionBotPage() {
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-white/30 mt-1">1 account monitors comments, rest post comments</p>
+                  <p className="text-xs text-white/30 mt-1">Comments are monitored via AKNG API — all accounts are used for posting</p>
                 </div>
               </div>
 
@@ -3393,6 +3399,15 @@ export default function FBActionBotPage() {
                     />
                   </div>
                 </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Max Duration: {leMaxDuration >= 60 ? `${Math.floor(leMaxDuration / 60)}h${leMaxDuration % 60 > 0 ? ` ${leMaxDuration % 60}m` : ""}` : `${leMaxDuration}m`}</label>
+                  <input
+                    type="range" min={10} max={720} step={10} value={leMaxDuration}
+                    className="w-full accent-amber-400"
+                    onChange={(e) => setLeMaxDuration(parseInt(e.target.value))}
+                  />
+                  <p className="text-xs text-white/30 mt-1">Session auto-stops after this duration</p>
+                </div>
               </div>
 
               {/* Start Button */}
@@ -3417,6 +3432,7 @@ export default function FBActionBotPage() {
                       ai_instructions: leInstructions || undefined,
                       min_delay_seconds: leMinDelay,
                       max_delay_seconds: leMaxDelay,
+                      max_duration_minutes: leMaxDuration,
                     });
                     setLiveEngageSession(res.data);
                     setLiveEngagePhase("running");
