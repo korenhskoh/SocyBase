@@ -3324,11 +3324,11 @@ export default function FBActionBotPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-white/40 block mb-1">Upload Past Comments (for AI style training)</label>
+                  <label className="text-xs text-white/40 block mb-1">Style Guide Comments (tone & writing pattern only — content comes from live comments)</label>
                   <textarea
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20 font-mono"
                     rows={4}
-                    placeholder={"Paste past comments here, one per line...\nCantik sangat!\n+1 nak beli\nHow much is this ring?"}
+                    placeholder={"Paste past comments for style reference, one per line...\nCantik sangat!\nBerapa harga ni?\nBest quality la this one"}
                     value={leTrainingComments}
                     onChange={(e) => setLeTrainingComments(e.target.value)}
                   />

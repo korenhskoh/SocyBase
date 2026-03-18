@@ -81,15 +81,29 @@ class AILiveEngageService:
         For all others, calls GPT-4o with role-specific prompts.
         """
         if role == "place_order":
-            return self._generate_order_comment(business_context)
+            return self._generate_order_comment(recent_comments)
 
         return await self._generate_ai_comment(
             role, recent_comments, business_context, training_comments, ai_instructions,
             reference_comment,
         )
 
-    def _generate_order_comment(self, business_context: str) -> str:
-        """Generate a place-order comment from templates — no AI call."""
+    def _generate_order_comment(self, recent_comments: list[dict]) -> str:
+        """Generate a place-order comment — prefer patterns from current livestream."""
+        # Extract short order-like comments from the current livestream
+        order_keywords = {"+1", "nak", "order", "want", "beli", "pm", "interested"}
+        live_order_comments = []
+        for c in recent_comments[-20:]:
+            msg = c.get("message", "").strip()
+            if not msg or len(msg) > 30:
+                continue
+            msg_lower = msg.lower()
+            if any(kw in msg_lower for kw in order_keywords):
+                live_order_comments.append(msg)
+
+        # Prefer current livestream order patterns, fall back to static templates
+        if live_order_comments:
+            return random.choice(live_order_comments)
         return random.choice(ORDER_PATTERNS)
 
     async def _generate_ai_comment(
@@ -129,22 +143,46 @@ class AILiveEngageService:
             system_prompt += f"Product/Business context:\n{business_context}\n\n"
         if ai_instructions:
             system_prompt += f"Additional instructions:\n{ai_instructions}\n\n"
-        if training_sample:
-            system_prompt += f"Style examples from past comments (match this tone and language):\n{training_sample}\n\n"
+
+        # ── CURRENT LIVESTREAM (primary content reference) ──
         if recent_text:
-            system_prompt += f"Recent live comments (current conversation happening now):\n{recent_text}\n\n"
+            system_prompt += (
+                "=== CURRENT LIVESTREAM COMMENTS (this is what is happening RIGHT NOW) ===\n"
+                f"{recent_text}\n\n"
+                "IMPORTANT: These are the REAL comments from the live audience right now. "
+                "Your comment MUST be relevant to what people are currently talking about. "
+                "Follow the current topics, trends, and energy in these comments. "
+                "If viewers are saying '+1' or ordering, follow that flow. "
+                "If they are asking about a specific product or topic, engage with THAT topic.\n\n"
+            )
 
         if reference_comment and role in ("react_comment", "repeat_question"):
-            system_prompt += f"Target comment to respond to / rephrase:\n{reference_comment}\n\n"
+            system_prompt += (
+                f"=== TARGET COMMENT (respond to / rephrase THIS specific comment) ===\n"
+                f"{reference_comment}\n\n"
+            )
+
+        # ── TRAINING COMMENTS (style guide only) ──
+        if training_sample:
+            system_prompt += (
+                "=== STYLE GUIDE (tone and writing pattern ONLY — do NOT copy content) ===\n"
+                f"{training_sample}\n\n"
+                "These are past comment examples for STYLE REFERENCE ONLY. "
+                "Match the tone, language, and writing pattern (casual, short, emoji usage, etc.) "
+                "but do NOT use their content or topics. Your comment content must come from "
+                "the CURRENT livestream comments above.\n\n"
+            )
 
         system_prompt += (
             "Rules:\n"
-            "- Match the language of recent comments (auto-detect Malay/English/etc.)\n"
+            "- Your comment MUST relate to what the current livestream audience is discussing\n"
+            "- Match the language of current live comments (auto-detect Malay/English/etc.)\n"
+            "- Use the style/tone from style guide examples if provided, but NOT their content\n"
             "- 1-2 sentences max, casual livestream chat tone\n"
             "- No hashtags, minimal emojis (0-1 max)\n"
             "- Sound like a real viewer, not a bot or marketer\n"
             "- Vary sentence structure and length\n"
-            "- Do NOT repeat any recent comment verbatim\n\n"
+            "- Do NOT repeat any current comment verbatim\n\n"
             'Return JSON: {"comment": "your comment text"}'
         )
 
