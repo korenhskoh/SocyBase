@@ -2097,41 +2097,92 @@ async function processLoginBatch(batchId, twoFaWaitSeconds = 60) {
 
 // Fallback selectors — used when no AI-verified config exists
 const FALLBACK_SELECTORS = {
+  // ── Feed & Posts ─────────────────────────────
   feed_article: { selector: '[role="article"]' },
-  like_button: { selector: '[aria-label="Like"]', state_check: "aria-pressed", state_value_liked: "true" },
-  profile_link: {
-    selector: 'a[role="link"]',
-    href_include: ["profile.php", "facebook.com/"],
-    href_exclude: ["/photo", "/story", "/groups", "/pages"],
+  feed_container: { selector: '[role="feed"]' },
+  post_author: { selector: '[role="article"] h3' },
+  post_timestamp: { selector: '[role="article"] abbr' },
+  post_options: { selector: '[aria-label="Actions for this post"]' },
+
+  // ── Like / React ─────────────────────────────
+  like_button: {
+    selector: '[aria-label="Like"][role="button"]',
+    state_check: "aria-pressed",
+    state_value_liked: "true",
   },
   reaction_trigger: {
-    selector: '[aria-label="Like"]',
+    selector: '[aria-label="Like"][role="button"]',
     hover_duration_ms: 1500,
   },
   reaction_popup: {
     selector: '[role="dialog"] [aria-label], [data-testid="reaction_picker"] [aria-label]',
     reaction_labels: ["Love", "Haha", "Wow", "Sad", "Angry"],
   },
+
+  // ── Profile Links ────────────────────────────
+  profile_link: {
+    selector: 'a[role="link"]',
+    href_include: ["profile.php", "facebook.com/"],
+    href_exclude: ["/photo", "/story", "/groups", "/pages", "/marketplace", "/reel"],
+  },
+
+  // ── Video ────────────────────────────────────
   video_post: {
     selector: '[role="article"] video, [role="article"] [data-video-id], [role="article"] [aria-label*="video" i]',
     play_button: '[aria-label="Play video"], [aria-label="Play"], [data-testid="video_play_button"]',
   },
+
+  // ── Stories ──────────────────────────────────
   story_tray: {
-    selector: '[aria-label="Stories"] a, [aria-label*="story" i] a, [data-testid="story_card"]',
+    selector: '[data-pagelet="Stories"] a, [aria-label="Stories"] a, [aria-label*="story" i] a, [data-testid="story_card"]',
+    container: '[data-pagelet="Stories"], [aria-label="Stories"]',
+    create_story: '[aria-label="Create Story"]',
   },
+
+  // ── Navigation & Header ──────────────────────
   notification_icon: {
-    selector: '[aria-label="Notifications"], [aria-label*="notif" i][role="button"]',
-    panel_selector: '[role="dialog"][aria-label*="Notif" i], [aria-label="Notifications"] + div',
+    selector: '[aria-label^="Notifications"][role="button"], [aria-label="Notifications"]',
+    panel_selector: '[aria-label^="Notifications"][role="dialog"], [role="dialog"][aria-label*="Notif" i]',
   },
   search_input: {
-    selector: '[aria-label="Search Facebook"], input[placeholder*="Search" i], [role="search"] input',
+    selector: 'input[aria-label="Search Facebook"], input[placeholder*="Search" i], [role="search"] input',
   },
+  messenger_button: {
+    selector: '[aria-label^="Messenger"][role="button"]',
+    dialog: '[aria-label="Messenger"][role="dialog"]',
+  },
+  home_link: { selector: '[aria-label="Home"][role="link"]' },
+  marketplace_link: { selector: '[aria-label="Marketplace"][role="link"]' },
+  groups_link: { selector: '[aria-label="Groups"][role="link"]' },
+  menu_button: { selector: '[aria-label="Menu"][role="button"]' },
+  profile_button: { selector: '[aria-label="Your profile"][role="button"]' },
+
+  // ── Comment & Share ──────────────────────────
   comment_input: {
     selector: '[contenteditable="true"][aria-label*="comment" i], [contenteditable="true"][aria-label*="komentar" i], [aria-label*="Write a comment" i]',
   },
-  share_button: {
-    selector: '[aria-label*="Share" i][role="button"], [aria-label="Send this to friends or post it on your timeline."]',
+  comment_button: {
+    selector: '[aria-label="Leave a comment"]',
   },
+  share_button: {
+    selector: '[aria-label*="Share" i][role="button"], [aria-label="Send this to friends or post it on your profile."]',
+  },
+
+  // ── Sidebars ─────────────────────────────────
+  left_rail: { selector: '[data-pagelet="LeftRail"]' },
+  right_rail: { selector: '[data-pagelet="RightRail"]' },
+  contacts_list: { selector: '[aria-label="Contacts"]' },
+
+  // ── Create Post ──────────────────────────────
+  create_post_input: { selector: '[aria-label*="on your mind"]' },
+
+  // ── Modals / Dialogs ─────────────────────────
+  generic_dialog: { selector: '[role="dialog"]' },
+  close_button: { selector: '[aria-label="Close"]' },
+
+  // ── Login Page (for session detection) ───────
+  login_email: { selector: 'input[name="email"], input#email' },
+  login_password: { selector: 'input[name="pass"], input#pass' },
 };
 
 const SAFE_SEARCH_QUERIES = [
@@ -2169,42 +2220,69 @@ async function getActiveSelectors() {
 
 // DOM snapshot extraction — injected into Facebook tab
 function extractDOMSnapshot() {
+  // Helper: extract rich metadata from an element
+  function meta(el) {
+    if (!el) return null;
+    return {
+      tag: el.tagName,
+      id: el.id || null,
+      role: el.getAttribute("role"),
+      aria_label: el.getAttribute("aria-label"),
+      aria_pressed: el.getAttribute("aria-pressed"),
+      data_pagelet: el.getAttribute("data-pagelet"),
+      data_testid: el.getAttribute("data-testid"),
+      class_sample: Array.from(el.classList).slice(0, 4).join(" "),
+      visible: el.offsetParent !== null || el.offsetWidth > 0,
+      parent_tag: el.parentElement?.tagName,
+    };
+  }
+
   const snapshot = {
     timestamp: Date.now(),
     url: window.location.href,
+    title: document.title,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
     elements: {
       feed_articles: [], like_buttons: [], profile_links: [], comment_inputs: [],
-      video_posts: [], story_tray: null, notification_icon: null, search_input: null, reaction_buttons: [],
+      video_posts: [], story_tray: null, notification_icon: null, search_input: null,
+      reaction_buttons: [], share_buttons: [],
+      // New: navigation, sidebars, messenger, create post
+      nav: {}, sidebars: {}, messenger: null, create_post: null,
     },
+    // New: page structure check (which zones exist)
+    page_zones: {
+      banner: !!document.querySelector('[role="banner"]'),
+      feed: !!document.querySelector('[role="feed"]'),
+      left_rail: !!document.querySelector('[data-pagelet="LeftRail"]'),
+      right_rail: !!document.querySelector('[data-pagelet="RightRail"]'),
+      stories: !!document.querySelector('[data-pagelet="Stories"], [aria-label="Stories"]'),
+      login_page: !!document.querySelector('input[name="email"], input#email'),
+    },
+    // New: discovered unknown elements (aria-labels, data-pagelets, data-testids not in our registry)
+    discovered: [],
   };
 
+  // ── Feed Articles ────────────────────────────
   const articles = Array.from(document.querySelectorAll('[role="article"]')).slice(0, 5);
-
   snapshot.elements.feed_articles = articles.map((el) => ({
-    tag: el.tagName,
-    role: el.getAttribute("role"),
-    aria_label: el.getAttribute("aria-label") || "",
-    class_sample: Array.from(el.classList).slice(0, 3).join(" "),
+    ...meta(el),
     child_count: el.children.length,
-    parent_tag: el.parentElement?.tagName,
+    has_video: !!el.querySelector("video, [data-video-id]"),
+    has_image: !!el.querySelector("img"),
   }));
 
+  // ── Like Buttons ─────────────────────────────
   articles.forEach((article, idx) => {
-    // Like buttons — search broadly
-    for (const el of article.querySelectorAll('[aria-label*="ike"], [aria-label*="uka"]')) {
+    for (const el of article.querySelectorAll('[aria-label*="ike"], [aria-label*="uka"], [aria-label="React"]')) {
       snapshot.elements.like_buttons.push({
         article_index: idx,
-        tag: el.tagName,
-        aria_label: el.getAttribute("aria-label"),
-        aria_pressed: el.getAttribute("aria-pressed"),
-        role: el.getAttribute("role"),
-        class_sample: Array.from(el.classList).slice(0, 3).join(" "),
-        parent_tag: el.parentElement?.tagName,
+        ...meta(el),
         has_svg: !!el.querySelector("svg"),
       });
     }
   });
 
+  // ── Profile Links ────────────────────────────
   articles.slice(0, 3).forEach((article, idx) => {
     const links = Array.from(article.querySelectorAll('a[role="link"]'))
       .filter((a) => {
@@ -2212,34 +2290,29 @@ function extractDOMSnapshot() {
         const text = a.textContent?.trim() || "";
         return text.length > 1 && text.length < 80 &&
           (href.includes("profile.php") || href.includes("facebook.com/")) &&
-          !href.includes("/photo") && !href.includes("/story");
+          !href.includes("/photo") && !href.includes("/story") &&
+          !href.includes("/reel") && !href.includes("/marketplace");
       })
       .slice(0, 3);
-
     links.forEach((link) => {
       snapshot.elements.profile_links.push({
         article_index: idx,
-        tag: link.tagName,
-        role: link.getAttribute("role"),
+        ...meta(link),
         href_type: link.getAttribute("href")?.includes("profile.php") ? "profile.php" : "username",
         text_length: link.textContent?.trim().length || 0,
-        aria_hidden: link.getAttribute("aria-hidden"),
-        tabindex: link.getAttribute("tabindex"),
       });
     });
   });
 
-  // Comment inputs
-  const commentInputs = Array.from(document.querySelectorAll('[contenteditable="true"], [aria-label*="comment" i], [aria-label*="komentar" i]')).slice(0, 3);
+  // ── Comment Inputs ───────────────────────────
+  const commentInputs = Array.from(document.querySelectorAll('[contenteditable="true"], [aria-label*="comment" i], [aria-label*="komentar" i], [aria-label="Leave a comment"]')).slice(0, 3);
   snapshot.elements.comment_inputs = commentInputs.map((el) => ({
-    tag: el.tagName,
+    ...meta(el),
     contenteditable: el.getAttribute("contenteditable"),
-    aria_label: el.getAttribute("aria-label"),
-    role: el.getAttribute("role"),
     placeholder: el.getAttribute("placeholder") || el.getAttribute("data-placeholder") || "",
   }));
 
-  // Video posts detection
+  // ── Video Posts ──────────────────────────────
   const videoPosts = Array.from(document.querySelectorAll('[role="article"]')).filter(
     (art) => art.querySelector('video, [data-video-id], [aria-label*="video" i]')
   ).slice(0, 5);
@@ -2251,43 +2324,89 @@ function extractDOMSnapshot() {
     play_button: !!el.querySelector('[aria-label*="Play" i]'),
   }));
 
-  // Story tray
-  const storyTray = document.querySelector('[aria-label="Stories"], [aria-label*="story" i]');
+  // ── Story Tray ──────────────────────────────
+  const storyTray = document.querySelector('[data-pagelet="Stories"], [aria-label="Stories"], [aria-label*="story" i]');
   snapshot.elements.story_tray = storyTray ? {
-    tag: storyTray.tagName,
-    aria_label: storyTray.getAttribute("aria-label"),
+    ...meta(storyTray),
     child_count: storyTray.children.length,
     links_count: storyTray.querySelectorAll("a").length,
-    role: storyTray.getAttribute("role"),
+    has_create: !!storyTray.querySelector('[aria-label="Create Story"]'),
   } : null;
 
-  // Notification icon
-  const notifIcon = document.querySelector('[aria-label="Notifications"], [aria-label*="notif" i][role="button"]');
-  snapshot.elements.notification_icon = notifIcon ? {
-    tag: notifIcon.tagName,
-    aria_label: notifIcon.getAttribute("aria-label"),
-    role: notifIcon.getAttribute("role"),
-    class_sample: Array.from(notifIcon.classList).slice(0, 3).join(" "),
-  } : null;
+  // ── Notification Icon ───────────────────────
+  const notifIcon = document.querySelector('[aria-label^="Notifications"][role="button"], [aria-label="Notifications"]');
+  snapshot.elements.notification_icon = notifIcon ? meta(notifIcon) : null;
 
-  // Search input
-  const searchInput = document.querySelector('[aria-label="Search Facebook"], input[placeholder*="Search" i], [role="search"] input');
+  // ── Search Input ────────────────────────────
+  const searchInput = document.querySelector('input[aria-label="Search Facebook"], input[placeholder*="Search" i], [role="search"] input');
   snapshot.elements.search_input = searchInput ? {
-    tag: searchInput.tagName,
-    aria_label: searchInput.getAttribute("aria-label"),
+    ...meta(searchInput),
     placeholder: searchInput.getAttribute("placeholder") || "",
-    role: searchInput.getAttribute("role"),
     type: searchInput.getAttribute("type") || "",
   } : null;
 
-  // Share buttons
-  const shareBtns = Array.from(document.querySelectorAll('[aria-label*="Share" i][role="button"]')).slice(0, 3);
-  snapshot.elements.share_buttons = shareBtns.map((el) => ({
-    tag: el.tagName,
-    aria_label: el.getAttribute("aria-label"),
-    role: el.getAttribute("role"),
-    parent_tag: el.parentElement?.tagName,
-  }));
+  // ── Share Buttons ───────────────────────────
+  const shareBtns = Array.from(document.querySelectorAll('[aria-label*="Share" i][role="button"], [aria-label="Send this to friends or post it on your profile."]')).slice(0, 3);
+  snapshot.elements.share_buttons = shareBtns.map((el) => meta(el));
+
+  // ── Navigation Bar (new) ────────────────────
+  const navSelectors = {
+    home: '[aria-label="Home"][role="link"]',
+    marketplace: '[aria-label="Marketplace"][role="link"]',
+    groups: '[aria-label="Groups"][role="link"]',
+    reels: '[aria-label="Reels"][role="link"]',
+    messenger: '[aria-label^="Messenger"][role="button"]',
+    profile: '[aria-label="Your profile"][role="button"]',
+    menu: '[aria-label="Menu"][role="button"]',
+  };
+  for (const [key, sel] of Object.entries(navSelectors)) {
+    const el = document.querySelector(sel);
+    snapshot.elements.nav[key] = el ? { found: true, ...meta(el) } : { found: false, selector: sel };
+  }
+
+  // ── Sidebars (new) ──────────────────────────
+  const leftRail = document.querySelector('[data-pagelet="LeftRail"]');
+  snapshot.elements.sidebars.left = leftRail ? { ...meta(leftRail), child_count: leftRail.children.length } : null;
+  const rightRail = document.querySelector('[data-pagelet="RightRail"]');
+  snapshot.elements.sidebars.right = rightRail ? { ...meta(rightRail), child_count: rightRail.children.length } : null;
+  const contacts = document.querySelector('[aria-label="Contacts"]');
+  snapshot.elements.sidebars.contacts = contacts ? meta(contacts) : null;
+
+  // ── Messenger (new) ─────────────────────────
+  const msgDialog = document.querySelector('[aria-label="Messenger"][role="dialog"]');
+  snapshot.elements.messenger = msgDialog ? meta(msgDialog) : null;
+
+  // ── Create Post (new) ───────────────────────
+  const createPost = document.querySelector('[aria-label*="on your mind"]');
+  snapshot.elements.create_post = createPost ? meta(createPost) : null;
+
+  // ── Discovery Scanner: find aria-labels/data-pagelets NOT in our registry ──
+  const knownLabels = new Set([
+    "Like", "React", "Notifications", "Search Facebook", "Home", "Marketplace",
+    "Groups", "Reels", "Messenger", "Menu", "Your profile", "Stories",
+    "Close", "Leave a comment", "Create Story", "Actions for this post",
+  ]);
+  const discoveredSet = new Set();
+  document.querySelectorAll('[aria-label], [data-pagelet], [data-testid]').forEach((el) => {
+    const label = el.getAttribute("aria-label");
+    const pagelet = el.getAttribute("data-pagelet");
+    const testid = el.getAttribute("data-testid");
+    const key = `${label}|${pagelet}|${testid}`;
+    if (discoveredSet.has(key)) return;
+    // Skip if it's a known label
+    if (label && knownLabels.has(label)) return;
+    discoveredSet.add(key);
+    snapshot.discovered.push({
+      tag: el.tagName,
+      aria_label: label,
+      data_pagelet: pagelet,
+      data_testid: testid,
+      role: el.getAttribute("role"),
+      visible: el.offsetParent !== null || el.offsetWidth > 0,
+    });
+  });
+  // Limit to avoid oversized snapshot
+  snapshot.discovered = snapshot.discovered.slice(0, 60);
 
   return snapshot;
 }
@@ -2346,7 +2465,63 @@ async function handleDOMCheck(checkData) {
 
     console.log("[SocyBase DOM Check] Snapshot:", snapshot.elements.feed_articles.length, "articles,",
       snapshot.elements.like_buttons.length, "like buttons,",
-      snapshot.elements.profile_links.length, "profile links");
+      snapshot.elements.profile_links.length, "profile links,",
+      snapshot.discovered.length, "discovered elements");
+
+    // Change detection: compare with previous baseline
+    let changes = [];
+    try {
+      const stored = await chrome.storage.local.get("fb_dom_baseline");
+      const baseline = stored.fb_dom_baseline;
+      if (baseline && baseline.page_zones) {
+        for (const [zone, wasPresent] of Object.entries(baseline.page_zones)) {
+          const nowPresent = snapshot.page_zones[zone];
+          if (wasPresent && !nowPresent) {
+            changes.push({ type: "ZONE_LOST", key: zone, message: `${zone} was present before but is now missing` });
+          }
+          if (!wasPresent && nowPresent) {
+            changes.push({ type: "ZONE_APPEARED", key: zone, message: `${zone} appeared (was missing before)` });
+          }
+        }
+        // Check nav elements
+        if (baseline.nav) {
+          for (const [key, prev] of Object.entries(baseline.nav)) {
+            const curr = snapshot.elements.nav[key];
+            if (prev.found && curr && !curr.found) {
+              changes.push({ type: "NAV_BROKEN", key, message: `Nav element "${key}" was found before but is now missing` });
+            }
+          }
+        }
+        // Check element count changes
+        const prevArticles = baseline.counts?.articles || 0;
+        const currArticles = snapshot.elements.feed_articles.length;
+        if (prevArticles > 0 && currArticles === 0) {
+          changes.push({ type: "FEED_EMPTY", key: "feed_articles", message: "Feed articles disappeared — possible DOM structure change" });
+        }
+      }
+      // Save new baseline
+      await chrome.storage.local.set({
+        fb_dom_baseline: {
+          timestamp: Date.now(),
+          page_zones: snapshot.page_zones,
+          nav: snapshot.elements.nav,
+          counts: {
+            articles: snapshot.elements.feed_articles.length,
+            like_buttons: snapshot.elements.like_buttons.length,
+            profile_links: snapshot.elements.profile_links.length,
+            discovered: snapshot.discovered.length,
+          },
+        },
+      });
+    } catch (e) {
+      console.warn("[SocyBase DOM Check] Change detection error:", e.message);
+    }
+
+    // Attach changes + discovery summary to snapshot
+    snapshot.changes = changes;
+    if (changes.length > 0) {
+      console.warn("[SocyBase DOM Check] Changes detected:", changes);
+    }
 
     // Submit to backend
     const submitResult = await apiPost("/fb-action/dom-selectors/submit", {
@@ -2354,7 +2529,8 @@ async function handleDOMCheck(checkData) {
       account_email,
     });
 
-    console.log("[SocyBase DOM Check] Done — confidence:", submitResult.confidence);
+    console.log("[SocyBase DOM Check] Done — confidence:", submitResult.confidence,
+      "| changes:", changes.length, "| discovered:", snapshot.discovered.length);
 
     // Invalidate selector cache
     cachedSelectors = null;
