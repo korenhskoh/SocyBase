@@ -518,7 +518,7 @@ export const competitorsApi = {
   scanHistory: () => api.get("/competitors/scan-history"),
 };
 
-// FB Action Bot API
+// FB Action Blaster API
 export const fbActionApi = {
   execute: (data: { action_name: string; params: Record<string, unknown>; user_agent?: string; proxy?: { host: string; port: string; username: string; password: string } }) =>
     api.post("/fb-action/execute", data),

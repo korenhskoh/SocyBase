@@ -24,4 +24,4 @@ api_router.include_router(competitors.router, prefix="/competitors", tags=["Comp
 api_router.include_router(admin_traffic_bot.router, prefix="/admin/traffic-bot", tags=["Admin Traffic Bot"])
 api_router.include_router(extension.router, prefix="/extension", tags=["Browser Cookies"])
 api_router.include_router(live_sell.router, prefix="/live-sell", tags=["Live Sell"])
-api_router.include_router(fb_action.router, prefix="/fb-action", tags=["FB Action Bot"])
+api_router.include_router(fb_action.router, prefix="/fb-action", tags=["FB Action Blaster"])

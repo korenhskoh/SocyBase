@@ -886,7 +886,7 @@ export default function FBActionBotPage() {
           <svg className="h-7 w-7 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
           </svg>
-          Facebook Action Bot
+          Facebook Action Blaster
         </h1>
         <p className="text-white/40 text-sm mt-1">Automate Facebook actions — post, comment, change profile & more</p>
       </div>

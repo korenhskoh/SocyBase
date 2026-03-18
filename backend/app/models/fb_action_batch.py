@@ -1,4 +1,4 @@
-"""Facebook Action Bot — batch execution model."""
+"""Facebook Action Blaster — batch execution model."""
 
 import uuid
 from datetime import datetime, timezone

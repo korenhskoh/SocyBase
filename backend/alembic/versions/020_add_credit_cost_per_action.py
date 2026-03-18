@@ -5,7 +5,7 @@ Revises: 019
 Create Date: 2026-03-15
 
 Adds credit_cost_per_action field so admin can configure per-action credit costs
-for FB Action Bot batch execution. Default: 3 credits per action.
+for FB Action Blaster batch execution. Default: 3 credits per action.
 """
 from typing import Sequence, Union
 from alembic import op

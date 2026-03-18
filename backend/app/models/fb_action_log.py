@@ -1,4 +1,4 @@
-"""Facebook Action Bot — action execution log."""
+"""Facebook Action Blaster — action execution log."""
 
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +11,7 @@ from app.database import Base
 
 
 class FBActionLog(Base):
-    """Stores executed Facebook action bot operations for audit trail."""
+    """Stores executed Facebook Action Blaster operations for audit trail."""
 
     __tablename__ = "fb_action_logs"
 

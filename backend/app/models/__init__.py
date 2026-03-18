@@ -64,7 +64,7 @@ __all__ = [
     "CompetitorPage",
     # Cookie Sessions
     "FBCookieSession",
-    # FB Action Bot
+    # FB Action Blaster
     "FBActionBatch",
     "FBActionLog",
     # FB Bulk Login

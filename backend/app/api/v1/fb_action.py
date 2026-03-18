@@ -1,4 +1,4 @@
-"""Facebook Action Bot API — execute FB actions via AKNG fb_action endpoint."""
+"""Facebook Action Blaster API — execute FB actions via AKNG fb_action endpoint."""
 
 import csv
 import io
@@ -295,7 +295,7 @@ async def get_config(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get current FB Action Bot config (cookie status, UA, proxy)."""
+    """Get current FB Action Blaster config (cookie status, UA, proxy)."""
     result = await db.execute(
         select(FBCookieSession).where(FBCookieSession.tenant_id == user.tenant_id)
     )
