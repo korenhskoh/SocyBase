@@ -267,10 +267,18 @@ export default function FBActionBotPage() {
   const [leContext, setLeContext] = useState("");
   const [leTrainingComments, setLeTrainingComments] = useState("");
   const [leInstructions, setLeInstructions] = useState("");
+  const [leScrapeInterval, setLeScrapeInterval] = useState(8);
+  const [lePageOwnerId, setLePageOwnerId] = useState("");
   const [leMinDelay, setLeMinDelay] = useState(15);
   const [leMaxDelay, setLeMaxDelay] = useState(60);
+  const [leMaxDuration, setLeMaxDuration] = useState(180);
   const [leStarting, setLeStarting] = useState(false);
   const lePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (lePollRef.current) clearInterval(lePollRef.current);
+    };
+  }, []);
   // Warm-up Batch state
   const [warmupPreset, setWarmupPreset] = useState<"light" | "medium" | "heavy">("light");
   const [warmupDelay, setWarmupDelay] = useState(10);
@@ -3261,6 +3269,16 @@ export default function FBActionBotPage() {
                     onChange={(e) => setLeTitle(e.target.value)}
                   />
                 </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Page Owner ID (optional — auto-detected from Post ID)</label>
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    placeholder="Facebook Page ID — comments from this ID will be ignored"
+                    value={lePageOwnerId}
+                    onChange={(e) => setLePageOwnerId(e.target.value)}
+                  />
+                  <p className="text-xs text-white/30 mt-1">Livestream host comments are filtered out so AI only responds to viewers</p>
+                </div>
               </div>
 
               {/* Accounts */}
@@ -3280,7 +3298,7 @@ export default function FBActionBotPage() {
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-white/30 mt-1">1 account monitors comments, rest post comments</p>
+                  <p className="text-xs text-white/30 mt-1">Comments are monitored via AKNG API — all accounts are used for posting</p>
                 </div>
               </div>
 
@@ -3318,11 +3336,11 @@ export default function FBActionBotPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-white/40 block mb-1">Upload Past Comments (for AI style training)</label>
+                  <label className="text-xs text-white/40 block mb-1">Style Guide Comments (tone & writing pattern only — content comes from live comments)</label>
                   <textarea
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20 font-mono"
                     rows={4}
-                    placeholder={"Paste past comments here, one per line...\nCantik sangat!\n+1 nak beli\nHow much is this ring?"}
+                    placeholder={"Paste past comments for style reference, one per line...\nCantik sangat!\nBerapa harga ni?\nBest quality la this one"}
                     value={leTrainingComments}
                     onChange={(e) => setLeTrainingComments(e.target.value)}
                   />
@@ -3367,6 +3385,15 @@ export default function FBActionBotPage() {
               {/* Timing */}
               <div className="glass-card p-5 space-y-3">
                 <h3 className="text-sm font-medium text-white/60">Timing</h3>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Scrape Interval: {leScrapeInterval}s</label>
+                  <input
+                    type="range" min={3} max={30} step={1} value={leScrapeInterval}
+                    className="w-full accent-amber-400"
+                    onChange={(e) => setLeScrapeInterval(parseInt(e.target.value))}
+                  />
+                  <p className="text-xs text-white/30 mt-1">How often to fetch new livestream comments — AI only responds when new comments arrive</p>
+                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs text-white/40 block mb-1">Min Delay: {leMinDelay}s</label>
@@ -3393,6 +3420,15 @@ export default function FBActionBotPage() {
                     />
                   </div>
                 </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Max Duration: {leMaxDuration >= 60 ? `${Math.floor(leMaxDuration / 60)}h${leMaxDuration % 60 > 0 ? ` ${leMaxDuration % 60}m` : ""}` : `${leMaxDuration}m`}</label>
+                  <input
+                    type="range" min={10} max={720} step={10} value={leMaxDuration}
+                    className="w-full accent-amber-400"
+                    onChange={(e) => setLeMaxDuration(parseInt(e.target.value))}
+                  />
+                  <p className="text-xs text-white/30 mt-1">Session auto-stops after this duration</p>
+                </div>
               </div>
 
               {/* Start Button */}
@@ -3410,13 +3446,16 @@ export default function FBActionBotPage() {
                       post_id: lePostId.trim(),
                       post_url: lePostUrl.trim() || undefined,
                       title: leTitle.trim() || undefined,
+                      page_owner_id: lePageOwnerId.trim() || undefined,
                       login_batch_id: leLoginBatchId,
                       role_distribution: leRoles,
                       business_context: leContext,
                       training_comments: leTrainingComments || undefined,
                       ai_instructions: leInstructions || undefined,
+                      scrape_interval_seconds: leScrapeInterval,
                       min_delay_seconds: leMinDelay,
                       max_delay_seconds: leMaxDelay,
+                      max_duration_minutes: leMaxDuration,
                     });
                     setLiveEngageSession(res.data);
                     setLiveEngagePhase("running");
