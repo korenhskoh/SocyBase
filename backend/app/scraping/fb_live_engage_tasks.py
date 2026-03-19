@@ -659,7 +659,7 @@ async def _engage_loop(
                     cookie=account["cookie"],
                     user_agent=account["user_agent"],
                     action_name="comment_to_post",
-                    params={"post_id": post_id, "content": content},
+                    params={"post_id": post_id, "content": content, "image": ""},
                     proxy=account.get("proxy"),
                 )
             except Exception as exc:
