@@ -3867,7 +3867,7 @@ export default function FBActionBotPage() {
                         const statusRes = await fbActionApi.liveEngageStatus(sid);
                         setLiveEngageSession(statusRes.data);
                         setLiveEngageLogs(statusRes.data.logs || []);
-                        if (statusRes.data.status !== "running") {
+                        if (!["running", "paused"].includes(statusRes.data.status)) {
                           if (lePollRef.current) clearInterval(lePollRef.current);
                         }
                       } catch { /* ignore poll errors */ }
@@ -3894,7 +3894,10 @@ export default function FBActionBotPage() {
               <div className="glass-card p-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className={`w-3 h-3 rounded-full ${liveEngageSession?.status === "running" ? "bg-red-500 animate-pulse" : "bg-white/20"}`} />
+                    <div className={`w-3 h-3 rounded-full ${
+                      liveEngageSession?.status === "running" ? "bg-red-500 animate-pulse" :
+                      liveEngageSession?.status === "paused" ? "bg-amber-500" : "bg-white/20"
+                    }`} />
                     <div>
                       <h3 className="text-white font-medium">
                         {liveEngageSession?.title || "Livestream Engagement"}
@@ -3906,21 +3909,66 @@ export default function FBActionBotPage() {
                     </div>
                   </div>
                   {liveEngageSession?.status === "running" && (
-                    <button
-                      onClick={async () => {
-                        try {
-                          await fbActionApi.liveEngageStop(liveEngageSession.id);
-                          showToast("success", "Engagement stopped");
-                          setLiveEngageSession((prev: any) => prev ? { ...prev, status: "stopped" } : prev);
-                          if (lePollRef.current) clearInterval(lePollRef.current);
-                        } catch { showToast("error", "Failed to stop"); }
-                      }}
-                      className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition"
-                    >
-                      ⏹ Stop
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          try {
+                            await fbActionApi.liveEngagePause(liveEngageSession.id);
+                            showToast("success", "Engagement paused");
+                            setLiveEngageSession((prev: any) => prev ? { ...prev, status: "paused" } : prev);
+                          } catch { showToast("error", "Failed to pause"); }
+                        }}
+                        className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-sm font-medium transition"
+                      >
+                        ⏸ Pause
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm("Are you sure you want to stop this engagement session? This cannot be undone.")) return;
+                          try {
+                            await fbActionApi.liveEngageStop(liveEngageSession.id);
+                            showToast("success", "Engagement stopped");
+                            setLiveEngageSession((prev: any) => prev ? { ...prev, status: "stopped" } : prev);
+                            if (lePollRef.current) clearInterval(lePollRef.current);
+                          } catch { showToast("error", "Failed to stop"); }
+                        }}
+                        className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition"
+                      >
+                        ⏹ Stop
+                      </button>
+                    </div>
                   )}
-                  {liveEngageSession?.status !== "running" && (
+                  {liveEngageSession?.status === "paused" && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          try {
+                            await fbActionApi.liveEngageResume(liveEngageSession.id);
+                            showToast("success", "Engagement resumed");
+                            setLiveEngageSession((prev: any) => prev ? { ...prev, status: "running" } : prev);
+                          } catch { showToast("error", "Failed to resume"); }
+                        }}
+                        className="px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-lg text-sm font-medium transition"
+                      >
+                        ▶ Resume
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm("Are you sure you want to stop this engagement session? This cannot be undone.")) return;
+                          try {
+                            await fbActionApi.liveEngageStop(liveEngageSession.id);
+                            showToast("success", "Engagement stopped");
+                            setLiveEngageSession((prev: any) => prev ? { ...prev, status: "stopped" } : prev);
+                            if (lePollRef.current) clearInterval(lePollRef.current);
+                          } catch { showToast("error", "Failed to stop"); }
+                        }}
+                        className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition"
+                      >
+                        ⏹ Stop
+                      </button>
+                    </div>
+                  )}
+                  {liveEngageSession?.status && !["running", "paused"].includes(liveEngageSession.status) && (
                     <button
                       onClick={() => {
                         setLiveEngagePhase("setup");

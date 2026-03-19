@@ -8,7 +8,7 @@ import random
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
@@ -2733,7 +2733,7 @@ async def live_engage_list_presets(
 
 @router.post("/live-engage/presets")
 async def live_engage_save_preset(
-    data: dict,
+    data: dict = Body(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2880,3 +2880,51 @@ async def live_engage_stop(
     await db.commit()
 
     return {"id": str(session.id), "status": "stopped"}
+
+
+@router.post("/live-engage/{session_id}/pause")
+async def live_engage_pause(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pause a running livestream engagement session (monitor continues, posting paused)."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status != "running":
+        raise HTTPException(status_code=400, detail=f"Session is not running (status: {session.status})")
+
+    session.status = "paused"
+    await db.commit()
+    return {"id": str(session.id), "status": "paused"}
+
+
+@router.post("/live-engage/{session_id}/resume")
+async def live_engage_resume(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resume a paused livestream engagement session."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status != "paused":
+        raise HTTPException(status_code=400, detail=f"Session is not paused (status: {session.status})")
+
+    session.status = "running"
+    await db.commit()
+    return {"id": str(session.id), "status": "running"}

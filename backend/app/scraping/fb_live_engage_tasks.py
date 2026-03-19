@@ -321,7 +321,7 @@ async def _monitor_loop(
                             )
                         )
                         status = result.scalar_one_or_none()
-                        if status and status != "running":
+                        if status and status not in ("running", "paused"):
                             logger.info(f"[LiveEngage] Monitor: session {session_id} status={status}, stopping")
                             stop_event.set()
                             break
@@ -495,6 +495,36 @@ async def _engage_loop(
                 logger.info(f"[LiveEngage] Session {session_id} reached max duration ({config['max_duration_minutes']}m), stopping")
                 stop_event.set()
                 break
+
+            # ── Check if paused ─────────────────────────────────
+            try:
+                async with SessionLocal() as db:
+                    result = await db.execute(
+                        select(FBLiveEngageSession.status).where(
+                            FBLiveEngageSession.id == uuid.UUID(session_id)
+                        )
+                    )
+                    db_status = result.scalar_one_or_none()
+                    if db_status == "paused":
+                        logger.info(f"[LiveEngage] Session {session_id} paused, waiting...")
+                        while db_status == "paused" and not stop_event.is_set():
+                            await asyncio.sleep(5)
+                            async with SessionLocal() as db2:
+                                r2 = await db2.execute(
+                                    select(FBLiveEngageSession.status).where(
+                                        FBLiveEngageSession.id == uuid.UUID(session_id)
+                                    )
+                                )
+                                db_status = r2.scalar_one_or_none()
+                        if db_status == "stopped":
+                            stop_event.set()
+                            break
+                        logger.info(f"[LiveEngage] Session {session_id} resumed")
+                    elif db_status == "stopped":
+                        stop_event.set()
+                        break
+            except Exception:
+                pass
 
             # ── Wait for new comments from monitor loop ──────
             # We wait until the monitor signals fresh viewer comments,

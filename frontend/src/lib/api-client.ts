@@ -671,6 +671,10 @@ export const fbActionApi = {
     api.get(`/fb-action/live-engage/${sessionId}`),
   liveEngageStop: (sessionId: string) =>
     api.post(`/fb-action/live-engage/${sessionId}/stop`),
+  liveEngagePause: (sessionId: string) =>
+    api.post(`/fb-action/live-engage/${sessionId}/pause`),
+  liveEngageResume: (sessionId: string) =>
+    api.post(`/fb-action/live-engage/${sessionId}/resume`),
   liveEngageHistory: (params?: { page?: number; page_size?: number }) =>
     api.get("/fb-action/live-engage/history", { params }),
 };
