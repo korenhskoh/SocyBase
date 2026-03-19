@@ -124,6 +124,9 @@ async def _execute_engagement(session_id: str):
                 "quantity_variation": session.quantity_variation if session.quantity_variation is not None else True,
                 "aggressive_level": session.aggressive_level or "medium",
                 "direct_accounts_encrypted": session.direct_accounts_encrypted or "",
+                "target_comments_enabled": bool(session.target_comments_enabled),
+                "target_comments_count": session.target_comments_count or 0,
+                "target_comments_period_minutes": session.target_comments_period_minutes or 60,
             }
 
         # ── Load accounts ─────────────────────────────────────
@@ -442,6 +445,13 @@ async def _engage_loop(
     session_start = datetime.now(timezone.utc)
     max_duration_secs = config["max_duration_minutes"] * 60
 
+    # Target pacing mode
+    target_enabled = config.get("target_comments_enabled", False)
+    target_count = config.get("target_comments_count", 0)
+    target_period_secs = config.get("target_comments_period_minutes", 60) * 60
+    comments_posted_this_period = 0
+    period_start = monotonic()
+
     # Build role weights for random.choices
     base_role_dist = config["role_distribution"]
     roles = list(base_role_dist.keys())
@@ -470,19 +480,23 @@ async def _engage_loop(
                 )
                 await asyncio.wait_for(new_comments_event.wait(), timeout=wait_timeout)
             except asyncio.TimeoutError:
-                # No new comments in 30s — loop back to check stop/duration
-                continue
+                if target_enabled and len(recent_comments) >= 3:
+                    # Target mode: proceed even without new comments to maintain pace
+                    pass
+                else:
+                    # Normal mode: loop back to check stop/duration
+                    continue
 
             # Clear event — we'll wait for the next batch of new comments
             new_comments_event.clear()
 
-            # Need at least 3 comments for meaningful context
-            if len(recent_comments) < 3:
+            # Need at least 3 comments for meaningful context (skip in target mode)
+            if not target_enabled and len(recent_comments) < 3:
                 continue
 
             # Check if there are actually new comments since our last action
             current_count = len(recent_comments)
-            if current_count <= last_seen_count[0]:
+            if not target_enabled and current_count <= last_seen_count[0]:
                 continue
             last_seen_count[0] = current_count
 
@@ -613,6 +627,7 @@ async def _engage_loop(
                 logger.warning(f"[LiveEngage] Failed to log action: {exc}")
 
             if success:
+                comments_posted_this_period += 1
                 logger.info(f"[LiveEngage] Posted {role} comment via {account['email'][:20]}...")
             else:
                 logger.warning(f"[LiveEngage] Failed {role} via {account['email'][:20]}: {error_msg}")
@@ -620,25 +635,52 @@ async def _engage_loop(
         except Exception as exc:
             logger.warning(f"[LiveEngage] Engage loop error: {exc}")
 
-        # ── Adaptive delay with aggressive level ──
-        base_min = config["min_delay"]
-        base_max = config["max_delay"]
+        # ── Calculate delay ──
+        if target_enabled and target_count > 0:
+            # Target pacing mode: calculate delay to hit N comments per period
+            elapsed_in_period = monotonic() - period_start
+            remaining_in_period = max(1, target_period_secs - elapsed_in_period)
+            remaining_comments = max(1, target_count - comments_posted_this_period)
 
-        # Aggressive level multiplier: low=1.5x slower, medium=1x, high=0.4x faster
-        aggro_multiplier = {"low": 1.5, "medium": 1.0, "high": 0.4}.get(
-            adaptive.aggressive_level, 1.0
-        )
-        base_min *= aggro_multiplier
-        base_max *= aggro_multiplier
+            # Reset period when it expires
+            if elapsed_in_period >= target_period_secs:
+                period_start = monotonic()
+                comments_posted_this_period = 0
+                remaining_in_period = target_period_secs
+                remaining_comments = target_count
 
-        if adaptive.velocity_cpm > 5:
-            speed_factor = max(0.3, 1.0 - (adaptive.velocity_cpm - 5) / 100)
-            adj_min = max(3, base_min * speed_factor)
-            adj_max = max(adj_min + 3, base_max * speed_factor)
+            # Target delay = remaining time / remaining comments
+            target_delay = remaining_in_period / remaining_comments
+            # Add ±20% jitter for natural pacing
+            delay = target_delay * random.uniform(0.8, 1.2)
+            # Clamp to sane bounds (3s min, 300s max)
+            delay = max(3, min(delay, 300))
+
+            if comments_posted_this_period % 10 == 0:
+                logger.debug(
+                    "[LiveEngage] Target pacing: %d/%d posted, %.0fs remaining, delay=%.1fs",
+                    comments_posted_this_period, target_count, remaining_in_period, delay,
+                )
         else:
-            adj_min = base_min
-            adj_max = base_max
-        delay = random.uniform(adj_min, adj_max)
+            # Normal adaptive delay with aggressive level
+            base_min = config["min_delay"]
+            base_max = config["max_delay"]
+
+            aggro_multiplier = {"low": 1.5, "medium": 1.0, "high": 0.4}.get(
+                adaptive.aggressive_level, 1.0
+            )
+            base_min *= aggro_multiplier
+            base_max *= aggro_multiplier
+
+            if adaptive.velocity_cpm > 5:
+                speed_factor = max(0.3, 1.0 - (adaptive.velocity_cpm - 5) / 100)
+                adj_min = max(3, base_min * speed_factor)
+                adj_max = max(adj_min + 3, base_max * speed_factor)
+            else:
+                adj_min = base_min
+                adj_max = base_max
+            delay = random.uniform(adj_min, adj_max)
+
         await asyncio.sleep(delay)
 
 

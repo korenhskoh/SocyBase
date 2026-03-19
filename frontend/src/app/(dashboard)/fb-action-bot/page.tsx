@@ -275,6 +275,9 @@ export default function FBActionBotPage() {
   const [leCodePattern, setLeCodePattern] = useState("");
   const [leQuantityVariation, setLeQuantityVariation] = useState(true);
   const [leAggressiveLevel, setLeAggressiveLevel] = useState<"low" | "medium" | "high">("medium");
+  const [leTargetEnabled, setLeTargetEnabled] = useState(false);
+  const [leTargetCount, setLeTargetCount] = useState(100);
+  const [leTargetPeriod, setLeTargetPeriod] = useState(60);
   const [leMinDelay, setLeMinDelay] = useState(15);
   const [leMaxDelay, setLeMaxDelay] = useState(60);
   const [leMaxDuration, setLeMaxDuration] = useState(180);
@@ -3551,6 +3554,56 @@ export default function FBActionBotPage() {
                   </p>
                 </div>
 
+                {/* Target Comments */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={leTargetEnabled}
+                        onChange={(e) => setLeTargetEnabled(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-white/10 rounded-full peer peer-checked:bg-amber-500/60 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                    <div>
+                      <span className="text-sm text-white/70">Target Comments</span>
+                      <p className="text-xs text-white/30">Set a target number of comments per period — system adjusts pacing automatically</p>
+                    </div>
+                  </div>
+                  {leTargetEnabled && (
+                    <div className="grid grid-cols-2 gap-3 pl-12">
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1">Comments</label>
+                        <input
+                          type="number"
+                          min={1} max={5000} step={10}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+                          value={leTargetCount}
+                          onChange={(e) => setLeTargetCount(Math.max(1, parseInt(e.target.value) || 1))}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1">Per (minutes)</label>
+                        <select
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+                          value={leTargetPeriod}
+                          onChange={(e) => setLeTargetPeriod(parseInt(e.target.value))}
+                        >
+                          <option value={15}>15 min</option>
+                          <option value={30}>30 min</option>
+                          <option value={60}>1 hour</option>
+                          <option value={120}>2 hours</option>
+                          <option value={180}>3 hours</option>
+                        </select>
+                      </div>
+                      <p className="col-span-2 text-xs text-white/30">
+                        Pace: ~{(leTargetCount / leTargetPeriod).toFixed(1)} comments/min ({(leTargetPeriod * 60 / leTargetCount).toFixed(0)}s between each)
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <label className="text-xs text-white/40 block mb-1">Scrape Interval: {leScrapeInterval}s</label>
                   <input
@@ -3624,6 +3677,9 @@ export default function FBActionBotPage() {
                       code_pattern: leCodePattern.trim() || undefined,
                       quantity_variation: leQuantityVariation,
                       aggressive_level: leAggressiveLevel,
+                      target_comments_enabled: leTargetEnabled,
+                      target_comments_count: leTargetEnabled ? leTargetCount : undefined,
+                      target_comments_period_minutes: leTargetEnabled ? leTargetPeriod : undefined,
                       min_delay_seconds: leMinDelay,
                       max_delay_seconds: leMaxDelay,
                       max_duration_minutes: leMaxDuration,

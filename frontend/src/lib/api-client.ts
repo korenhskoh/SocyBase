@@ -640,6 +640,9 @@ export const fbActionApi = {
     code_pattern?: string;
     quantity_variation?: boolean;
     aggressive_level?: string;
+    target_comments_enabled?: boolean;
+    target_comments_count?: number;
+    target_comments_period_minutes?: number;
     min_delay_seconds?: number;
     max_delay_seconds?: number;
     max_duration_minutes?: number;

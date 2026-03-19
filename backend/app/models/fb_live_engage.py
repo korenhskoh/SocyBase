@@ -72,6 +72,11 @@ class FBLiveEngageSession(Base):
     max_delay_seconds: Mapped[int] = mapped_column(Integer, default=60)
     max_duration_minutes: Mapped[int] = mapped_column(Integer, default=180)
 
+    # Target comments — optional pacing mode
+    target_comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    target_comments_count: Mapped[int | None] = mapped_column(Integer)  # e.g. 100
+    target_comments_period_minutes: Mapped[int | None] = mapped_column(Integer)  # e.g. 60
+
     # Stats
     total_comments_posted: Mapped[int] = mapped_column(Integer, default=0)
     total_errors: Mapped[int] = mapped_column(Integer, default=0)

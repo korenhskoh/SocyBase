@@ -2360,6 +2360,9 @@ class LiveEngageStartRequest(BaseModel):
     min_delay_seconds: int = Field(default=15, ge=5, le=120)
     max_delay_seconds: int = Field(default=60, ge=10, le=300)
     max_duration_minutes: int = Field(default=180, ge=10, le=720)
+    target_comments_enabled: bool = False
+    target_comments_count: int | None = Field(default=None, ge=1, le=5000)
+    target_comments_period_minutes: int | None = Field(default=None, ge=5, le=720)
 
 
 @router.post("/live-engage/start")
@@ -2402,6 +2405,11 @@ async def live_engage_start(
         raise HTTPException(status_code=400, detail="Provide either login_batch_id or direct_accounts")
 
     batch_id = None
+    # Validate target comments
+    if req.target_comments_enabled:
+        if not req.target_comments_count or not req.target_comments_period_minutes:
+            raise HTTPException(status_code=400, detail="target_comments_count and target_comments_period_minutes required when target mode is enabled")
+
     direct_accounts_encrypted = None
 
     if req.login_batch_id:
@@ -2464,6 +2472,9 @@ async def live_engage_start(
         min_delay_seconds=req.min_delay_seconds,
         max_delay_seconds=req.max_delay_seconds,
         max_duration_minutes=req.max_duration_minutes,
+        target_comments_enabled=req.target_comments_enabled,
+        target_comments_count=req.target_comments_count,
+        target_comments_period_minutes=req.target_comments_period_minutes,
     )
     db.add(session)
     await db.commit()
