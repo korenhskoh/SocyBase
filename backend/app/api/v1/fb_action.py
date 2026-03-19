@@ -2329,11 +2329,24 @@ async def ai_plan_my_posts(
 # ═══════════════════════════════════════════════════════════════════════
 
 
+class LiveEngageDirectAccount(BaseModel):
+    cookies: str
+    email: str  # or phone number
+    token: str | None = None
+    twofa: str | None = None
+    proxy_host: str | None = None
+    proxy_port: str | None = None
+    proxy_username: str | None = None
+    proxy_password: str | None = None
+    user_agent: str | None = None
+
+
 class LiveEngageStartRequest(BaseModel):
     post_id: str
     post_url: str | None = None
     title: str | None = None
-    login_batch_id: str
+    login_batch_id: str | None = None  # from existing login batch
+    direct_accounts: list[LiveEngageDirectAccount] | None = None  # from CSV upload
     role_distribution: dict[str, int]
     business_context: str = ""
     training_comments: str | None = None
@@ -2341,6 +2354,9 @@ class LiveEngageStartRequest(BaseModel):
     page_owner_id: str | None = None
     scrape_interval_seconds: int = Field(default=8, ge=3, le=30)
     product_codes: str | None = None  # comma-separated seed codes e.g. "m763, E769"
+    code_pattern: str | None = None  # custom regex for product code detection
+    quantity_variation: bool = True  # add +N quantity to order comments
+    aggressive_level: str = "medium"  # low, medium, high
     min_delay_seconds: int = Field(default=15, ge=5, le=120)
     max_delay_seconds: int = Field(default=60, ge=10, le=300)
     max_duration_minutes: int = Field(default=180, ge=10, le=720)
@@ -2365,22 +2381,59 @@ async def live_engage_start(
     if total_pct != 100:
         raise HTTPException(status_code=400, detail=f"Role percentages must sum to 100, got {total_pct}")
 
+    # Validate aggressive level
+    if req.aggressive_level not in ("low", "medium", "high"):
+        raise HTTPException(status_code=400, detail="aggressive_level must be low, medium, or high")
+
+    # Validate code_pattern if provided
+    if req.code_pattern:
+        import re
+        try:
+            re.compile(req.code_pattern)
+        except re.error as e:
+            raise HTTPException(status_code=400, detail=f"Invalid code_pattern regex: {e}")
+
     # Validate delays
     if req.max_delay_seconds < req.min_delay_seconds:
         raise HTTPException(status_code=400, detail="max_delay must be >= min_delay")
 
-    # Verify login batch
-    batch_result = await db.execute(
-        select(FBLoginBatch).where(
-            FBLoginBatch.id == req.login_batch_id,
-            FBLoginBatch.tenant_id == user.tenant_id,
+    # Validate account source — must provide either login_batch_id or direct_accounts
+    if not req.login_batch_id and not req.direct_accounts:
+        raise HTTPException(status_code=400, detail="Provide either login_batch_id or direct_accounts")
+
+    batch_id = None
+    direct_accounts_encrypted = None
+
+    if req.login_batch_id:
+        # Verify login batch
+        batch_result = await db.execute(
+            select(FBLoginBatch).where(
+                FBLoginBatch.id == req.login_batch_id,
+                FBLoginBatch.tenant_id == user.tenant_id,
+            )
         )
-    )
-    batch = batch_result.scalar_one_or_none()
-    if not batch:
-        raise HTTPException(status_code=404, detail="Login batch not found")
-    if (batch.success_count or 0) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 successful login accounts")
+        batch = batch_result.scalar_one_or_none()
+        if not batch:
+            raise HTTPException(status_code=404, detail="Login batch not found")
+        if (batch.success_count or 0) < 2:
+            raise HTTPException(status_code=400, detail="Need at least 2 successful login accounts")
+        batch_id = batch.id
+
+    if req.direct_accounts:
+        if len(req.direct_accounts) < 2:
+            raise HTTPException(status_code=400, detail="Need at least 2 accounts")
+        if len(req.direct_accounts) > 200:
+            raise HTTPException(status_code=400, detail="Max 200 accounts per session")
+        # Validate all accounts have cookies
+        for i, acct in enumerate(req.direct_accounts):
+            if not acct.cookies.strip():
+                raise HTTPException(status_code=400, detail=f"Account {i + 1} ({acct.email}): cookies required")
+        # Encrypt and store
+        import json
+        from app.services.meta_api import MetaAPIService
+        meta = MetaAPIService()
+        accounts_json = json.dumps([a.model_dump() for a in req.direct_accounts])
+        direct_accounts_encrypted = meta.encrypt_token(accounts_json)
 
     # Resolve post_id from URL if provided
     post_id = req.post_id.strip()
@@ -2393,7 +2446,8 @@ async def live_engage_start(
     session = FBLiveEngageSession(
         tenant_id=user.tenant_id,
         user_id=user.id,
-        login_batch_id=batch.id,
+        login_batch_id=batch_id,
+        direct_accounts_encrypted=direct_accounts_encrypted,
         post_id=post_id,
         post_url=req.post_url,
         title=req.title,
@@ -2404,6 +2458,9 @@ async def live_engage_start(
         page_owner_id=req.page_owner_id,
         scrape_interval_seconds=req.scrape_interval_seconds,
         product_codes=req.product_codes,
+        code_pattern=req.code_pattern,
+        quantity_variation=req.quantity_variation,
+        aggressive_level=req.aggressive_level,
         min_delay_seconds=req.min_delay_seconds,
         max_delay_seconds=req.max_delay_seconds,
         max_duration_minutes=req.max_duration_minutes,
@@ -2424,6 +2481,96 @@ async def live_engage_start(
         "post_id": session.post_id,
         "active_accounts": 0,
         "celery_task_id": task.id,
+    }
+
+
+LIVE_ENGAGE_CSV_COLUMNS = ["cookies", "email", "token", "twofa", "proxy_host", "proxy_port", "proxy_username", "proxy_password", "user_agent"]
+
+
+@router.get("/live-engage/accounts-template")
+async def live_engage_accounts_template():
+    """Download CSV template for direct account upload."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(LIVE_ENGAGE_CSV_COLUMNS)
+    writer.writerow(["datr=abc;c_user=123;xs=xyz", "user@example.com", "", "", "", "", "", "", ""])
+    writer.writerow(["datr=def;c_user=456;xs=uvw", "user2@example.com", "EAABx...", "JBSWY3DP", "proxy.host.com", "8080", "proxyuser", "proxypass", "Mozilla/5.0..."])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=live_engage_accounts_template.csv"},
+    )
+
+
+@router.post("/live-engage/parse-accounts-csv")
+async def live_engage_parse_accounts_csv(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """Parse uploaded CSV and return validated accounts as JSON (not stored yet).
+
+    Frontend sends these back in the start request as direct_accounts.
+    """
+    import csv
+    import io
+
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a .csv")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = content.decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV file is empty")
+
+    fields_lower = {f.strip().lower() for f in reader.fieldnames}
+    if "cookies" not in fields_lower:
+        raise HTTPException(status_code=400, detail="CSV must have a 'cookies' column")
+    if "email" not in fields_lower:
+        raise HTTPException(status_code=400, detail="CSV must have an 'email' column")
+
+    accounts = []
+    errors = []
+    for i, raw_row in enumerate(reader, start=2):
+        row = {k.strip().lower(): (v or "").strip() for k, v in raw_row.items() if k}
+        if not row.get("cookies"):
+            errors.append(f"Row {i}: missing cookies")
+            continue
+        if not row.get("email"):
+            errors.append(f"Row {i}: missing email")
+            continue
+        accounts.append({
+            "cookies": row["cookies"],
+            "email": row["email"],
+            "token": row.get("token") or None,
+            "twofa": row.get("twofa") or row.get("2fa") or row.get("2fa_secret") or None,
+            "proxy_host": row.get("proxy_host") or None,
+            "proxy_port": row.get("proxy_port") or None,
+            "proxy_username": row.get("proxy_username") or None,
+            "proxy_password": row.get("proxy_password") or None,
+            "user_agent": row.get("user_agent") or None,
+        })
+
+    if not accounts:
+        raise HTTPException(status_code=400, detail=f"No valid accounts found. {'; '.join(errors[:5])}")
+    if len(accounts) > 200:
+        raise HTTPException(status_code=400, detail=f"Too many accounts ({len(accounts)}). Max 200.")
+
+    return {
+        "accounts": accounts,
+        "total": len(accounts),
+        "errors": errors[:10],
     }
 
 

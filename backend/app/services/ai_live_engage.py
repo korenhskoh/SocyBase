@@ -81,6 +81,7 @@ class AILiveEngageService:
         reference_comment: str | None = None,
         posted_history: list[str] | None = None,
         detected_codes: list[str] | None = None,
+        quantity_variation: bool = True,
     ) -> str:
         """Generate a single livestream comment for the given role.
 
@@ -90,9 +91,12 @@ class AILiveEngageService:
         Args:
             posted_history: List of our recently posted comments (last ~15) so
                 AI can avoid repeating similar content.
+            quantity_variation: If True, add +N quantity to product code orders.
         """
         if role == "place_order":
-            return self._generate_order_comment(recent_comments, posted_history, detected_codes)
+            return self._generate_order_comment(
+                recent_comments, posted_history, detected_codes, quantity_variation,
+            )
 
         return await self._generate_ai_comment(
             role, recent_comments, business_context, training_comments, ai_instructions,
@@ -104,6 +108,7 @@ class AILiveEngageService:
         recent_comments: list[dict],
         posted_history: list[str] | None = None,
         detected_codes: list[str] | None = None,
+        quantity_variation: bool = True,
     ) -> str:
         """Generate a place-order comment.
 
@@ -114,7 +119,7 @@ class AILiveEngageService:
         if detected_codes and random.random() < 0.8:
             code = random.choice(detected_codes)
             roll = random.random()
-            if roll < 0.3:
+            if quantity_variation and roll < 0.3:
                 qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
                 return f"{code} +{qty}"
             elif roll < 0.5:

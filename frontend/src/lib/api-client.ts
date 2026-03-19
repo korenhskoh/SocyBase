@@ -618,7 +618,18 @@ export const fbActionApi = {
     post_id: string;
     post_url?: string;
     title?: string;
-    login_batch_id: string;
+    login_batch_id?: string;
+    direct_accounts?: Array<{
+      cookies: string;
+      email: string;
+      token?: string;
+      twofa?: string;
+      proxy_host?: string;
+      proxy_port?: string;
+      proxy_username?: string;
+      proxy_password?: string;
+      user_agent?: string;
+    }>;
     role_distribution: Record<string, number>;
     business_context?: string;
     training_comments?: string;
@@ -626,10 +637,22 @@ export const fbActionApi = {
     page_owner_id?: string;
     scrape_interval_seconds?: number;
     product_codes?: string;
+    code_pattern?: string;
+    quantity_variation?: boolean;
+    aggressive_level?: string;
     min_delay_seconds?: number;
     max_delay_seconds?: number;
     max_duration_minutes?: number;
   }) => api.post("/fb-action/live-engage/start", data),
+  liveEngageParseAccountsCsv: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return api.post("/fb-action/live-engage/parse-accounts-csv", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+  liveEngageAccountsTemplate: () =>
+    api.get("/fb-action/live-engage/accounts-template", { responseType: "blob" }),
   liveEngageStatus: (sessionId: string) =>
     api.get(`/fb-action/live-engage/${sessionId}`),
   liveEngageStop: (sessionId: string) =>

@@ -33,12 +33,19 @@ class AdaptiveState:
     velocity_cpm: float = 0.0
     code_ratio: float = 0.0
     last_recalc: float = 0.0
+    code_re: re.Pattern = field(default_factory=lambda: PRODUCT_CODE_RE)
+    quantity_variation: bool = True
+    aggressive_level: str = "medium"
 
 
-def _extract_product_codes(message: str) -> list[str]:
+def _extract_product_codes(message: str, code_re: re.Pattern | None = None) -> list[str]:
     """Extract product code patterns from a comment message."""
-    matches = PRODUCT_CODE_RE.findall(message)
-    return [m[0] for m in matches]
+    pattern = code_re or PRODUCT_CODE_RE
+    matches = pattern.findall(message)
+    # findall returns tuples when there are groups; grab the first group (the code itself)
+    if matches and isinstance(matches[0], tuple):
+        return [m[0] for m in matches]
+    return list(matches)
 
 
 def _recalculate_adaptive(adaptive: AdaptiveState, window_seconds: int = 60):
@@ -113,46 +120,64 @@ async def _execute_engagement(session_id: str):
                 "tenant_id": session.tenant_id,
                 "user_id": session.user_id,
                 "product_codes": session.product_codes or "",
+                "code_pattern": session.code_pattern or "",
+                "quantity_variation": session.quantity_variation if session.quantity_variation is not None else True,
+                "aggressive_level": session.aggressive_level or "medium",
+                "direct_accounts_encrypted": session.direct_accounts_encrypted or "",
             }
 
-        # ── Load accounts from login batch ───────────────────
-        async with SessionLocal() as db:
-            result = await db.execute(
-                select(FBLoginResult).where(
-                    FBLoginResult.login_batch_id == config["login_batch_id"],
-                    FBLoginResult.status == "success",
-                )
-            )
-            login_results = result.scalars().all()
+        # ── Load accounts ─────────────────────────────────────
+        account_pool = []
 
-        if not login_results:
+        if config["direct_accounts_encrypted"]:
+            # Source 1: Direct accounts from CSV upload
+            try:
+                import json as _json
+                decrypted = meta.decrypt_token(config["direct_accounts_encrypted"])
+                direct_accounts = _json.loads(decrypted)
+                for acct in direct_accounts:
+                    proxy = None
+                    if acct.get("proxy_host"):
+                        proxy = {
+                            "host": acct["proxy_host"],
+                            "port": acct.get("proxy_port", ""),
+                            "username": acct.get("proxy_username", ""),
+                            "password": acct.get("proxy_password", ""),
+                        }
+                    account_pool.append({
+                        "email": acct.get("email", ""),
+                        "cookie": acct.get("cookies", ""),
+                        "user_agent": acct.get("user_agent", ""),
+                        "proxy": proxy,
+                    })
+            except Exception as exc:
+                logger.warning(f"[LiveEngage] Failed to load direct accounts: {exc}")
+
+        if not account_pool and config.get("login_batch_id"):
+            # Source 2: Login batch accounts (fallback)
             async with SessionLocal() as db:
                 result = await db.execute(
-                    select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
+                    select(FBLoginResult).where(
+                        FBLoginResult.login_batch_id == config["login_batch_id"],
+                        FBLoginResult.status == "success",
+                    )
                 )
-                s = result.scalar_one()
-                s.status = "failed"
-                s.error_message = "No successful login accounts found in the selected batch"
-                s.ended_at = datetime.now(timezone.utc)
-                await db.commit()
-            return
+                login_results = result.scalars().all()
 
-        # Decrypt cookies and build account pool
-        account_pool = []
-        for lr in login_results:
-            try:
-                cookie = meta.decrypt_token(lr.cookie_encrypted) if lr.cookie_encrypted else ""
-                proxy = None
-                if lr.proxy_used and isinstance(lr.proxy_used, dict) and lr.proxy_used.get("host"):
-                    proxy = lr.proxy_used
-                account_pool.append({
-                    "email": lr.email,
-                    "cookie": cookie,
-                    "user_agent": lr.user_agent or "",
-                    "proxy": proxy,
-                })
-            except Exception as exc:
-                logger.warning(f"[LiveEngage] Failed to decrypt cookie for {lr.email}: {exc}")
+            for lr in login_results:
+                try:
+                    cookie = meta.decrypt_token(lr.cookie_encrypted) if lr.cookie_encrypted else ""
+                    proxy = None
+                    if lr.proxy_used and isinstance(lr.proxy_used, dict) and lr.proxy_used.get("host"):
+                        proxy = lr.proxy_used
+                    account_pool.append({
+                        "email": lr.email,
+                        "cookie": cookie,
+                        "user_agent": lr.user_agent or "",
+                        "proxy": proxy,
+                    })
+                except Exception as exc:
+                    logger.warning(f"[LiveEngage] Failed to decrypt cookie for {lr.email}: {exc}")
 
         if not account_pool:
             async with SessionLocal() as db:
@@ -161,7 +186,7 @@ async def _execute_engagement(session_id: str):
                 )
                 s = result.scalar_one()
                 s.status = "failed"
-                s.error_message = "Failed to decrypt any account cookies"
+                s.error_message = "No accounts available — provide direct accounts or a login batch with successful logins"
                 s.ended_at = datetime.now(timezone.utc)
                 await db.commit()
             return
@@ -186,7 +211,19 @@ async def _execute_engagement(session_id: str):
         stop_event = asyncio.Event()
         new_comments_event = asyncio.Event()  # Signalled when fresh comments arrive
         last_seen_count = [0]  # Mutable counter for engage loop to track what it has processed
-        adaptive = AdaptiveState()
+        adaptive = AdaptiveState(
+            quantity_variation=config.get("quantity_variation", True),
+            aggressive_level=config.get("aggressive_level", "medium"),
+        )
+
+        # Compile custom code pattern regex if provided
+        custom_pattern = config.get("code_pattern", "") or ""
+        if custom_pattern:
+            try:
+                adaptive.code_re = re.compile(custom_pattern)
+                logger.info(f"[LiveEngage] Using custom code pattern: {custom_pattern}")
+            except re.error as e:
+                logger.warning(f"[LiveEngage] Invalid code_pattern '{custom_pattern}': {e}, using default")
 
         # Seed product codes from user config
         seed_codes_str = config.get("product_codes", "") or ""
@@ -347,7 +384,7 @@ async def _monitor_loop(
                 # ── Product code detection ──
                 now_ts = monotonic()
                 adaptive.comment_timestamps.append(now_ts)
-                codes_in_msg = _extract_product_codes(message)
+                codes_in_msg = _extract_product_codes(message, adaptive.code_re)
                 if codes_in_msg:
                     adaptive.code_comment_timestamps.append(now_ts)
                     known_upper = {c.upper() for c in adaptive.detected_codes}
@@ -427,7 +464,11 @@ async def _engage_loop(
             # We wait until the monitor signals fresh viewer comments,
             # then clear the event so we wait again next round.
             try:
-                await asyncio.wait_for(new_comments_event.wait(), timeout=30)
+                # Aggressive level affects wait timeout: high=10s, medium=30s, low=60s
+                wait_timeout = {"low": 60, "medium": 30, "high": 10}.get(
+                    adaptive.aggressive_level, 30
+                )
+                await asyncio.wait_for(new_comments_event.wait(), timeout=wait_timeout)
             except asyncio.TimeoutError:
                 # No new comments in 30s — loop back to check stop/duration
                 continue
@@ -507,6 +548,7 @@ async def _engage_loop(
                     reference_comment=reference_comment,
                     posted_history=posted_history,
                     detected_codes=adaptive.detected_codes,
+                    quantity_variation=adaptive.quantity_variation,
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] AI generation error: {exc}")
@@ -578,13 +620,21 @@ async def _engage_loop(
         except Exception as exc:
             logger.warning(f"[LiveEngage] Engage loop error: {exc}")
 
-        # ── Adaptive delay ──
+        # ── Adaptive delay with aggressive level ──
         base_min = config["min_delay"]
         base_max = config["max_delay"]
+
+        # Aggressive level multiplier: low=1.5x slower, medium=1x, high=0.4x faster
+        aggro_multiplier = {"low": 1.5, "medium": 1.0, "high": 0.4}.get(
+            adaptive.aggressive_level, 1.0
+        )
+        base_min *= aggro_multiplier
+        base_max *= aggro_multiplier
+
         if adaptive.velocity_cpm > 5:
             speed_factor = max(0.3, 1.0 - (adaptive.velocity_cpm - 5) / 100)
-            adj_min = max(5, base_min * speed_factor)
-            adj_max = max(adj_min + 5, base_max * speed_factor)
+            adj_min = max(3, base_min * speed_factor)
+            adj_max = max(adj_min + 3, base_max * speed_factor)
         else:
             adj_min = base_min
             adj_max = base_max

@@ -260,6 +260,8 @@ export default function FBActionBotPage() {
   const [lePostId, setLePostId] = useState("");
   const [leTitle, setLeTitle] = useState("");
   const [leLoginBatchId, setLeLoginBatchId] = useState("");
+  const [leAccountSource, setLeAccountSource] = useState<"batch" | "csv">("batch");
+  const [leDirectAccounts, setLeDirectAccounts] = useState<any[]>([]);
   const [leRoles, setLeRoles] = useState<Record<string, number>>({
     ask_question: 10, place_order: 10, repeat_question: 20,
     good_vibe: 30, react_comment: 15, share_experience: 15,
@@ -270,6 +272,9 @@ export default function FBActionBotPage() {
   const [leScrapeInterval, setLeScrapeInterval] = useState(8);
   const [lePageOwnerId, setLePageOwnerId] = useState("");
   const [leProductCodes, setLeProductCodes] = useState("");
+  const [leCodePattern, setLeCodePattern] = useState("");
+  const [leQuantityVariation, setLeQuantityVariation] = useState(true);
+  const [leAggressiveLevel, setLeAggressiveLevel] = useState<"low" | "medium" | "high">("medium");
   const [leMinDelay, setLeMinDelay] = useState(15);
   const [leMaxDelay, setLeMaxDelay] = useState(60);
   const [leMaxDuration, setLeMaxDuration] = useState(180);
@@ -3284,23 +3289,108 @@ export default function FBActionBotPage() {
 
               {/* Accounts */}
               <div className="glass-card p-5 space-y-3">
-                <h3 className="text-sm font-medium text-white/60">Accounts</h3>
-                <div>
-                  <label className="text-xs text-white/40 block mb-1">Login Batch</label>
-                  <select
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
-                    value={leLoginBatchId}
-                    onChange={(e) => setLeLoginBatchId(e.target.value)}
-                  >
-                    <option value="">Select a login batch...</option>
-                    {loginBatchOptions.map((b: any) => (
-                      <option key={b.id} value={b.id}>
-                        {b.success_count} accounts — {b.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-white/30 mt-1">Comments are monitored via AKNG API — all accounts are used for posting</p>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-white/60">Accounts</h3>
+                  <div className="flex bg-white/5 rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => { setLeAccountSource("batch"); setLeDirectAccounts([]); }}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                        leAccountSource === "batch" ? "bg-white/15 text-white" : "text-white/40 hover:text-white/60"
+                      }`}
+                    >Login Batch</button>
+                    <button
+                      type="button"
+                      onClick={() => { setLeAccountSource("csv"); setLeLoginBatchId(""); }}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                        leAccountSource === "csv" ? "bg-white/15 text-white" : "text-white/40 hover:text-white/60"
+                      }`}
+                    >Upload CSV</button>
+                  </div>
                 </div>
+
+                {leAccountSource === "batch" ? (
+                  <div>
+                    <label className="text-xs text-white/40 block mb-1">Login Batch</label>
+                    <select
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+                      value={leLoginBatchId}
+                      onChange={(e) => setLeLoginBatchId(e.target.value)}
+                    >
+                      <option value="">Select a login batch...</option>
+                      {loginBatchOptions.map((b: any) => (
+                        <option key={b.id} value={b.id}>
+                          {b.success_count} accounts — {b.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-white/30 mt-1">Use accounts from an existing login batch</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <label
+                        className="flex-1 flex items-center justify-center gap-2 bg-white/5 border border-dashed border-white/20 rounded-lg px-4 py-3 cursor-pointer hover:bg-white/10 transition-all"
+                      >
+                        <svg className="w-4 h-4 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                        <span className="text-xs text-white/40">
+                          {leDirectAccounts.length > 0
+                            ? `${leDirectAccounts.length} accounts loaded`
+                            : "Upload accounts CSV (cookies, email, proxy...)"}
+                        </span>
+                        <input
+                          type="file"
+                          accept=".csv"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            try {
+                              const res = await fbActionApi.liveEngageParseAccountsCsv(file);
+                              setLeDirectAccounts(res.data.accounts);
+                              if (res.data.errors?.length) {
+                                showToast("success", `${res.data.total} accounts loaded, ${res.data.errors.length} rows skipped`);
+                              } else {
+                                showToast("success", `${res.data.total} accounts loaded`);
+                              }
+                            } catch (err: any) {
+                              showToast("error", err.response?.data?.detail || "Failed to parse CSV");
+                            }
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const res = await fbActionApi.liveEngageAccountsTemplate();
+                            const url = window.URL.createObjectURL(new Blob([res.data]));
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = "live_engage_accounts_template.csv";
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                          } catch { showToast("error", "Failed to download template"); }
+                        }}
+                        className="px-3 py-3 bg-white/5 border border-white/10 rounded-lg text-xs text-white/40 hover:bg-white/10 transition-all whitespace-nowrap"
+                      >
+                        Template
+                      </button>
+                    </div>
+                    {leDirectAccounts.length > 0 && (
+                      <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                        <span className="text-xs text-emerald-300">{leDirectAccounts.length} accounts ready</span>
+                        <button
+                          type="button"
+                          onClick={() => setLeDirectAccounts([])}
+                          className="text-xs text-white/30 hover:text-red-300"
+                        >Clear</button>
+                      </div>
+                    )}
+                    <p className="text-xs text-white/30">CSV columns: cookies (required), email (required), token, twofa, proxy_host, proxy_port, proxy_username, proxy_password, user_agent</p>
+                  </div>
+                )}
               </div>
 
               {/* Role Distribution */}
@@ -3391,11 +3481,76 @@ export default function FBActionBotPage() {
                   />
                   <p className="text-xs text-white/30 mt-1">Comma-separated. Bot also auto-detects codes from real viewer comments.</p>
                 </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Code Pattern (regex, optional)</label>
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-white/20 focus:outline-none focus:border-white/20"
+                    placeholder="e.g. [a-zA-Z]{1,3}\d{2,5}"
+                    value={leCodePattern}
+                    onChange={(e) => setLeCodePattern(e.target.value)}
+                  />
+                  <p className="text-xs text-white/30 mt-1">Custom regex to detect product codes. Default: 1-3 letters + 2-5 digits (m763, AB12).</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={leQuantityVariation}
+                      onChange={(e) => setLeQuantityVariation(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-white/10 rounded-full peer peer-checked:bg-amber-500/60 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  </label>
+                  <div>
+                    <span className="text-sm text-white/70">Quantity Variation</span>
+                    <p className="text-xs text-white/30">Add +1, +2, +3 to order comments (e.g. &quot;m763 +2&quot;)</p>
+                  </div>
+                </div>
               </div>
 
-              {/* Timing */}
+              {/* Aggressive Level & Timing */}
               <div className="glass-card p-5 space-y-3">
-                <h3 className="text-sm font-medium text-white/60">Timing</h3>
+                <h3 className="text-sm font-medium text-white/60">Speed & Timing</h3>
+
+                {/* Aggressive Level */}
+                <div>
+                  <label className="text-xs text-white/40 block mb-2">Aggressive Level</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["low", "medium", "high"] as const).map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => {
+                          setLeAggressiveLevel(level);
+                          if (level === "low") {
+                            setLeScrapeInterval(12); setLeMinDelay(30); setLeMaxDelay(90);
+                          } else if (level === "medium") {
+                            setLeScrapeInterval(8); setLeMinDelay(15); setLeMaxDelay(60);
+                          } else {
+                            setLeScrapeInterval(4); setLeMinDelay(5); setLeMaxDelay(20);
+                          }
+                        }}
+                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                          leAggressiveLevel === level
+                            ? level === "high"
+                              ? "bg-red-500/30 border border-red-400/50 text-red-300"
+                              : level === "medium"
+                                ? "bg-amber-500/30 border border-amber-400/50 text-amber-300"
+                                : "bg-emerald-500/30 border border-emerald-400/50 text-emerald-300"
+                            : "bg-white/5 border border-white/10 text-white/40 hover:bg-white/10"
+                        }`}
+                      >
+                        {level === "low" ? "Low — Careful" : level === "medium" ? "Medium — Balanced" : "High — Aggressive"}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-white/30 mt-1">
+                    {leAggressiveLevel === "low" && "Longer delays, slower pace — safer for smaller streams"}
+                    {leAggressiveLevel === "medium" && "Balanced speed — good for most livestreams"}
+                    {leAggressiveLevel === "high" && "Short delays, fast commenting — for high-traffic streams"}
+                  </p>
+                </div>
+
                 <div>
                   <label className="text-xs text-white/40 block mb-1">Scrape Interval: {leScrapeInterval}s</label>
                   <input
@@ -3444,7 +3599,7 @@ export default function FBActionBotPage() {
 
               {/* Start Button */}
               <button
-                disabled={leStarting || !lePostId.trim() || !leLoginBatchId || Object.values(leRoles).reduce((a, b) => a + b, 0) !== 100}
+                disabled={leStarting || !lePostId.trim() || (leAccountSource === "batch" ? !leLoginBatchId : leDirectAccounts.length < 2) || Object.values(leRoles).reduce((a, b) => a + b, 0) !== 100}
                 onClick={async () => {
                   setLeStarting(true);
                   try {
@@ -3458,13 +3613,17 @@ export default function FBActionBotPage() {
                       post_url: lePostUrl.trim() || undefined,
                       title: leTitle.trim() || undefined,
                       page_owner_id: lePageOwnerId.trim() || undefined,
-                      login_batch_id: leLoginBatchId,
+                      login_batch_id: leAccountSource === "batch" ? leLoginBatchId : undefined,
+                      direct_accounts: leAccountSource === "csv" ? leDirectAccounts : undefined,
                       role_distribution: leRoles,
                       business_context: leContext,
                       training_comments: leTrainingComments || undefined,
                       ai_instructions: leInstructions || undefined,
                       scrape_interval_seconds: leScrapeInterval,
                       product_codes: leProductCodes.trim() || undefined,
+                      code_pattern: leCodePattern.trim() || undefined,
+                      quantity_variation: leQuantityVariation,
+                      aggressive_level: leAggressiveLevel,
                       min_delay_seconds: leMinDelay,
                       max_delay_seconds: leMaxDelay,
                       max_duration_minutes: leMaxDuration,

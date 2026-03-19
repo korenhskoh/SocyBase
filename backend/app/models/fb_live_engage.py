@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,9 +34,12 @@ class FBLiveEngageSession(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    login_batch_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("fb_login_batches.id"), nullable=False
+    login_batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("fb_login_batches.id"), nullable=True
     )
+
+    # Direct accounts — encrypted JSON array of {cookies, email, token, proxy, user_agent}
+    direct_accounts_encrypted: Mapped[str | None] = mapped_column(Text)
 
     # Target — user provides URL or post_id
     post_id: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -56,11 +59,14 @@ class FBLiveEngageSession(Base):
     training_comments: Mapped[str | None] = mapped_column(Text)
     ai_instructions: Mapped[str] = mapped_column(Text, default="")
     product_codes: Mapped[str | None] = mapped_column(Text)  # comma-separated seed codes e.g. "m763, E769"
+    code_pattern: Mapped[str | None] = mapped_column(String(500))  # custom regex for product code detection
+    quantity_variation: Mapped[bool] = mapped_column(Boolean, default=True)  # add +N to order comments
 
     # Page owner — comments from this ID are ignored (livestream host)
     page_owner_id: Mapped[str | None] = mapped_column(String(100))
 
-    # Timing
+    # Timing & aggression
+    aggressive_level: Mapped[str] = mapped_column(String(10), default="medium")  # low, medium, high
     scrape_interval_seconds: Mapped[int] = mapped_column(Integer, default=8)
     min_delay_seconds: Mapped[int] = mapped_column(Integer, default=15)
     max_delay_seconds: Mapped[int] = mapped_column(Integer, default=60)
