@@ -1,4 +1,5 @@
 import re
+from urllib.parse import quote
 import httpx
 from app.scraping.clients.base import AbstractSocialClient
 from app.config import get_settings
@@ -24,6 +25,31 @@ class FacebookGraphClient(AbstractSocialClient):
         self.action_token = settings.akng_action_token
         self.api_version = settings.akng_api_version
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0))
+
+    @staticmethod
+    def _encode_cookie(cookie: str) -> str:
+        """URL-encode cookie values so AKNG can parse them correctly.
+
+        Converts: c_user=123;xs=28:abc:2:...; → c_user=123; xs=28%3Aabc%3A2%3A...;
+        Only encodes the VALUE portion of each key=value pair.
+        """
+        if not cookie or "%3A" in cookie:
+            # Already encoded or empty
+            return cookie
+
+        parts = []
+        for pair in cookie.split(";"):
+            pair = pair.strip()
+            if not pair:
+                continue
+            if "=" in pair:
+                key, value = pair.split("=", 1)
+                # URL-encode special chars in the value (colons, slashes, etc.)
+                encoded_value = quote(value, safe="")
+                parts.append(f"{key.strip()}={encoded_value}")
+            else:
+                parts.append(pair)
+        return "; ".join(parts)
 
     async def close(self):
         await self.client.aclose()
@@ -370,9 +396,12 @@ class FacebookGraphClient(AbstractSocialClient):
                 "password": proxy.get("password", ""),
             }
 
+        # URL-encode cookie values — AKNG expects xs=28%3Apo85...  not xs=28:po85...
+        encoded_cookie = self._encode_cookie(cookie)
+
         payload = {
             "account": {
-                "cookie": cookie,
+                "cookie": encoded_cookie,
                 "ua": user_agent or "",
                 "code2fa": "",
             },
