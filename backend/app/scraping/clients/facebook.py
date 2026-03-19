@@ -376,12 +376,13 @@ class FacebookGraphClient(AbstractSocialClient):
                 "ua": user_agent or "",
                 "code2fa": "",
             },
-            "proxy": proxy_payload,
             "action": {
                 "name": action_name,
                 "params": params,
             },
         }
+        if proxy_payload:
+            payload["proxy"] = proxy_payload
 
         response = await self.client.post(
             action_url,
