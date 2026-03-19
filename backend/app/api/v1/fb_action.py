@@ -2872,8 +2872,8 @@ async def live_engage_stop(
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.status != "running":
-        raise HTTPException(status_code=400, detail=f"Session is not running (status: {session.status})")
+    if session.status in ("stopped", "completed", "failed"):
+        raise HTTPException(status_code=400, detail=f"Session already ended (status: {session.status})")
 
     session.status = "stopped"
     session.ended_at = datetime.now(timezone.utc)

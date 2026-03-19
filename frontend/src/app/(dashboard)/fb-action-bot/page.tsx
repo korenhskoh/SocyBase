@@ -3930,7 +3930,7 @@ export default function FBActionBotPage() {
                             showToast("success", "Engagement stopped");
                             setLiveEngageSession((prev: any) => prev ? { ...prev, status: "stopped" } : prev);
                             if (lePollRef.current) clearInterval(lePollRef.current);
-                          } catch { showToast("error", "Failed to stop"); }
+                          } catch (err: any) { showToast("error", err.response?.data?.detail || "Failed to stop"); }
                         }}
                         className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition"
                       >
@@ -3960,7 +3960,7 @@ export default function FBActionBotPage() {
                             showToast("success", "Engagement stopped");
                             setLiveEngageSession((prev: any) => prev ? { ...prev, status: "stopped" } : prev);
                             if (lePollRef.current) clearInterval(lePollRef.current);
-                          } catch { showToast("error", "Failed to stop"); }
+                          } catch (err: any) { showToast("error", err.response?.data?.detail || "Failed to stop"); }
                         }}
                         className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition"
                       >
