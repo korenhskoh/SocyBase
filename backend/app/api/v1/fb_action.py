@@ -20,7 +20,7 @@ from app.models.credit import CreditBalance, CreditTransaction
 from app.models.fb_action_batch import FBActionBatch
 from app.models.fb_action_log import FBActionLog
 from app.models.fb_cookie_session import FBCookieSession
-from app.models.fb_live_engage import FBLiveEngageSession, FBLiveEngageLog, VALID_ROLES
+from app.models.fb_live_engage import FBLiveEngageSession, FBLiveEngageLog, VALID_ROLES, DEFAULT_ROLE_DISTRIBUTION
 from app.models.user import User
 from app.scraping.clients.facebook import FacebookGraphClient
 from app.scraping.fb_action_tasks import VALID_ACTIONS
@@ -2481,7 +2481,7 @@ async def live_engage_start(
         target_comments_period_minutes=req.target_comments_period_minutes,
         blacklist_words=req.blacklist_words,
         stream_end_threshold=req.stream_end_threshold,
-        scheduled_at=datetime.fromisoformat(req.scheduled_at) if req.scheduled_at else None,
+        scheduled_at=datetime.fromisoformat(req.scheduled_at.replace("Z", "+00:00")) if req.scheduled_at else None,
     )
     db.add(session)
     await db.commit()

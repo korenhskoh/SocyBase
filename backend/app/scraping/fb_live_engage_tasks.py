@@ -568,7 +568,10 @@ async def _engage_loop(
             last_role = role
 
             # Pick account (cooldown-aware — skip recently used accounts)
-            now_mono = monotonic() if 'now_mono' not in dir() else now_mono
+            if not account_pool:
+                logger.error("[LiveEngage] No accounts remaining, stopping")
+                stop_event.set()
+                break
             account = None
             for attempt in range(len(account_pool)):
                 candidate = account_pool[(account_idx + attempt) % len(account_pool)]

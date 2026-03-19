@@ -45,5 +45,5 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_index('ix_fb_live_engage_presets_tenant')
+    op.drop_index('ix_fb_live_engage_presets_tenant', table_name='fb_live_engage_presets')
     op.drop_table('fb_live_engage_presets')
