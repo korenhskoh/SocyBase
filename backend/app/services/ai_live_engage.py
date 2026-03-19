@@ -96,6 +96,7 @@ class AILiveEngageService:
         if role == "place_order":
             return self._generate_order_comment(
                 recent_comments, posted_history, detected_codes, quantity_variation,
+                training_comments,
             )
 
         return await self._generate_ai_comment(
@@ -109,10 +110,11 @@ class AILiveEngageService:
         posted_history: list[str] | None = None,
         detected_codes: list[str] | None = None,
         quantity_variation: bool = True,
+        training_comments: str | None = None,
     ) -> str:
         """Generate a place-order comment.
 
-        Priority: detected product codes > real viewer patterns > static templates.
+        Priority: detected product codes > real viewer patterns > training comments > static templates.
         Filters out recently posted content to avoid repetition.
         """
         # ── Priority 1: Use detected product codes ~80% of the time ──
@@ -154,7 +156,17 @@ class AILiveEngageService:
                 seen.add(key)
                 unique_patterns.append(p)
 
-        candidates = unique_patterns if unique_patterns else list(ORDER_PATTERNS)
+        if unique_patterns:
+            candidates = unique_patterns
+        elif training_comments:
+            # ── Priority 3: Fall back to uploaded training/past comments ──
+            lines = [ln.strip() for ln in training_comments.strip().split("\n") if ln.strip()]
+            # Filter to short order-like lines (≤40 chars)
+            short_lines = [ln for ln in lines if len(ln) <= 40]
+            candidates = short_lines if short_lines else lines[:50]
+        else:
+            # ── Priority 4: Static templates as last resort ──
+            candidates = list(ORDER_PATTERNS)
 
         # Filter out recently posted to avoid repetition
         if posted_history:
