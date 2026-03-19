@@ -14,11 +14,23 @@ branch_labels = None
 depends_on = None
 
 
+def _col_exists(table, column):
+    conn = op.get_bind()
+    return conn.execute(sa.text(
+        f"SELECT EXISTS (SELECT FROM information_schema.columns "
+        f"WHERE table_name = '{table}' AND column_name = '{column}')"
+    )).scalar()
+
+
 def upgrade():
-    op.add_column('fb_live_engage_sessions', sa.Column('live_metrics', JSONB(), nullable=True))
-    op.add_column('fb_live_engage_sessions', sa.Column('scheduled_at', sa.DateTime(timezone=True), nullable=True))
-    op.add_column('fb_live_engage_sessions', sa.Column('blacklist_words', sa.Text(), nullable=True))
-    op.add_column('fb_live_engage_sessions', sa.Column('stream_end_threshold', sa.Integer(), nullable=True, server_default='10'))
+    if not _col_exists('fb_live_engage_sessions', 'live_metrics'):
+        op.add_column('fb_live_engage_sessions', sa.Column('live_metrics', JSONB(), nullable=True))
+    if not _col_exists('fb_live_engage_sessions', 'scheduled_at'):
+        op.add_column('fb_live_engage_sessions', sa.Column('scheduled_at', sa.DateTime(timezone=True), nullable=True))
+    if not _col_exists('fb_live_engage_sessions', 'blacklist_words'):
+        op.add_column('fb_live_engage_sessions', sa.Column('blacklist_words', sa.Text(), nullable=True))
+    if not _col_exists('fb_live_engage_sessions', 'stream_end_threshold'):
+        op.add_column('fb_live_engage_sessions', sa.Column('stream_end_threshold', sa.Integer(), nullable=True, server_default='10'))
 
 
 def downgrade():

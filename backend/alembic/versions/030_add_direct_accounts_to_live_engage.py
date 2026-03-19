@@ -14,8 +14,17 @@ branch_labels = None
 depends_on = None
 
 
+def _col_exists(table, column):
+    conn = op.get_bind()
+    return conn.execute(sa.text(
+        f"SELECT EXISTS (SELECT FROM information_schema.columns "
+        f"WHERE table_name = '{table}' AND column_name = '{column}')"
+    )).scalar()
+
+
 def upgrade():
-    op.add_column('fb_live_engage_sessions', sa.Column('direct_accounts_encrypted', sa.Text(), nullable=True))
+    if not _col_exists('fb_live_engage_sessions', 'direct_accounts_encrypted'):
+        op.add_column('fb_live_engage_sessions', sa.Column('direct_accounts_encrypted', sa.Text(), nullable=True))
     op.alter_column('fb_live_engage_sessions', 'login_batch_id', existing_type=UUID(as_uuid=True), nullable=True)
 
 

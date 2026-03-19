@@ -2646,94 +2646,6 @@ async def live_engage_history(
     }
 
 
-@router.get("/live-engage/{session_id}")
-async def live_engage_status(
-    session_id: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get livestream engagement session status with activity logs."""
-    result = await db.execute(
-        select(FBLiveEngageSession).where(
-            FBLiveEngageSession.id == session_id,
-            FBLiveEngageSession.tenant_id == user.tenant_id,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    # Fetch last 30 logs
-    logs_result = await db.execute(
-        select(FBLiveEngageLog)
-        .where(FBLiveEngageLog.session_id == session.id)
-        .order_by(FBLiveEngageLog.created_at.desc())
-        .limit(30)
-    )
-    logs = logs_result.scalars().all()
-
-    return {
-        "id": str(session.id),
-        "status": session.status,
-        "post_id": session.post_id,
-        "post_url": session.post_url,
-        "title": session.title,
-        "role_distribution": session.role_distribution,
-        "total_comments_posted": session.total_comments_posted,
-        "total_errors": session.total_errors,
-        "comments_by_role": session.comments_by_role,
-        "comments_monitored": session.comments_monitored,
-        "active_accounts": session.active_accounts,
-        "min_delay_seconds": session.min_delay_seconds,
-        "max_delay_seconds": session.max_delay_seconds,
-        "error_message": session.error_message,
-        "live_metrics": session.live_metrics,
-        "scheduled_at": session.scheduled_at.isoformat() if session.scheduled_at else None,
-        "started_at": session.started_at.isoformat() if session.started_at else None,
-        "ended_at": session.ended_at.isoformat() if session.ended_at else None,
-        "created_at": session.created_at.isoformat() if session.created_at else None,
-        "logs": [
-            {
-                "id": str(log.id),
-                "role": log.role,
-                "content": log.content,
-                "account_email": log.account_email,
-                "reference_comment": log.reference_comment,
-                "status": log.status,
-                "error_message": log.error_message,
-                "created_at": log.created_at.isoformat() if log.created_at else None,
-            }
-            for log in logs
-        ],
-    }
-
-
-@router.post("/live-engage/{session_id}/stop")
-async def live_engage_stop(
-    session_id: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Stop a running livestream engagement session."""
-    result = await db.execute(
-        select(FBLiveEngageSession).where(
-            FBLiveEngageSession.id == session_id,
-            FBLiveEngageSession.tenant_id == user.tenant_id,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session.status != "running":
-        raise HTTPException(status_code=400, detail=f"Session is not running (status: {session.status})")
-
-    session.status = "stopped"
-    session.ended_at = datetime.now(timezone.utc)
-    await db.commit()
-
-    return {"id": str(session.id), "status": "stopped"}
-
-
 @router.post("/live-engage/preview-comments")
 async def live_engage_preview_comments(
     req: LiveEngageStartRequest,
@@ -2747,7 +2659,6 @@ async def live_engage_preview_comments(
     roles = list(role_dist.keys())
     weights = [role_dist[r] for r in roles]
 
-    # Simulate recent comments for context
     mock_comments = [
         {"from_name": "Viewer", "message": "How much?", "from_id": "1"},
         {"from_name": "Buyer", "message": "+1 nak", "from_id": "2"},
@@ -2881,3 +2792,91 @@ async def live_engage_delete_preset(
     await db.delete(preset)
     await db.commit()
     return {"deleted": True}
+
+
+@router.get("/live-engage/{session_id}")
+async def live_engage_status(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get livestream engagement session status with activity logs."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Fetch last 30 logs
+    logs_result = await db.execute(
+        select(FBLiveEngageLog)
+        .where(FBLiveEngageLog.session_id == session.id)
+        .order_by(FBLiveEngageLog.created_at.desc())
+        .limit(30)
+    )
+    logs = logs_result.scalars().all()
+
+    return {
+        "id": str(session.id),
+        "status": session.status,
+        "post_id": session.post_id,
+        "post_url": session.post_url,
+        "title": session.title,
+        "role_distribution": session.role_distribution,
+        "total_comments_posted": session.total_comments_posted,
+        "total_errors": session.total_errors,
+        "comments_by_role": session.comments_by_role,
+        "comments_monitored": session.comments_monitored,
+        "active_accounts": session.active_accounts,
+        "min_delay_seconds": session.min_delay_seconds,
+        "max_delay_seconds": session.max_delay_seconds,
+        "error_message": session.error_message,
+        "live_metrics": session.live_metrics,
+        "scheduled_at": session.scheduled_at.isoformat() if session.scheduled_at else None,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "logs": [
+            {
+                "id": str(log.id),
+                "role": log.role,
+                "content": log.content,
+                "account_email": log.account_email,
+                "reference_comment": log.reference_comment,
+                "status": log.status,
+                "error_message": log.error_message,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in logs
+        ],
+    }
+
+
+@router.post("/live-engage/{session_id}/stop")
+async def live_engage_stop(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop a running livestream engagement session."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status != "running":
+        raise HTTPException(status_code=400, detail=f"Session is not running (status: {session.status})")
+
+    session.status = "stopped"
+    session.ended_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return {"id": str(session.id), "status": "stopped"}
