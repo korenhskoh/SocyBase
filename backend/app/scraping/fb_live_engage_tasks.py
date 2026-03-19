@@ -127,6 +127,8 @@ async def _execute_engagement(session_id: str):
                 "target_comments_enabled": bool(session.target_comments_enabled),
                 "target_comments_count": session.target_comments_count or 0,
                 "target_comments_period_minutes": session.target_comments_period_minutes or 60,
+                "blacklist_words": session.blacklist_words or "",
+                "stream_end_threshold": session.stream_end_threshold or 10,
             }
 
         # ── Load accounts ─────────────────────────────────────
@@ -300,6 +302,8 @@ async def _monitor_loop(
     post_id = config["post_id"]
     scrape_interval = config["scrape_interval"]
     page_owner_id = config.get("page_owner_id", "")
+    stream_end_threshold = config.get("stream_end_threshold", 10)
+    consecutive_empty_polls = 0
     iteration = 0
     after_cursor: str | None = None
 
@@ -409,6 +413,7 @@ async def _monitor_loop(
 
             # Signal engage loop that new viewer comments arrived
             if new_count > 0:
+                consecutive_empty_polls = 0
                 new_comments_event.set()
                 try:
                     async with SessionLocal() as db:
@@ -422,6 +427,16 @@ async def _monitor_loop(
                         await db.commit()
                 except Exception:
                     pass
+            else:
+                # Stream end detection — stop if too many consecutive empty polls
+                consecutive_empty_polls += 1
+                if consecutive_empty_polls >= stream_end_threshold:
+                    logger.info(
+                        f"[LiveEngage] Monitor: {consecutive_empty_polls} consecutive empty polls "
+                        f"(threshold={stream_end_threshold}), stream likely ended — stopping"
+                    )
+                    stop_event.set()
+                    break
 
         except Exception as exc:
             logger.warning(f"[LiveEngage] Monitor: unexpected error: {exc}")
@@ -452,6 +467,16 @@ async def _engage_loop(
     comments_posted_this_period = 0
     period_start = monotonic()
 
+    # Account health tracking — remove accounts after 3 consecutive errors
+    account_errors: dict[str, int] = {}  # email → consecutive error count
+    account_last_used: dict[str, float] = {}  # email → monotonic timestamp
+    account_cooldown_secs = max(30, len(account_pool) * 10)  # at least 30s, scales with pool size
+    consecutive_errors = 0  # auto-stop after 10 consecutive
+
+    # Blacklist words
+    blacklist_raw = config.get("blacklist_words", "")
+    blacklist_set = {w.strip().lower() for w in blacklist_raw.split(",") if w.strip()} if blacklist_raw else set()
+
     # Build role weights for random.choices
     base_role_dist = config["role_distribution"]
     roles = list(base_role_dist.keys())
@@ -460,6 +485,7 @@ async def _engage_loop(
     # Track posted comments for anti-repetition
     posted_history: list[str] = []  # Ordered list of our posted comment texts
     last_role: str | None = None     # Avoid picking the same role consecutively
+    metrics_update_counter = 0  # update live metrics every 5 comments
 
     while not stop_event.is_set():
         try:
@@ -541,15 +567,26 @@ async def _engage_loop(
                         break
             last_role = role
 
-            # Pick account (round-robin)
-            account = account_pool[account_idx % len(account_pool)]
-            account_idx += 1
+            # Pick account (cooldown-aware — skip recently used accounts)
+            now_mono = monotonic() if 'now_mono' not in dir() else now_mono
+            account = None
+            for attempt in range(len(account_pool)):
+                candidate = account_pool[(account_idx + attempt) % len(account_pool)]
+                email = candidate["email"]
+                last_used = account_last_used.get(email, 0)
+                if now_mono - last_used >= account_cooldown_secs or attempt == len(account_pool) - 1:
+                    account = candidate
+                    account_idx += attempt + 1
+                    break
+            if not account:
+                account = account_pool[account_idx % len(account_pool)]
+                account_idx += 1
+            account_last_used[account["email"]] = monotonic()
 
             # Generate comment
             reference_comment = None
             try:
                 if role in ("react_comment", "repeat_question") and recent_comments:
-                    # Pick from the most recent comments as reference
                     ref = random.choice(recent_comments[-10:]) if len(recent_comments) >= 3 else recent_comments[-1]
                     reference_comment = f"{ref.get('from_name', '')}: {ref.get('message', '')}"
 
@@ -569,6 +606,11 @@ async def _engage_loop(
                 content = None
 
             if not content:
+                continue
+
+            # Blacklist check — regenerate if content contains blacklisted words
+            if blacklist_set and any(w in content.lower() for w in blacklist_set):
+                logger.debug(f"[LiveEngage] Blacklisted word found, skipping: {content[:50]}")
                 continue
 
             # Track our content so monitor can skip it + AI can avoid repeating
@@ -593,6 +635,29 @@ async def _engage_loop(
             # Parse response
             success, error_msg = _parse_response(resp)
 
+            # Account health tracking
+            email = account["email"]
+            if success:
+                account_errors[email] = 0
+                consecutive_errors = 0
+            else:
+                account_errors[email] = account_errors.get(email, 0) + 1
+                consecutive_errors += 1
+
+                # Remove account after 3 consecutive errors
+                if account_errors[email] >= 3 and len(account_pool) > 1:
+                    account_pool[:] = [a for a in account_pool if a["email"] != email]
+                    logger.warning(
+                        f"[LiveEngage] Removed account {email[:20]}... "
+                        f"({account_errors[email]} consecutive errors, {len(account_pool)} remaining)"
+                    )
+
+                # Auto-stop on 10 consecutive errors across all accounts
+                if consecutive_errors >= 10:
+                    logger.warning(f"[LiveEngage] {consecutive_errors} consecutive errors — auto-stopping")
+                    stop_event.set()
+                    break
+
             # Log action
             try:
                 async with SessionLocal() as db:
@@ -600,7 +665,7 @@ async def _engage_loop(
                         session_id=uuid.UUID(session_id),
                         role=role,
                         content=content,
-                        account_email=account["email"],
+                        account_email=email,
                         reference_comment=reference_comment,
                         status="success" if success else "failed",
                         error_message=error_msg,
@@ -608,7 +673,7 @@ async def _engage_loop(
                     )
                     db.add(log)
 
-                    # Update session stats
+                    # Update session stats + live metrics
                     result = await db.execute(
                         select(FBLiveEngageSession).where(
                             FBLiveEngageSession.id == uuid.UUID(session_id)
@@ -622,6 +687,18 @@ async def _engage_loop(
                         s.comments_by_role = by_role
                     else:
                         s.total_errors += 1
+
+                    # Update live metrics every 5 comments
+                    metrics_update_counter += 1
+                    if metrics_update_counter % 5 == 0:
+                        s.live_metrics = {
+                            "velocity_cpm": round(adaptive.velocity_cpm, 1),
+                            "code_ratio": round(adaptive.code_ratio, 2),
+                            "detected_codes": adaptive.detected_codes[:20],
+                            "active_accounts": len(account_pool),
+                            "consecutive_errors": consecutive_errors,
+                        }
+                    s.active_accounts = len(account_pool)
                     await db.commit()
             except Exception as exc:
                 logger.warning(f"[LiveEngage] Failed to log action: {exc}")

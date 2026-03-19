@@ -58,24 +58,32 @@ class FBLiveEngageSession(Base):
     business_context: Mapped[str] = mapped_column(Text, default="")
     training_comments: Mapped[str | None] = mapped_column(Text)
     ai_instructions: Mapped[str] = mapped_column(Text, default="")
-    product_codes: Mapped[str | None] = mapped_column(Text)  # comma-separated seed codes e.g. "m763, E769"
-    code_pattern: Mapped[str | None] = mapped_column(String(500))  # custom regex for product code detection
-    quantity_variation: Mapped[bool] = mapped_column(Boolean, default=True)  # add +N to order comments
+    product_codes: Mapped[str | None] = mapped_column(Text)
+    code_pattern: Mapped[str | None] = mapped_column(String(500))
+    quantity_variation: Mapped[bool] = mapped_column(Boolean, default=True)
+    blacklist_words: Mapped[str | None] = mapped_column(Text)  # comma-separated words to avoid
 
     # Page owner — comments from this ID are ignored (livestream host)
     page_owner_id: Mapped[str | None] = mapped_column(String(100))
 
     # Timing & aggression
-    aggressive_level: Mapped[str] = mapped_column(String(10), default="medium")  # low, medium, high
+    aggressive_level: Mapped[str] = mapped_column(String(10), default="medium")
     scrape_interval_seconds: Mapped[int] = mapped_column(Integer, default=8)
     min_delay_seconds: Mapped[int] = mapped_column(Integer, default=15)
     max_delay_seconds: Mapped[int] = mapped_column(Integer, default=60)
     max_duration_minutes: Mapped[int] = mapped_column(Integer, default=180)
+    stream_end_threshold: Mapped[int] = mapped_column(Integer, default=10)  # consecutive empty polls to auto-stop
 
     # Target comments — optional pacing mode
     target_comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    target_comments_count: Mapped[int | None] = mapped_column(Integer)  # e.g. 100
-    target_comments_period_minutes: Mapped[int | None] = mapped_column(Integer)  # e.g. 60
+    target_comments_count: Mapped[int | None] = mapped_column(Integer)
+    target_comments_period_minutes: Mapped[int | None] = mapped_column(Integer)
+
+    # Scheduled start
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Live metrics (updated periodically by task)
+    live_metrics: Mapped[dict | None] = mapped_column(JSONB)
 
     # Stats
     total_comments_posted: Mapped[int] = mapped_column(Integer, default=0)
@@ -111,10 +119,47 @@ class FBLiveEngageLog(Base):
 
     reference_comment: Mapped[str | None] = mapped_column(Text)
 
-    status: Mapped[str] = mapped_column(String(20), nullable=False)  # success / failed / error
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
     response_data: Mapped[dict | None] = mapped_column(JSONB)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     session = relationship("FBLiveEngageSession", back_populates="logs")
+
+
+class FBLiveEngagePreset(Base):
+    """Saved session configuration template for quick reuse."""
+
+    __tablename__ = "fb_live_engage_presets"
+    __table_args__ = (
+        Index("ix_fb_live_engage_presets_tenant", "tenant_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    role_distribution: Mapped[dict | None] = mapped_column(JSONB)
+    business_context: Mapped[str] = mapped_column(Text, default="")
+    training_comments: Mapped[str | None] = mapped_column(Text)
+    ai_instructions: Mapped[str] = mapped_column(Text, default="")
+    product_codes: Mapped[str | None] = mapped_column(Text)
+    code_pattern: Mapped[str | None] = mapped_column(String(500))
+    quantity_variation: Mapped[bool] = mapped_column(Boolean, default=True)
+    aggressive_level: Mapped[str] = mapped_column(String(10), default="medium")
+    scrape_interval_seconds: Mapped[int] = mapped_column(Integer, default=8)
+    min_delay_seconds: Mapped[int] = mapped_column(Integer, default=15)
+    max_delay_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    max_duration_minutes: Mapped[int] = mapped_column(Integer, default=180)
+    target_comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    target_comments_count: Mapped[int | None] = mapped_column(Integer)
+    target_comments_period_minutes: Mapped[int | None] = mapped_column(Integer)
+    blacklist_words: Mapped[str | None] = mapped_column(Text)
+    stream_end_threshold: Mapped[int] = mapped_column(Integer, default=10)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

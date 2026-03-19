@@ -643,6 +643,9 @@ export const fbActionApi = {
     target_comments_enabled?: boolean;
     target_comments_count?: number;
     target_comments_period_minutes?: number;
+    blacklist_words?: string;
+    stream_end_threshold?: number;
+    scheduled_at?: string;
     min_delay_seconds?: number;
     max_delay_seconds?: number;
     max_duration_minutes?: number;
@@ -656,6 +659,14 @@ export const fbActionApi = {
   },
   liveEngageAccountsTemplate: () =>
     api.get("/fb-action/live-engage/accounts-template", { responseType: "blob" }),
+  liveEngagePreview: (data: Record<string, unknown>) =>
+    api.post("/fb-action/live-engage/preview-comments", data),
+  liveEngagePresets: () =>
+    api.get("/fb-action/live-engage/presets"),
+  liveEngageSavePreset: (data: Record<string, unknown>) =>
+    api.post("/fb-action/live-engage/presets", data),
+  liveEngageDeletePreset: (presetId: string) =>
+    api.delete(`/fb-action/live-engage/presets/${presetId}`),
   liveEngageStatus: (sessionId: string) =>
     api.get(`/fb-action/live-engage/${sessionId}`),
   liveEngageStop: (sessionId: string) =>

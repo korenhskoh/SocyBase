@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import logging
+import random
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -2363,6 +2364,9 @@ class LiveEngageStartRequest(BaseModel):
     target_comments_enabled: bool = False
     target_comments_count: int | None = Field(default=None, ge=1, le=5000)
     target_comments_period_minutes: int | None = Field(default=None, ge=5, le=720)
+    blacklist_words: str | None = None  # comma-separated words to avoid
+    stream_end_threshold: int = Field(default=10, ge=3, le=50)
+    scheduled_at: str | None = None  # ISO datetime for scheduled start
 
 
 @router.post("/live-engage/start")
@@ -2475,14 +2479,21 @@ async def live_engage_start(
         target_comments_enabled=req.target_comments_enabled,
         target_comments_count=req.target_comments_count,
         target_comments_period_minutes=req.target_comments_period_minutes,
+        blacklist_words=req.blacklist_words,
+        stream_end_threshold=req.stream_end_threshold,
+        scheduled_at=datetime.fromisoformat(req.scheduled_at) if req.scheduled_at else None,
     )
     db.add(session)
     await db.commit()
     await db.refresh(session)
 
-    # Dispatch Celery task
+    # Dispatch Celery task (with optional scheduled start)
     from app.scraping.fb_live_engage_tasks import run_live_engagement
-    task = run_live_engagement.delay(str(session.id))
+    if session.scheduled_at:
+        session.status = "scheduled"
+        task = run_live_engagement.apply_async(args=[str(session.id)], eta=session.scheduled_at)
+    else:
+        task = run_live_engagement.delay(str(session.id))
     session.celery_task_id = task.id
     await db.commit()
 
@@ -2492,6 +2503,7 @@ async def live_engage_start(
         "post_id": session.post_id,
         "active_accounts": 0,
         "celery_task_id": task.id,
+        "scheduled_at": session.scheduled_at.isoformat() if session.scheduled_at else None,
     }
 
 
@@ -2675,6 +2687,8 @@ async def live_engage_status(
         "min_delay_seconds": session.min_delay_seconds,
         "max_delay_seconds": session.max_delay_seconds,
         "error_message": session.error_message,
+        "live_metrics": session.live_metrics,
+        "scheduled_at": session.scheduled_at.isoformat() if session.scheduled_at else None,
         "started_at": session.started_at.isoformat() if session.started_at else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "created_at": session.created_at.isoformat() if session.created_at else None,
@@ -2718,3 +2732,152 @@ async def live_engage_stop(
     await db.commit()
 
     return {"id": str(session.id), "status": "stopped"}
+
+
+@router.post("/live-engage/preview-comments")
+async def live_engage_preview_comments(
+    req: LiveEngageStartRequest,
+    user: User = Depends(get_current_user),
+):
+    """Generate 5 sample comments for preview — no session created, no posting."""
+    from app.services.ai_live_engage import AILiveEngageService
+
+    ai_service = AILiveEngageService()
+    role_dist = req.role_distribution or DEFAULT_ROLE_DISTRIBUTION
+    roles = list(role_dist.keys())
+    weights = [role_dist[r] for r in roles]
+
+    # Simulate recent comments for context
+    mock_comments = [
+        {"from_name": "Viewer", "message": "How much?", "from_id": "1"},
+        {"from_name": "Buyer", "message": "+1 nak", "from_id": "2"},
+        {"from_name": "Fan", "message": "Cantik!", "from_id": "3"},
+    ]
+
+    seed_codes = [c.strip() for c in (req.product_codes or "").split(",") if c.strip()]
+    samples = []
+    for _ in range(5):
+        role = random.choices(roles, weights=weights, k=1)[0]
+        try:
+            content = await ai_service.generate_comment(
+                role=role,
+                recent_comments=mock_comments,
+                business_context=req.business_context or "",
+                training_comments=req.training_comments,
+                ai_instructions=req.ai_instructions or "",
+                detected_codes=seed_codes or None,
+                quantity_variation=req.quantity_variation,
+            )
+            samples.append({"role": role, "content": content})
+        except Exception as exc:
+            samples.append({"role": role, "content": f"(error: {exc})"})
+
+    return {"samples": samples}
+
+
+# ── Presets CRUD ──────────────────────────────────────────────
+
+@router.get("/live-engage/presets")
+async def live_engage_list_presets(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all saved presets for this tenant."""
+    from app.models.fb_live_engage import FBLiveEngagePreset
+
+    result = await db.execute(
+        select(FBLiveEngagePreset).where(
+            FBLiveEngagePreset.tenant_id == user.tenant_id,
+        ).order_by(FBLiveEngagePreset.updated_at.desc())
+    )
+    presets = result.scalars().all()
+    return {
+        "presets": [
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "role_distribution": p.role_distribution,
+                "business_context": p.business_context,
+                "training_comments": p.training_comments,
+                "ai_instructions": p.ai_instructions,
+                "product_codes": p.product_codes,
+                "code_pattern": p.code_pattern,
+                "quantity_variation": p.quantity_variation,
+                "aggressive_level": p.aggressive_level,
+                "scrape_interval_seconds": p.scrape_interval_seconds,
+                "min_delay_seconds": p.min_delay_seconds,
+                "max_delay_seconds": p.max_delay_seconds,
+                "max_duration_minutes": p.max_duration_minutes,
+                "target_comments_enabled": p.target_comments_enabled,
+                "target_comments_count": p.target_comments_count,
+                "target_comments_period_minutes": p.target_comments_period_minutes,
+                "blacklist_words": p.blacklist_words,
+                "stream_end_threshold": p.stream_end_threshold,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in presets
+        ]
+    }
+
+
+@router.post("/live-engage/presets")
+async def live_engage_save_preset(
+    data: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save current config as a reusable preset."""
+    from app.models.fb_live_engage import FBLiveEngagePreset
+
+    name = data.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Preset name is required")
+
+    preset = FBLiveEngagePreset(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        name=name,
+        role_distribution=data.get("role_distribution"),
+        business_context=data.get("business_context", ""),
+        training_comments=data.get("training_comments"),
+        ai_instructions=data.get("ai_instructions", ""),
+        product_codes=data.get("product_codes"),
+        code_pattern=data.get("code_pattern"),
+        quantity_variation=data.get("quantity_variation", True),
+        aggressive_level=data.get("aggressive_level", "medium"),
+        scrape_interval_seconds=data.get("scrape_interval_seconds", 8),
+        min_delay_seconds=data.get("min_delay_seconds", 15),
+        max_delay_seconds=data.get("max_delay_seconds", 60),
+        max_duration_minutes=data.get("max_duration_minutes", 180),
+        target_comments_enabled=data.get("target_comments_enabled", False),
+        target_comments_count=data.get("target_comments_count"),
+        target_comments_period_minutes=data.get("target_comments_period_minutes"),
+        blacklist_words=data.get("blacklist_words"),
+        stream_end_threshold=data.get("stream_end_threshold", 10),
+    )
+    db.add(preset)
+    await db.commit()
+    return {"id": str(preset.id), "name": preset.name}
+
+
+@router.delete("/live-engage/presets/{preset_id}")
+async def live_engage_delete_preset(
+    preset_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a preset."""
+    from app.models.fb_live_engage import FBLiveEngagePreset
+
+    result = await db.execute(
+        select(FBLiveEngagePreset).where(
+            FBLiveEngagePreset.id == preset_id,
+            FBLiveEngagePreset.tenant_id == user.tenant_id,
+        )
+    )
+    preset = result.scalar_one_or_none()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    await db.delete(preset)
+    await db.commit()
+    return {"deleted": True}

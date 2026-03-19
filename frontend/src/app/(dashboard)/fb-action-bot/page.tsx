@@ -281,6 +281,12 @@ export default function FBActionBotPage() {
   const [leMinDelay, setLeMinDelay] = useState(15);
   const [leMaxDelay, setLeMaxDelay] = useState(60);
   const [leMaxDuration, setLeMaxDuration] = useState(180);
+  const [leBlacklistWords, setLeBlacklistWords] = useState("");
+  const [leStreamEndThreshold, setLeStreamEndThreshold] = useState(10);
+  const [leScheduledAt, setLeScheduledAt] = useState("");
+  const [lePresets, setLePresets] = useState<any[]>([]);
+  const [lePreviewSamples, setLePreviewSamples] = useState<any[]>([]);
+  const [lePreviewLoading, setLePreviewLoading] = useState(false);
   const [leStarting, setLeStarting] = useState(false);
   const lePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
@@ -428,6 +434,13 @@ export default function FBActionBotPage() {
       }).catch(() => setSelectorConfig(null));
     }
   }, [activeTab, batchSubTab, warmupHistoryPage, loadWarmupHistory, loadScheduledWarmups]);
+
+  // Load presets when livestream tab is active
+  useEffect(() => {
+    if (activeTab === "livestream") {
+      fbActionApi.liveEngagePresets().then((r) => setLePresets(r.data.presets || [])).catch(() => {});
+    }
+  }, [activeTab]);
 
   // Poll active warmup batch
   useEffect(() => {
@@ -3650,6 +3663,162 @@ export default function FBActionBotPage() {
                 </div>
               </div>
 
+              {/* Safety & Controls */}
+              <div className="glass-card p-5 space-y-3">
+                <h3 className="text-sm font-medium text-white/60">Safety & Auto-Stop</h3>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Blacklist Words (optional)</label>
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                    placeholder="spam, scam, fake — comma-separated"
+                    value={leBlacklistWords}
+                    onChange={(e) => setLeBlacklistWords(e.target.value)}
+                  />
+                  <p className="text-xs text-white/30 mt-1">Comments containing these words will be skipped and regenerated</p>
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Stream End Detection: {leStreamEndThreshold} empty polls</label>
+                  <input
+                    type="range" min={3} max={50} step={1} value={leStreamEndThreshold}
+                    className="w-full accent-amber-400"
+                    onChange={(e) => setLeStreamEndThreshold(parseInt(e.target.value))}
+                  />
+                  <p className="text-xs text-white/30 mt-1">Auto-stop after this many consecutive polls with zero new comments (stream likely ended)</p>
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Schedule Start (optional)</label>
+                  <input
+                    type="datetime-local"
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+                    value={leScheduledAt}
+                    onChange={(e) => setLeScheduledAt(e.target.value)}
+                  />
+                  <p className="text-xs text-white/30 mt-1">{leScheduledAt ? "Session will start at the scheduled time" : "Leave empty to start immediately"}</p>
+                </div>
+              </div>
+
+              {/* Presets */}
+              <div className="glass-card p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-white/60">Presets</h3>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const name = prompt("Preset name:");
+                      if (!name) return;
+                      try {
+                        await fbActionApi.liveEngageSavePreset({
+                          name,
+                          role_distribution: leRoles,
+                          business_context: leContext,
+                          training_comments: leTrainingComments || undefined,
+                          ai_instructions: leInstructions || undefined,
+                          product_codes: leProductCodes.trim() || undefined,
+                          code_pattern: leCodePattern.trim() || undefined,
+                          quantity_variation: leQuantityVariation,
+                          aggressive_level: leAggressiveLevel,
+                          scrape_interval_seconds: leScrapeInterval,
+                          min_delay_seconds: leMinDelay,
+                          max_delay_seconds: leMaxDelay,
+                          max_duration_minutes: leMaxDuration,
+                          target_comments_enabled: leTargetEnabled,
+                          target_comments_count: leTargetCount,
+                          target_comments_period_minutes: leTargetPeriod,
+                          blacklist_words: leBlacklistWords.trim() || undefined,
+                          stream_end_threshold: leStreamEndThreshold,
+                        });
+                        showToast("success", `Preset "${name}" saved`);
+                        const res = await fbActionApi.liveEngagePresets();
+                        setLePresets(res.data.presets || []);
+                      } catch { showToast("error", "Failed to save preset"); }
+                    }}
+                    className="px-3 py-1 bg-white/5 border border-white/10 rounded-lg text-xs text-white/40 hover:bg-white/10"
+                  >Save Current</button>
+                </div>
+                {lePresets.length > 0 ? (
+                  <div className="space-y-1">
+                    {lePresets.map((p: any) => (
+                      <div key={p.id} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (p.role_distribution) setLeRoles(p.role_distribution);
+                            setLeContext(p.business_context || "");
+                            setLeTrainingComments(p.training_comments || "");
+                            setLeInstructions(p.ai_instructions || "");
+                            setLeProductCodes(p.product_codes || "");
+                            setLeCodePattern(p.code_pattern || "");
+                            setLeQuantityVariation(p.quantity_variation ?? true);
+                            setLeAggressiveLevel(p.aggressive_level || "medium");
+                            setLeScrapeInterval(p.scrape_interval_seconds || 8);
+                            setLeMinDelay(p.min_delay_seconds || 15);
+                            setLeMaxDelay(p.max_delay_seconds || 60);
+                            setLeMaxDuration(p.max_duration_minutes || 180);
+                            setLeTargetEnabled(p.target_comments_enabled || false);
+                            setLeTargetCount(p.target_comments_count || 100);
+                            setLeTargetPeriod(p.target_comments_period_minutes || 60);
+                            setLeBlacklistWords(p.blacklist_words || "");
+                            setLeStreamEndThreshold(p.stream_end_threshold || 10);
+                            showToast("success", `Loaded preset: ${p.name}`);
+                          }}
+                          className="text-xs text-white/70 hover:text-white"
+                        >{p.name}</button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await fbActionApi.liveEngageDeletePreset(p.id);
+                              setLePresets((prev) => prev.filter((x: any) => x.id !== p.id));
+                            } catch { showToast("error", "Failed to delete"); }
+                          }}
+                          className="text-xs text-white/20 hover:text-red-300"
+                        >Delete</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-white/30">No presets saved yet — save your current config for quick reuse</p>
+                )}
+              </div>
+
+              {/* Preview + Start */}
+              <div className="space-y-2">
+                {/* Preview Button */}
+                <button
+                  type="button"
+                  disabled={lePreviewLoading}
+                  onClick={async () => {
+                    setLePreviewLoading(true);
+                    try {
+                      const res = await fbActionApi.liveEngagePreview({
+                        post_id: lePostId.trim() || "preview",
+                        role_distribution: leRoles,
+                        business_context: leContext,
+                        training_comments: leTrainingComments || undefined,
+                        ai_instructions: leInstructions || undefined,
+                        product_codes: leProductCodes.trim() || undefined,
+                        quantity_variation: leQuantityVariation,
+                      });
+                      setLePreviewSamples(res.data.samples || []);
+                    } catch { showToast("error", "Preview failed"); }
+                    setLePreviewLoading(false);
+                  }}
+                  className="w-full py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white/60 hover:bg-white/10 transition-all"
+                >
+                  {lePreviewLoading ? "Generating..." : "Preview 5 Sample Comments"}
+                </button>
+                {lePreviewSamples.length > 0 && (
+                  <div className="glass-card p-3 space-y-1">
+                    {lePreviewSamples.map((s: any, i: number) => (
+                      <div key={i} className="flex gap-2 text-xs">
+                        <span className="text-amber-400/60 w-28 shrink-0">{s.role?.replace(/_/g, " ")}</span>
+                        <span className="text-white/70">{s.content}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Start Button */}
               <button
                 disabled={leStarting || !lePostId.trim() || (leAccountSource === "batch" ? !leLoginBatchId : leDirectAccounts.length < 2) || Object.values(leRoles).reduce((a, b) => a + b, 0) !== 100}
@@ -3680,6 +3849,9 @@ export default function FBActionBotPage() {
                       target_comments_enabled: leTargetEnabled,
                       target_comments_count: leTargetEnabled ? leTargetCount : undefined,
                       target_comments_period_minutes: leTargetEnabled ? leTargetPeriod : undefined,
+                      blacklist_words: leBlacklistWords.trim() || undefined,
+                      stream_end_threshold: leStreamEndThreshold,
+                      scheduled_at: leScheduledAt ? new Date(leScheduledAt).toISOString() : undefined,
                       min_delay_seconds: leMinDelay,
                       max_delay_seconds: leMaxDelay,
                       max_duration_minutes: leMaxDuration,
@@ -3763,6 +3935,41 @@ export default function FBActionBotPage() {
                   )}
                 </div>
               </div>
+
+              {/* Live Metrics */}
+              {liveEngageSession?.live_metrics && (
+                <div className="glass-card p-5">
+                  <h3 className="text-xs font-medium text-white/40 mb-3">Live Metrics</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-white/5 rounded-lg p-3 text-center">
+                      <div className="text-lg font-medium text-amber-300">{liveEngageSession.live_metrics.velocity_cpm || 0}</div>
+                      <div className="text-xs text-white/30">CPM</div>
+                    </div>
+                    <div className="bg-white/5 rounded-lg p-3 text-center">
+                      <div className="text-lg font-medium text-emerald-300">{((liveEngageSession.live_metrics.code_ratio || 0) * 100).toFixed(0)}%</div>
+                      <div className="text-xs text-white/30">Code Ratio</div>
+                    </div>
+                    <div className="bg-white/5 rounded-lg p-3 text-center">
+                      <div className="text-lg font-medium text-blue-300">{liveEngageSession.live_metrics.active_accounts || liveEngageSession.active_accounts}</div>
+                      <div className="text-xs text-white/30">Active Accounts</div>
+                    </div>
+                    <div className="bg-white/5 rounded-lg p-3 text-center">
+                      <div className={`text-lg font-medium ${(liveEngageSession.live_metrics.consecutive_errors || 0) > 5 ? "text-red-300" : "text-white/60"}`}>{liveEngageSession.live_metrics.consecutive_errors || 0}</div>
+                      <div className="text-xs text-white/30">Consec. Errors</div>
+                    </div>
+                  </div>
+                  {(liveEngageSession.live_metrics.detected_codes || []).length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-xs text-white/30 mb-1">Detected Codes:</div>
+                      <div className="flex flex-wrap gap-1">
+                        {liveEngageSession.live_metrics.detected_codes.map((code: string, i: number) => (
+                          <span key={i} className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-xs text-amber-300">{code}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Role Stats */}
               <div className="glass-card p-5">
