@@ -141,7 +141,7 @@ async def _execute_engagement(session_id: str):
                 "comment_without_new": bool(session.comment_without_new),
                 "comment_without_new_max": session.comment_without_new_max or 3,
                 "blacklist_words": session.blacklist_words or "",
-                "stream_end_threshold": session.stream_end_threshold or 10,
+                "stream_end_threshold": session.stream_end_threshold if session.stream_end_threshold is not None else 10,
             }
 
         # ── Load accounts ─────────────────────────────────────
@@ -706,7 +706,7 @@ async def _engage_loop(
                         config["comment_without_new"] = bool(s.comment_without_new)
                         config["comment_without_new_max"] = s.comment_without_new_max or 3
                         config["blacklist_words"] = s.blacklist_words or ""
-                        config["stream_end_threshold"] = s.stream_end_threshold or 10
+                        config["stream_end_threshold"] = s.stream_end_threshold if s.stream_end_threshold is not None else 10
                         config["languages"] = s.languages or ""
                         config["ai_instructions"] = s.ai_instructions or ""
                         adaptive.quantity_variation = s.quantity_variation if s.quantity_variation is not None else True

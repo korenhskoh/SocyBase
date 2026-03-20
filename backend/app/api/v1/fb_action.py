@@ -3129,6 +3129,8 @@ async def live_engage_trigger_code(
     })
     pending["trigger_queue"] = queue
     session.pending_actions = pending
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(session, "pending_actions")
     await db.commit()
 
     return {"ok": True, "id": trigger_id, "code": code, "count": count, "queue_size": len(queue)}
@@ -3177,6 +3179,8 @@ async def live_engage_update_trigger(
 
     pending["trigger_queue"] = queue
     session.pending_actions = pending
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(session, "pending_actions")
     await db.commit()
 
     return {"ok": True, "queue": queue}
