@@ -3096,7 +3096,7 @@ async def live_engage_trigger_code(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger burst place_order with specific code for a short interval."""
+    """Add a code to the trigger queue. Supports multiple codes."""
     result = await db.execute(
         select(FBLiveEngageSession).where(
             FBLiveEngageSession.id == session_id,
@@ -3116,17 +3116,70 @@ async def live_engage_trigger_code(
     if not code:
         raise HTTPException(status_code=400, detail="Code is required")
 
+    trigger_id = str(uuid.uuid4())[:8]
     pending = dict(session.pending_actions or {})
-    pending["trigger_code"] = {
+    queue = list(pending.get("trigger_queue", []))
+    queue.append({
+        "id": trigger_id,
         "code": code,
         "count": count,
         "duration_minutes": duration_minutes,
-        "triggered_at": datetime.now(timezone.utc).isoformat(),
-    }
+        "status": "pending",  # pending, running, paused, completed
+        "added_at": datetime.now(timezone.utc).isoformat(),
+    })
+    pending["trigger_queue"] = queue
     session.pending_actions = pending
     await db.commit()
 
-    return {"ok": True, "code": code, "count": count, "duration_minutes": duration_minutes}
+    return {"ok": True, "id": trigger_id, "code": code, "count": count, "queue_size": len(queue)}
+
+
+@router.patch("/live-engage/{session_id}/trigger-code/{trigger_id}")
+async def live_engage_update_trigger(
+    session_id: str,
+    trigger_id: str,
+    data: dict = Body(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a trigger in the queue (pause, resume, delete, reorder)."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    pending = dict(session.pending_actions or {})
+    queue = list(pending.get("trigger_queue", []))
+
+    action = data.get("action", "")  # pause, resume, delete, move_up, move_down
+
+    if action == "delete":
+        queue = [t for t in queue if t["id"] != trigger_id]
+    elif action in ("pause", "resume"):
+        for t in queue:
+            if t["id"] == trigger_id:
+                t["status"] = "paused" if action == "pause" else "pending"
+    elif action == "move_up":
+        for i, t in enumerate(queue):
+            if t["id"] == trigger_id and i > 0:
+                queue[i], queue[i - 1] = queue[i - 1], queue[i]
+                break
+    elif action == "move_down":
+        for i, t in enumerate(queue):
+            if t["id"] == trigger_id and i < len(queue) - 1:
+                queue[i], queue[i + 1] = queue[i + 1], queue[i]
+                break
+
+    pending["trigger_queue"] = queue
+    session.pending_actions = pending
+    await db.commit()
+
+    return {"ok": True, "queue": queue}
 
 
 @router.patch("/live-engage/{session_id}/settings")

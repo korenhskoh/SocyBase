@@ -550,99 +550,140 @@ async def _engage_loop(
                     if row:
                         db_status, pending_actions = row
 
-                # ── Handle priority code trigger ──
-                if pending_actions and pending_actions.get("trigger_code"):
-                    trigger = pending_actions["trigger_code"]
-                    t_code = trigger["code"]
-                    t_count = trigger.get("count", 5)
-                    t_dur = trigger.get("duration_minutes", 2) * 60
-                    logger.info(f"[LiveEngage] Priority trigger: {t_code} x{t_count} for {t_dur}s")
-
-                    # Clear the trigger from DB
-                    async with SessionLocal() as db:
-                        result = await db.execute(
-                            select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
-                        )
-                        s = result.scalar_one()
-                        pa = dict(s.pending_actions or {})
-                        pa.pop("trigger_code", None)
-                        s.pending_actions = pa
-                        await db.commit()
-
-                    # Burst: post the code t_count times within t_dur seconds
-                    burst_delay = max(3, t_dur / max(t_count, 1))
-                    for burst_i in range(t_count):
-                        if stop_event.is_set():
+                # ── Handle trigger queue ──
+                if pending_actions and pending_actions.get("trigger_queue"):
+                    queue = pending_actions["trigger_queue"]
+                    # Find next pending trigger
+                    next_trigger = None
+                    for t in queue:
+                        if t.get("status") == "pending":
+                            next_trigger = t
                             break
-                        # Pick account
-                        if not account_pool:
-                            break
-                        acct = account_pool[account_idx % len(account_pool)]
-                        account_idx += 1
 
-                        # Generate order with the triggered code
-                        qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
-                        roll = random.random()
-                        if roll < 0.4:
-                            burst_content = f"{t_code} +{qty}"
-                        elif roll < 0.6:
-                            burst_content = f"+1 {t_code}"
-                        else:
-                            burst_content = t_code
+                    if next_trigger:
+                        t_id = next_trigger["id"]
+                        t_code = next_trigger["code"]
+                        t_count = next_trigger.get("count", 5)
+                        t_dur = next_trigger.get("duration_minutes", 2) * 60
+                        logger.info(f"[LiveEngage] Trigger queue: {t_code} x{t_count} (id={t_id})")
 
-                        # Post via AKNG + token fallback
-                        try:
-                            resp = await client.execute_action(
-                                cookie=acct["cookie"], user_agent=acct["user_agent"],
-                                action_name="comment_to_post",
-                                params={"post_id": post_id, "content": burst_content, "image": ""},
-                                proxy=acct.get("proxy"),
+                        # Mark as running in DB
+                        async with SessionLocal() as db:
+                            result = await db.execute(
+                                select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
                             )
-                            b_success, _ = _parse_response(resp)
-                            if not b_success and acct.get("token"):
-                                resp = await client.comment_direct(acct["token"], post_id, burst_content)
-                                b_success = resp.get("success", False)
-                        except Exception:
-                            b_success = False
+                            s = result.scalar_one()
+                            pa = dict(s.pending_actions or {})
+                            for t in pa.get("trigger_queue", []):
+                                if t["id"] == t_id:
+                                    t["status"] = "running"
+                            s.pending_actions = pa
+                            await db.commit()
 
-                        if b_success:
-                            our_content.add(burst_content)
-                            posted_history.append(burst_content)
+                        # Burst: post the code t_count times
+                        burst_delay = max(3, t_dur / max(t_count, 1))
+                        for burst_i in range(t_count):
+                            if stop_event.is_set():
+                                break
 
-                        # Log burst to activity log
+                            # Check if trigger was paused/deleted
+                            try:
+                                async with SessionLocal() as db:
+                                    result = await db.execute(
+                                        select(FBLiveEngageSession.pending_actions).where(
+                                            FBLiveEngageSession.id == uuid.UUID(session_id)
+                                        )
+                                    )
+                                    current_pa = result.scalar_one_or_none() or {}
+                                    current_queue = current_pa.get("trigger_queue", [])
+                                    trigger_state = next((t for t in current_queue if t.get("id") == t_id), None)
+                                    if not trigger_state or trigger_state.get("status") in ("paused", "deleted"):
+                                        logger.info(f"[LiveEngage] Trigger {t_id} {trigger_state.get('status', 'deleted')}, skipping")
+                                        break
+                            except Exception:
+                                pass
+
+                            if not account_pool:
+                                break
+                            acct = account_pool[account_idx % len(account_pool)]
+                            account_idx += 1
+
+                            qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
+                            roll = random.random()
+                            if roll < 0.4:
+                                burst_content = f"{t_code} +{qty}"
+                            elif roll < 0.6:
+                                burst_content = f"+1 {t_code}"
+                            else:
+                                burst_content = t_code
+
+                            try:
+                                resp = await client.execute_action(
+                                    cookie=acct["cookie"], user_agent=acct["user_agent"],
+                                    action_name="comment_to_post",
+                                    params={"post_id": post_id, "content": burst_content, "image": ""},
+                                    proxy=acct.get("proxy"),
+                                )
+                                b_success, _ = _parse_response(resp)
+                                if not b_success and acct.get("token"):
+                                    resp = await client.comment_direct(acct["token"], post_id, burst_content)
+                                    b_success = resp.get("success", False)
+                            except Exception:
+                                b_success = False
+
+                            if b_success:
+                                our_content.add(burst_content)
+                                posted_history.append(burst_content)
+
+                            # Log to activity
+                            try:
+                                async with SessionLocal() as db:
+                                    log = FBLiveEngageLog(
+                                        session_id=uuid.UUID(session_id),
+                                        role="triggered",
+                                        content=burst_content,
+                                        account_email=acct["email"],
+                                        reference_comment=f"Trigger [{t_id}]: {t_code} ({burst_i+1}/{t_count})",
+                                        status="success" if b_success else "failed",
+                                        error_message=None if b_success else "Burst post failed",
+                                    )
+                                    db.add(log)
+                                    result = await db.execute(
+                                        select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
+                                    )
+                                    s = result.scalar_one()
+                                    if b_success:
+                                        s.total_comments_posted += 1
+                                        by_role = dict(s.comments_by_role or {})
+                                        by_role["triggered"] = by_role.get("triggered", 0) + 1
+                                        s.comments_by_role = by_role
+                                    else:
+                                        s.total_errors += 1
+                                    await db.commit()
+                            except Exception:
+                                pass
+
+                            logger.info(f"[LiveEngage] Trigger [{t_id}] {burst_i+1}/{t_count}: {burst_content} via {acct['email'][:20]}")
+                            await asyncio.sleep(burst_delay * random.uniform(0.8, 1.2))
+
+                        # Mark trigger as completed in DB
                         try:
                             async with SessionLocal() as db:
-                                log = FBLiveEngageLog(
-                                    session_id=uuid.UUID(session_id),
-                                    role="triggered",
-                                    content=burst_content,
-                                    account_email=acct["email"],
-                                    reference_comment=f"Priority trigger: {t_code} ({burst_i+1}/{t_count})",
-                                    status="success" if b_success else "failed",
-                                    error_message=None if b_success else "Burst post failed",
-                                )
-                                db.add(log)
-                                # Update stats
                                 result = await db.execute(
                                     select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
                                 )
                                 s = result.scalar_one()
-                                if b_success:
-                                    s.total_comments_posted += 1
-                                    by_role = dict(s.comments_by_role or {})
-                                    by_role["triggered"] = by_role.get("triggered", 0) + 1
-                                    s.comments_by_role = by_role
-                                else:
-                                    s.total_errors += 1
+                                pa = dict(s.pending_actions or {})
+                                for t in pa.get("trigger_queue", []):
+                                    if t["id"] == t_id and t["status"] == "running":
+                                        t["status"] = "completed"
+                                s.pending_actions = pa
                                 await db.commit()
                         except Exception:
                             pass
 
-                        logger.info(f"[LiveEngage] Burst {burst_i+1}/{t_count}: {burst_content} via {acct['email'][:20]} ({'OK' if b_success else 'FAIL'})")
-                        await asyncio.sleep(burst_delay * random.uniform(0.8, 1.2))
-
-                    logger.info(f"[LiveEngage] Priority trigger complete: {t_code}")
-                    continue  # skip normal generation this iteration
+                        logger.info(f"[LiveEngage] Trigger [{t_id}] complete: {t_code}")
+                        continue  # check for next trigger in queue
 
                 # ── Handle config reload ──
                 if pending_actions and pending_actions.get("reload_config"):

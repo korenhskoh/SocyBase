@@ -683,6 +683,8 @@ export const fbActionApi = {
     }),
   liveEngageTriggerCode: (sessionId: string, data: { code: string; count: number; duration_minutes: number }) =>
     api.post(`/fb-action/live-engage/${sessionId}/trigger-code`, data),
+  liveEngageUpdateTrigger: (sessionId: string, triggerId: string, data: { action: string }) =>
+    api.patch(`/fb-action/live-engage/${sessionId}/trigger-code/${triggerId}`, data),
   liveEngageUpdateSettings: (sessionId: string, data: Record<string, unknown>) =>
     api.patch(`/fb-action/live-engage/${sessionId}/settings`, data),
   liveEngageStop: (sessionId: string) =>

@@ -4264,10 +4264,11 @@ export default function FBActionBotPage() {
                 </div>
               </div>
 
-              {/* Priority Code Trigger */}
+              {/* Priority Code Trigger Queue */}
               {["running", "paused"].includes(liveEngageSession?.status) && (
                 <div className="glass-card p-5 space-y-3">
-                  <h3 className="text-xs font-medium text-white/40">Priority Code Trigger</h3>
+                  <h3 className="text-xs font-medium text-white/40">Priority Trigger Queue</h3>
+                  {/* Add trigger form */}
                   <div className="flex gap-2 items-end">
                     <div className="flex-1">
                       <label className="text-xs text-white/30 block mb-1">Code</label>
@@ -4296,38 +4297,78 @@ export default function FBActionBotPage() {
                         setLeTriggerLoading(true);
                         try {
                           await fbActionApi.liveEngageTriggerCode(liveEngageSession.id, {
-                            code: leTriggerCode.trim(),
-                            count: leTriggerCount,
-                            duration_minutes: leTriggerDuration,
+                            code: leTriggerCode.trim(), count: leTriggerCount, duration_minutes: leTriggerDuration,
                           });
-                          showToast("success", `Triggered: ${leTriggerCode} x${leTriggerCount} for ${leTriggerDuration}min`);
+                          showToast("success", `Added to queue: ${leTriggerCode} x${leTriggerCount}`);
                           setLeTriggerCode("");
-                        } catch (err: any) { showToast("error", typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Trigger failed"); }
+                        } catch (err: any) { showToast("error", typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Failed"); }
                         setLeTriggerLoading(false);
                       }}
                       className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-sm font-medium transition disabled:opacity-40"
-                    >
-                      {leTriggerLoading ? "..." : "Trigger"}
-                    </button>
+                    >{leTriggerLoading ? "..." : "+ Add"}</button>
                   </div>
                   {/* Detected codes quick-select */}
                   {liveEngageSession?.live_metrics?.detected_codes?.length > 0 && (
                     <div>
-                      <p className="text-xs text-white/30 mb-1">Detected codes (click to trigger):</p>
+                      <p className="text-xs text-white/30 mb-1">Detected codes (click to add):</p>
                       <div className="flex flex-wrap gap-1">
                         {liveEngageSession.live_metrics.detected_codes.map((code: string, i: number) => (
-                          <button
-                            key={i}
-                            type="button"
-                            onClick={() => setLeTriggerCode(code)}
-                            className={`px-2 py-0.5 rounded text-xs transition ${
-                              leTriggerCode === code
-                                ? "bg-amber-500/30 border border-amber-400/50 text-amber-300"
-                                : "bg-white/5 border border-white/10 text-white/50 hover:bg-white/10"
-                            }`}
+                          <button key={i} type="button" onClick={() => setLeTriggerCode(code)}
+                            className={`px-2 py-0.5 rounded text-xs transition ${leTriggerCode === code ? "bg-amber-500/30 border border-amber-400/50 text-amber-300" : "bg-white/5 border border-white/10 text-white/50 hover:bg-white/10"}`}
                           >{code}</button>
                         ))}
                       </div>
+                    </div>
+                  )}
+                  {/* Queue list */}
+                  {(liveEngageSession?.pending_actions?.trigger_queue || []).length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-white/30">Queue ({(liveEngageSession.pending_actions.trigger_queue || []).filter((t: any) => t.status !== "completed").length} active):</p>
+                      {(liveEngageSession.pending_actions.trigger_queue || []).map((t: any, i: number) => (
+                        <div key={t.id} className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${
+                          t.status === "running" ? "bg-red-500/10 border border-red-500/20" :
+                          t.status === "paused" ? "bg-amber-500/10 border border-amber-500/20" :
+                          t.status === "completed" ? "bg-white/5 border border-white/5 opacity-50" :
+                          "bg-white/5 border border-white/10"
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${
+                              t.status === "running" ? "bg-red-500 animate-pulse" :
+                              t.status === "paused" ? "bg-amber-500" :
+                              t.status === "completed" ? "bg-emerald-500" : "bg-white/30"
+                            }`} />
+                            <span className="text-white/70 font-medium">{t.code}</span>
+                            <span className="text-white/30">x{t.count} / {t.duration_minutes}min</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                              t.status === "running" ? "bg-red-500/20 text-red-300" :
+                              t.status === "paused" ? "bg-amber-500/20 text-amber-300" :
+                              t.status === "completed" ? "bg-emerald-500/20 text-emerald-300" : "bg-white/10 text-white/40"
+                            }`}>{t.status}</span>
+                          </div>
+                          {t.status !== "completed" && (
+                            <div className="flex gap-1">
+                              {i > 0 && t.status === "pending" && (
+                                <button type="button" onClick={() => fbActionApi.liveEngageUpdateTrigger(liveEngageSession.id, t.id, { action: "move_up" })}
+                                  className="px-1.5 py-0.5 text-white/30 hover:text-white/60">↑</button>
+                              )}
+                              {t.status === "pending" && (
+                                <button type="button" onClick={() => fbActionApi.liveEngageUpdateTrigger(liveEngageSession.id, t.id, { action: "move_down" })}
+                                  className="px-1.5 py-0.5 text-white/30 hover:text-white/60">↓</button>
+                              )}
+                              {t.status === "running" && (
+                                <button type="button" onClick={() => fbActionApi.liveEngageUpdateTrigger(liveEngageSession.id, t.id, { action: "pause" })}
+                                  className="px-1.5 py-0.5 text-amber-400/60 hover:text-amber-300">⏸</button>
+                              )}
+                              {t.status === "paused" && (
+                                <button type="button" onClick={() => fbActionApi.liveEngageUpdateTrigger(liveEngageSession.id, t.id, { action: "resume" })}
+                                  className="px-1.5 py-0.5 text-emerald-400/60 hover:text-emerald-300">▶</button>
+                              )}
+                              <button type="button" onClick={() => fbActionApi.liveEngageUpdateTrigger(liveEngageSession.id, t.id, { action: "delete" })}
+                                className="px-1.5 py-0.5 text-red-400/60 hover:text-red-300">✕</button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
