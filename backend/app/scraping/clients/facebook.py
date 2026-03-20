@@ -426,23 +426,36 @@ class FacebookGraphClient(AbstractSocialClient):
         """Post a comment directly via Facebook Graph API using access token.
 
         Bypasses AKNG — calls graph.facebook.com directly.
-        Used as fallback when AKNG fb_action fails.
+        Tries the post_id as-is first, then with common format variations.
         """
-        try:
-            response = await self.client.post(
-                f"https://graph.facebook.com/{post_id}/comments",
-                data={"message": content, "access_token": token},
-                timeout=httpx.Timeout(30.0, connect=10.0),
-            )
+        # Try different post_id formats — Graph API is picky
+        ids_to_try = [post_id]
+        # If it looks like a compound ID (page_video), also try just the video part
+        if "_" in post_id:
+            ids_to_try.append(post_id.split("_", 1)[1])
+        # If it's a bare ID and we have page context, the API might need it as-is
+
+        for pid in ids_to_try:
             try:
-                data = response.json()
+                response = await self.client.post(
+                    f"https://graph.facebook.com/{pid}/comments",
+                    data={"message": content, "access_token": token},
+                    timeout=httpx.Timeout(30.0, connect=10.0),
+                )
+                try:
+                    data = response.json()
+                except Exception:
+                    continue
+                if 200 <= response.status_code < 300 and data.get("id"):
+                    return {"success": True, "data": data}
+                error_msg = data.get("error", {}).get("message", "")
+                # If "does not exist" error, try next format
+                if "does not exist" in error_msg or "cannot be loaded" in error_msg:
+                    continue
+                if not error_msg:
+                    error_msg = data.get("message", f"HTTP {response.status_code}")
+                return {"success": False, "error": error_msg}
             except Exception:
-                return {"success": False, "error": f"Invalid response: {response.text[:200]}"}
-            if 200 <= response.status_code < 300 and data.get("id"):
-                return {"success": True, "data": data}
-            error_msg = data.get("error", {}).get("message", "")
-            if not error_msg:
-                error_msg = data.get("message", f"HTTP {response.status_code}")
-            return {"success": False, "error": error_msg}
-        except Exception as exc:
-            return {"success": False, "error": str(exc)}
+                continue
+
+        return {"success": False, "error": f"Graph API: post {post_id} not accessible with this token"}
