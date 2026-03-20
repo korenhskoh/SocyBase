@@ -103,7 +103,7 @@ class AILiveEngageService:
 
     # Regex patterns for extracting codes/numbers from any text
     _CODE_RE = re.compile(r'\b([a-zA-Z]{1,3}\d{2,5})\b')  # m763, AB12, R2000
-    _NUMBER_RE = re.compile(r'\b(\d{1,5})\s*[号號]')  # 8号, 12號
+    _NUMBER_RE = re.compile(r'(\d{1,5})\s*[号號]')  # 8号, 12號 (no \b — CJK boundary issues)
     _BARE_NUMBER_RE = re.compile(r'^(\d{1,5})$')  # just a number like "763"
 
     def _extract_all_codes(self, text: str) -> list[str]:
@@ -305,6 +305,7 @@ class AILiveEngageService:
             )
 
         # Language instruction
+        lang_str = ""
         if languages:
             lang_list = [l.strip().capitalize() for l in languages.split(",") if l.strip()]
             if lang_list:
@@ -318,7 +319,7 @@ class AILiveEngageService:
         system_prompt += (
             "Rules:\n"
             "- " + (
-                f"Write in {lang_str}" if languages and lang_list else
+                f"Write in {lang_str}" if lang_str else
                 "Match the language of current live comments (auto-detect Malay/English/etc.)"
             ) + "\n"
             "- 1-2 sentences max, casual livestream chat tone\n"

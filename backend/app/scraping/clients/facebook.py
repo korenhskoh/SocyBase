@@ -31,12 +31,12 @@ class FacebookGraphClient(AbstractSocialClient):
         """URL-encode cookie values so AKNG can parse them correctly.
 
         Converts: c_user=123;xs=28:abc:2:...; → c_user=123; xs=28%3Aabc%3A2%3A...;
-        Only encodes the VALUE portion of each key=value pair.
+        Encodes each VALUE individually, skipping values already encoded.
         """
-        if not cookie or "%3A" in cookie:
-            # Already encoded or empty
+        if not cookie:
             return cookie
 
+        import re as _re
         parts = []
         for pair in cookie.split(";"):
             pair = pair.strip()
@@ -44,9 +44,11 @@ class FacebookGraphClient(AbstractSocialClient):
                 continue
             if "=" in pair:
                 key, value = pair.split("=", 1)
-                # URL-encode special chars in the value (colons, slashes, etc.)
-                encoded_value = quote(value, safe="")
-                parts.append(f"{key.strip()}={encoded_value}")
+                # Check if this specific value is already URL-encoded
+                if _re.search(r'%[0-9A-Fa-f]{2}', value):
+                    parts.append(f"{key.strip()}={value}")
+                else:
+                    parts.append(f"{key.strip()}={quote(value, safe='')}")
             else:
                 parts.append(pair)
         return "; ".join(parts)
@@ -432,12 +434,15 @@ class FacebookGraphClient(AbstractSocialClient):
                 data={"message": content, "access_token": token},
                 timeout=httpx.Timeout(30.0, connect=10.0),
             )
-            data = response.json()
-            if response.status_code == 200 and data.get("id"):
+            try:
+                data = response.json()
+            except Exception:
+                return {"success": False, "error": f"Invalid response: {response.text[:200]}"}
+            if 200 <= response.status_code < 300 and data.get("id"):
                 return {"success": True, "data": data}
-            return {
-                "success": False,
-                "error": data.get("error", {}).get("message", str(data)),
-            }
+            error_msg = data.get("error", {}).get("message", "")
+            if not error_msg:
+                error_msg = data.get("message", f"HTTP {response.status_code}")
+            return {"success": False, "error": error_msg}
         except Exception as exc:
             return {"success": False, "error": str(exc)}

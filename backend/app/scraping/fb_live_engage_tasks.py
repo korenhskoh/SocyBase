@@ -511,6 +511,7 @@ async def _engage_loop(
 
             # ── Check if paused ─────────────────────────────────
             try:
+                db_status = None
                 async with SessionLocal() as db:
                     result = await db.execute(
                         select(FBLiveEngageSession.status).where(
@@ -518,24 +519,25 @@ async def _engage_loop(
                         )
                     )
                     db_status = result.scalar_one_or_none()
-                    if db_status == "paused":
-                        logger.info(f"[LiveEngage] Session {session_id} paused, waiting...")
-                        while db_status == "paused" and not stop_event.is_set():
-                            await asyncio.sleep(5)
-                            async with SessionLocal() as db2:
-                                r2 = await db2.execute(
-                                    select(FBLiveEngageSession.status).where(
-                                        FBLiveEngageSession.id == uuid.UUID(session_id)
-                                    )
+
+                if db_status == "paused":
+                    logger.info(f"[LiveEngage] Session {session_id} paused, waiting...")
+                    while db_status == "paused" and not stop_event.is_set():
+                        await asyncio.sleep(5)
+                        async with SessionLocal() as db:
+                            r = await db.execute(
+                                select(FBLiveEngageSession.status).where(
+                                    FBLiveEngageSession.id == uuid.UUID(session_id)
                                 )
-                                db_status = r2.scalar_one_or_none()
-                        if db_status == "stopped":
-                            stop_event.set()
-                            break
-                        logger.info(f"[LiveEngage] Session {session_id} resumed")
-                    elif db_status == "stopped":
+                            )
+                            db_status = r.scalar_one_or_none()
+                    if db_status == "stopped":
                         stop_event.set()
                         break
+                    logger.info(f"[LiveEngage] Session {session_id} resumed")
+                elif db_status == "stopped":
+                    stop_event.set()
+                    break
             except Exception:
                 pass
 
@@ -731,6 +733,7 @@ async def _engage_loop(
                 should_remove = is_permanent or account_errors[email] >= 3
                 if should_remove and len(account_pool) > 1:
                     account_pool[:] = [a for a in account_pool if a["email"] != email]
+                    account_idx = account_idx % len(account_pool) if account_pool else 0
                     reason = "permanent error" if is_permanent else f"{account_errors[email]} consecutive errors"
                     logger.warning(
                         f"[LiveEngage] Removed account {email[:20]}... "
@@ -866,6 +869,6 @@ def _parse_response(resp: dict) -> tuple[bool, str | None]:
         if isinstance(status_info, dict):
             status_code = status_info.get("code")
             status_msg = status_info.get("message")
-    is_success = success and status_code == 1
+    is_success = success and (status_code is None or status_code == 1)
     error = None if is_success else (status_msg or resp.get("message", "Unknown error"))
     return is_success, error
