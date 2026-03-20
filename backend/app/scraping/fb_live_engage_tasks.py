@@ -333,7 +333,8 @@ async def _monitor_loop(
     post_id = config["post_id"]
     scrape_interval = config["scrape_interval"]
     page_owner_id = config.get("page_owner_id", "")
-    stream_end_threshold = config.get("stream_end_threshold", 10)
+    # NOTE: stream_end_threshold is read from config dict each iteration
+    # so config reload from engage loop takes effect immediately
     consecutive_empty_polls = 0
     iteration = 0
     after_cursor: str | None = None
@@ -461,10 +462,11 @@ async def _monitor_loop(
             else:
                 # Stream end detection — stop if too many consecutive empty polls
                 consecutive_empty_polls += 1
-                if stream_end_threshold > 0 and consecutive_empty_polls >= stream_end_threshold:
+                sed_threshold = config.get("stream_end_threshold", 0)
+                if sed_threshold > 0 and consecutive_empty_polls >= sed_threshold:
                     logger.info(
                         f"[LiveEngage] Monitor: {consecutive_empty_polls} consecutive empty polls "
-                        f"(threshold={stream_end_threshold}), stream likely ended — stopping"
+                        f"(threshold={sed_threshold}), stream likely ended — stopping"
                     )
                     stop_event.set()
                     break

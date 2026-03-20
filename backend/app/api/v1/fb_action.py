@@ -2974,7 +2974,7 @@ async def live_engage_status(
         select(FBLiveEngageLog)
         .where(FBLiveEngageLog.session_id == session.id)
         .order_by(FBLiveEngageLog.created_at.desc())
-        .limit(30)
+        .limit(100)
     )
     logs = logs_result.scalars().all()
 
