@@ -8,6 +8,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from time import monotonic
 
 from app.celery_app import celery_app
@@ -211,6 +212,10 @@ async def _execute_engagement(session_id: str):
                     if lr.proxy_used and isinstance(lr.proxy_used, dict) and lr.proxy_used.get("host"):
                         proxy = lr.proxy_used
                     token = meta.decrypt_token(lr.access_token_encrypted) if lr.access_token_encrypted else ""
+                    # Skip accounts with neither cookie nor token — they can't post
+                    if not cookie and not token:
+                        logger.warning(f"[LiveEngage] Skipping {lr.email}: no cookie and no token")
+                        continue
                     account_pool.append({
                         "email": lr.email,
                         "cookie": cookie,
@@ -426,8 +431,14 @@ async def _monitor_loop(
                     seen_comment_ids.add(cid)
                     continue
 
-                # Skip our own comments
-                if message in our_content:
+                # Skip our own comments (normalize for Facebook text changes)
+                msg_normalized = message.strip().lower()
+                is_ours = any(
+                    msg_normalized == oc.strip().lower() or
+                    (len(msg_normalized) > 5 and SequenceMatcher(None, msg_normalized, oc.strip().lower()).ratio() > 0.85)
+                    for oc in our_content
+                )
+                if is_ours:
                     seen_comment_ids.add(cid)
                     continue
 
@@ -491,8 +502,32 @@ async def _monitor_loop(
                 except Exception:
                     pass
             else:
-                # Stream end detection — stop if too many consecutive empty polls
                 consecutive_empty_polls += 1
+
+                # BUG FIX: Reset cursor after 5 consecutive empty polls to
+                # re-fetch from scratch — the cursor may have advanced past
+                # the live edge, causing the API to return nothing forever.
+                if consecutive_empty_polls >= 5 and after_cursor:
+                    logger.info(
+                        "[LiveEngage] Monitor: 5 empty polls, resetting cursor to re-fetch"
+                    )
+                    after_cursor = None
+
+                # Check DB for paused status — freeze empty poll counter
+                try:
+                    async with SessionLocal() as db:
+                        result = await db.execute(
+                            select(FBLiveEngageSession.status).where(
+                                FBLiveEngageSession.id == uuid.UUID(session_id)
+                            )
+                        )
+                        db_status = result.scalar_one_or_none()
+                        if db_status == "paused":
+                            consecutive_empty_polls = 0  # Don't count empty polls while paused
+                except Exception:
+                    pass
+
+                # Stream end detection — only if explicitly enabled (threshold > 0)
                 sed_threshold = config.get("stream_end_threshold", 0)
                 if sed_threshold > 0 and consecutive_empty_polls >= sed_threshold:
                     logger.info(

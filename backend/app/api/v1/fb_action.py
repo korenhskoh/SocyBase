@@ -2888,6 +2888,12 @@ async def live_engage_list_presets(
                 "target_comments_period_minutes": p.target_comments_period_minutes,
                 "blacklist_words": p.blacklist_words,
                 "stream_end_threshold": p.stream_end_threshold,
+                "languages": p.languages.split(",") if p.languages else [],
+                "comment_without_new": p.comment_without_new,
+                "comment_without_new_max": p.comment_without_new_max,
+                "auto_order_trending": p.auto_order_trending,
+                "auto_order_trending_threshold": p.auto_order_trending_threshold,
+                "auto_order_trending_cooldown": p.auto_order_trending_cooldown,
                 "created_at": p.created_at.isoformat() if p.created_at else None,
             }
             for p in presets
@@ -2929,6 +2935,12 @@ async def live_engage_save_preset(
         target_comments_period_minutes=data.get("target_comments_period_minutes"),
         blacklist_words=data.get("blacklist_words"),
         stream_end_threshold=data.get("stream_end_threshold", 10),
+        languages=",".join(data.get("languages", [])) if data.get("languages") else None,
+        comment_without_new=data.get("comment_without_new", False),
+        comment_without_new_max=data.get("comment_without_new_max", 3),
+        auto_order_trending=data.get("auto_order_trending", False),
+        auto_order_trending_threshold=data.get("auto_order_trending_threshold", 3),
+        auto_order_trending_cooldown=data.get("auto_order_trending_cooldown", 60),
     )
     db.add(preset)
     await db.commit()

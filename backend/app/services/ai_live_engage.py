@@ -1,5 +1,6 @@
 """AI Live Engagement — generate contextual livestream comments per role."""
 
+import asyncio
 import json
 import logging
 import random
@@ -356,15 +357,18 @@ class AILiveEngageService:
         )
 
         try:
-            response = await self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Generate one {role} comment for the livestream."},
-                ],
-                temperature=0.85,
-                max_tokens=300,
-                response_format={"type": "json_object"},
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Generate one {role} comment for the livestream."},
+                    ],
+                    temperature=0.85,
+                    max_tokens=300,
+                    response_format={"type": "json_object"},
+                ),
+                timeout=30,  # 30s max for AI generation
             )
             parsed = _parse_json_response(response.choices[0].message.content or "{}", {})
             comment = parsed.get("comment", "")
@@ -373,19 +377,22 @@ class AILiveEngageService:
             # If too similar, try once more with higher temperature
             if comment:
                 logger.info(f"[LiveEngage] Comment too similar to history, regenerating")
-                response2 = await self.client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": (
-                            f"Generate one {role} comment for the livestream. "
-                            "Make it very different from anything posted before — "
-                            "use a completely different angle, tone, and wording."
-                        )},
-                    ],
-                    temperature=1.0,
-                    max_tokens=300,
-                    response_format={"type": "json_object"},
+                response2 = await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": (
+                                f"Generate one {role} comment for the livestream. "
+                                "Make it very different from anything posted before — "
+                                "use a completely different angle, tone, and wording."
+                            )},
+                        ],
+                        temperature=1.0,
+                        max_tokens=300,
+                        response_format={"type": "json_object"},
+                    ),
+                    timeout=30,
                 )
                 parsed2 = _parse_json_response(response2.choices[0].message.content or "{}", {})
                 comment2 = parsed2.get("comment", "")

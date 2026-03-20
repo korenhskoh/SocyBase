@@ -172,6 +172,9 @@ class FBLiveEngagePreset(Base):
     comment_without_new: Mapped[bool] = mapped_column(Boolean, default=False)
     comment_without_new_max: Mapped[int] = mapped_column(Integer, default=3)
     stream_end_threshold: Mapped[int] = mapped_column(Integer, default=10)
+    auto_order_trending: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_order_trending_threshold: Mapped[int] = mapped_column(Integer, default=3)
+    auto_order_trending_cooldown: Mapped[int] = mapped_column(Integer, default=60)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
