@@ -7,6 +7,7 @@ import logging
 import random
 import re
 from datetime import datetime, timezone
+import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
