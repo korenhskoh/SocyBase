@@ -286,6 +286,7 @@ export default function FBActionBotPage() {
   const [leCommentWithoutNew, setLeCommentWithoutNew] = useState(false);
   const [leCommentWithoutNewMax, setLeCommentWithoutNewMax] = useState(3);
   const [leBlacklistWords, setLeBlacklistWords] = useState("");
+  const [leStreamEndEnabled, setLeStreamEndEnabled] = useState(true);
   const [leStreamEndThreshold, setLeStreamEndThreshold] = useState(10);
   const [leScheduledAt, setLeScheduledAt] = useState("");
   const [lePresets, setLePresets] = useState<any[]>([]);
@@ -3833,14 +3834,32 @@ export default function FBActionBotPage() {
                   />
                   <p className="text-xs text-white/30 mt-1">Comments containing these words will be skipped and regenerated</p>
                 </div>
-                <div>
-                  <label className="text-xs text-white/40 block mb-1">Stream End Detection: {leStreamEndThreshold} empty polls</label>
-                  <input
-                    type="range" min={3} max={50} step={1} value={leStreamEndThreshold}
-                    className="w-full accent-amber-400"
-                    onChange={(e) => setLeStreamEndThreshold(parseInt(e.target.value))}
-                  />
-                  <p className="text-xs text-white/30 mt-1">Auto-stop after this many consecutive polls with zero new comments (stream likely ended)</p>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={leStreamEndEnabled}
+                        onChange={(e) => setLeStreamEndEnabled(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-white/10 rounded-full peer peer-checked:bg-amber-500/60 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                    <div>
+                      <span className="text-sm text-white/70">Stream End Detection</span>
+                      <p className="text-xs text-white/30">Auto-stop when stream likely ended (no new comments)</p>
+                    </div>
+                  </div>
+                  {leStreamEndEnabled && (
+                    <div className="pl-12">
+                      <label className="text-xs text-white/40 block mb-1">Threshold: {leStreamEndThreshold} consecutive empty polls</label>
+                      <input
+                        type="range" min={3} max={50} step={1} value={leStreamEndThreshold}
+                        className="w-full accent-amber-400"
+                        onChange={(e) => setLeStreamEndThreshold(parseInt(e.target.value))}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-white/40 block mb-1">Schedule Start (optional)</label>
@@ -3885,7 +3904,7 @@ export default function FBActionBotPage() {
                           comment_without_new: leCommentWithoutNew,
                           comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                           blacklist_words: leBlacklistWords.trim() || undefined,
-                          stream_end_threshold: leStreamEndThreshold,
+                          stream_end_threshold: leStreamEndEnabled ? leStreamEndThreshold : 0,
                         });
                         showToast("success", `Preset "${name}" saved`);
                         const res = await fbActionApi.liveEngagePresets();
@@ -3921,6 +3940,7 @@ export default function FBActionBotPage() {
                             setLeCommentWithoutNew(p.comment_without_new || false);
                             setLeCommentWithoutNewMax(p.comment_without_new_max || 3);
                             setLeBlacklistWords(p.blacklist_words || "");
+                            setLeStreamEndEnabled((p.stream_end_threshold || 0) > 0);
                             setLeStreamEndThreshold(p.stream_end_threshold || 10);
                             showToast("success", `Loaded preset: ${p.name}`);
                           }}
@@ -4017,7 +4037,7 @@ export default function FBActionBotPage() {
                       comment_without_new: leCommentWithoutNew,
                       comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                       blacklist_words: leBlacklistWords.trim() || undefined,
-                      stream_end_threshold: leStreamEndThreshold,
+                      stream_end_threshold: leStreamEndEnabled ? leStreamEndThreshold : 0,
                       scheduled_at: leScheduledAt ? new Date(leScheduledAt).toISOString() : undefined,
                       min_delay_seconds: leMinDelay,
                       max_delay_seconds: leMaxDelay,

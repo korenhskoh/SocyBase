@@ -458,7 +458,7 @@ async def _monitor_loop(
             else:
                 # Stream end detection — stop if too many consecutive empty polls
                 consecutive_empty_polls += 1
-                if consecutive_empty_polls >= stream_end_threshold:
+                if stream_end_threshold > 0 and consecutive_empty_polls >= stream_end_threshold:
                     logger.info(
                         f"[LiveEngage] Monitor: {consecutive_empty_polls} consecutive empty polls "
                         f"(threshold={stream_end_threshold}), stream likely ended — stopping"
