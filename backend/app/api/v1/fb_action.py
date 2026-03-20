@@ -2837,8 +2837,11 @@ Rules: role_distribution sums to 100. If heavy ordering→place_order 50-60%. tr
             timeout=60,
         )
         config = _parse_json_safe(ai_resp.choices[0].message.content or "{}")
+    except aio.TimeoutError:
+        raise HTTPException(status_code=504, detail="AI analysis timed out (60s). Try again with fewer comments.")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"AI analysis failed: {exc}")
+        logger.warning(f"[SmartSetup] AI analysis failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(exc)[:200]}")
 
     # Normalize role distribution to 100
     roles = config.get("role_distribution", {})

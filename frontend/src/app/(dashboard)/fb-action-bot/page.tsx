@@ -3402,8 +3402,8 @@ export default function FBActionBotPage() {
                         const isVideo = url.includes("/videos/") || url.includes("/posts/") || /^\d{10,}$/.test(url);
                         setSmartSetupStep("AI analyzing data...");
                         const res = await fbActionApi.liveEngageSmartSetup({
-                          page_url: isVideo ? undefined : url,
-                          video_url: isVideo ? url : url,
+                          page_url: url,
+                          video_url: isVideo ? url : undefined,
                           max_comments: 200,
                         });
                         setSmartSetupResult(res.data);
