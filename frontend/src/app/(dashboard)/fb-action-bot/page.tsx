@@ -3619,7 +3619,7 @@ export default function FBActionBotPage() {
                   <p className="text-xs text-white/30 mt-1">Leave unchecked to auto-detect from live comments</p>
                 </div>
                 <div>
-                  <label className="text-xs text-white/40 block mb-1">Seed Product Codes (optional)</label>
+                  <label className="text-xs text-white/40 block mb-1">Known Product Codes (instant match, e.g. 480,388,168)</label>
                   <input
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
                     placeholder="e.g. m763, E769, R2000, G1024"
@@ -3629,7 +3629,7 @@ export default function FBActionBotPage() {
                   <p className="text-xs text-white/30 mt-1">Comma-separated. Bot also auto-detects codes from real viewer comments.</p>
                 </div>
                 <div>
-                  <label className="text-xs text-white/40 block mb-1">Code Pattern (regex, optional)</label>
+                  <label className="text-xs text-white/40 block mb-1">Code Pattern Examples (teach format, e.g. 8,1,E204)</label>
                   <input
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-white/20 focus:outline-none focus:border-white/20"
                     placeholder="e.g. [a-zA-Z]{1,3}\d{2,5}"
