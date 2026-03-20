@@ -177,18 +177,15 @@ class AILiveEngageService:
                         return f"{code} +{qty}"
                     return code
 
-        # ── Priority 2: Use detected codes with format from live patterns ──
+        # ── Priority 2: Use detected codes + live comment codes ONLY ──
+        # Training/past comments are for style reference only — never use their codes
         all_codes: list[str] = list(detected_codes or [])
 
-        # Also extract from live comments and training
+        # Extract codes from LIVE comments only (not training)
         for c in recent_comments[-30:]:
             msg = c.get("message", "").strip()
             if msg:
                 all_codes.extend(self._extract_codes(msg))
-        if training_comments:
-            for ln in training_comments.strip().split("\n"):
-                if ln.strip():
-                    all_codes.extend(self._extract_codes(ln.strip()))
 
         # Deduplicate
         seen_upper: set[str] = set()
