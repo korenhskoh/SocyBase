@@ -740,6 +740,8 @@ async def _engage_loop(
                                 if t["id"] == t_id:
                                     t["status"] = "running"
                             s.pending_actions = pa
+                            from sqlalchemy.orm.attributes import flag_modified
+                            flag_modified(s, "pending_actions")
                             await db.commit()
 
                         # Burst: post the code t_count times
@@ -780,16 +782,26 @@ async def _engage_loop(
                                 burst_content = t_code
 
                             try:
-                                resp = await client.execute_action(
-                                    cookie=acct["cookie"], user_agent=acct["user_agent"],
-                                    action_name="comment_to_post",
-                                    params={"post_id": post_id, "content": burst_content, "image": ""},
-                                    proxy=acct.get("proxy"),
-                                )
-                                b_success, _ = _parse_response(resp)
-                                if not b_success and acct.get("token"):
-                                    resp = await client.comment_direct(acct["token"], post_id, burst_content)
-                                    b_success = resp.get("success", False)
+                                b_success = False
+                                # Token-first priority (same as main engage loop)
+                                if acct.get("token"):
+                                    try:
+                                        resp = await client.comment_direct(acct["token"], post_id, burst_content)
+                                        b_success = resp.get("success", False)
+                                    except Exception:
+                                        pass
+                                # Fallback to AKNG cookies
+                                if not b_success and acct.get("cookie"):
+                                    try:
+                                        resp = await client.execute_action(
+                                            cookie=acct["cookie"], user_agent=acct["user_agent"],
+                                            action_name="comment_to_post",
+                                            params={"post_id": post_id, "content": burst_content, "image": ""},
+                                            proxy=acct.get("proxy"),
+                                        )
+                                        b_success, _ = _parse_response(resp)
+                                    except Exception:
+                                        pass
                             except Exception:
                                 b_success = False
 
@@ -840,6 +852,8 @@ async def _engage_loop(
                                     if t["id"] == t_id and t["status"] == "running":
                                         t["status"] = "completed"
                                 s.pending_actions = pa
+                                from sqlalchemy.orm.attributes import flag_modified
+                                flag_modified(s, "pending_actions")
                                 await db.commit()
                         except Exception:
                             pass
