@@ -346,8 +346,9 @@ export default function FBActionBotPage() {
 
   // Toast
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const showToast = (type: "success" | "error", message: string) => {
-    setToast({ type, message });
+  const showToast = (type: "success" | "error", message: any) => {
+    const safeMsg = typeof message === "string" ? message : (message?.message || JSON.stringify(message) || "Unknown error");
+    setToast({ type, message: safeMsg });
     setTimeout(() => setToast(null), 4000);
   };
 
@@ -3193,7 +3194,7 @@ export default function FBActionBotPage() {
                           showToast("success", "Warm-up batch started via Chrome extension");
                         }
                       } catch (e: any) {
-                        showToast("error", e.response?.data?.detail || "Failed to start warm-up");
+                        showToast("error", typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Failed to start warm-up");
                       } finally {
                         setWarmupStarting(false);
                       }
@@ -4059,7 +4060,7 @@ export default function FBActionBotPage() {
                       } catch { /* ignore poll errors */ }
                     }, 5000);
                   } catch (err: any) {
-                    showToast("error", err?.response?.data?.detail || "Failed to start engagement");
+                    showToast("error", typeof err?.response?.data?.detail === "string" ? err.response.data.detail : "Failed to start engagement");
                   } finally {
                     setLeStarting(false);
                   }
@@ -4656,7 +4657,7 @@ export default function FBActionBotPage() {
                           window.postMessage({ type: "SOCYBASE_START_DOM_CHECK", checkData, apiUrl, authToken }, "*");
                         } catch (e: any) {
                           setSelectorChecking(false);
-                          showToast("error", e.response?.data?.detail || "Failed to start DOM check");
+                          showToast("error", typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Failed to start DOM check");
                         }
                       }}
                       className="w-full flex items-center justify-between p-3 bg-white/[0.02] hover:bg-white/[0.05] rounded-lg border border-white/5 hover:border-purple-500/20 transition text-left"
@@ -4693,7 +4694,7 @@ export default function FBActionBotPage() {
               <svg className="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
             )}
             <p className={`text-sm font-medium ${toast.type === "success" ? "text-emerald-300" : "text-red-300"}`}>
-              {toast.message}
+              {typeof toast.message === "string" ? toast.message : JSON.stringify(toast.message)}
             </p>
           </div>
         </div>
