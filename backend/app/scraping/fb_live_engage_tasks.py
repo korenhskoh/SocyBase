@@ -495,8 +495,9 @@ async def _engage_loop(
     comments_posted_this_period = 0
     period_start = monotonic()
 
-    # Account health tracking — remove accounts after 3 consecutive errors
+    # Account health tracking — remove accounts after 5 consecutive errors
     account_errors: dict[str, int] = {}  # email → consecutive error count
+    token_errors: dict[str, int] = {}  # email → token error count (switch to AKNG after 3)
     account_last_used: dict[str, float] = {}  # email → monotonic timestamp
     account_cooldown_secs = max(30, len(account_pool) * 10)  # at least 30s, scales with pool size
     accounts_tried: set[str] = set()  # track which accounts have been attempted
@@ -824,34 +825,80 @@ async def _engage_loop(
                 posted_history[:] = posted_history[-30:]
 
             # Execute with retry (up to 3 attempts for transient errors)
+            # Priority: Graph API token first → AKNG cookies fallback
+            # After 3 token errors per account, switch to AKNG-first for that account
             success = False
             error_msg = None
+            email = account["email"]
+            use_token_first = account.get("token") and token_errors.get(email, 0) < 3
             max_retries = 3
+
             for retry in range(max_retries):
-                # Try AKNG first
-                try:
-                    resp = await client.execute_action(
-                        cookie=account["cookie"],
-                        user_agent=account["user_agent"],
-                        action_name="comment_to_post",
-                        params={"post_id": post_id, "content": content, "image": ""},
-                        proxy=account.get("proxy"),
-                    )
-                except Exception as exc:
-                    resp = {"success": False, "error": str(exc)}
+                if use_token_first:
+                    # Try direct Graph API token first
+                    try:
+                        resp = await client.comment_direct(
+                            token=account["token"],
+                            post_id=post_id,
+                            content=content,
+                        )
+                        success = resp.get("success", False)
+                        error_msg = resp.get("error") if not success else None
+                    except Exception as exc:
+                        success = False
+                        error_msg = str(exc)
 
-                success, error_msg = _parse_response(resp)
+                    if success:
+                        token_errors[email] = 0  # reset on success
+                        break
 
-                # Fallback: if AKNG failed and account has a token, try direct Graph API
-                if not success and account.get("token"):
-                    logger.info(f"[LiveEngage] AKNG failed, trying direct token for {account['email'][:20]}...")
-                    resp = await client.comment_direct(
-                        token=account["token"],
-                        post_id=post_id,
-                        content=content,
-                    )
-                    success = resp.get("success", False)
-                    error_msg = resp.get("error") if not success else None
+                    # Token failed — track error count
+                    token_errors[email] = token_errors.get(email, 0) + 1
+                    if token_errors[email] >= 3:
+                        logger.info(f"[LiveEngage] Token failed 3x for {email[:20]}, switching to AKNG")
+                        use_token_first = False
+
+                    # Fallback to AKNG
+                    try:
+                        resp = await client.execute_action(
+                            cookie=account["cookie"],
+                            user_agent=account["user_agent"],
+                            action_name="comment_to_post",
+                            params={"post_id": post_id, "content": content, "image": ""},
+                            proxy=account.get("proxy"),
+                        )
+                    except Exception as exc:
+                        resp = {"success": False, "error": str(exc)}
+                    success, error_msg = _parse_response(resp)
+
+                else:
+                    # AKNG first (no token or token exhausted)
+                    try:
+                        resp = await client.execute_action(
+                            cookie=account["cookie"],
+                            user_agent=account["user_agent"],
+                            action_name="comment_to_post",
+                            params={"post_id": post_id, "content": content, "image": ""},
+                            proxy=account.get("proxy"),
+                        )
+                    except Exception as exc:
+                        resp = {"success": False, "error": str(exc)}
+                    success, error_msg = _parse_response(resp)
+
+                    # Fallback to token if AKNG failed and token available
+                    if not success and account.get("token"):
+                        logger.info(f"[LiveEngage] AKNG failed, trying token for {email[:20]}...")
+                        try:
+                            resp = await client.comment_direct(
+                                token=account["token"],
+                                post_id=post_id,
+                                content=content,
+                            )
+                            success = resp.get("success", False)
+                            error_msg = resp.get("error") if not success else None
+                        except Exception as exc:
+                            success = False
+                            error_msg = str(exc)
 
                 if success:
                     break
@@ -862,14 +909,13 @@ async def _engage_loop(
                     "account has been disabled", "checkpoint required",
                     "login required", "account is temporarily locked",
                 )):
-                    break  # permanent error, stop retrying
+                    break
 
                 if retry < max_retries - 1:
-                    logger.info(f"[LiveEngage] Retry {retry + 1}/{max_retries} for {account['email'][:20]}...")
-                    await asyncio.sleep(2 * (retry + 1))  # backoff: 2s, 4s
+                    logger.info(f"[LiveEngage] Retry {retry + 1}/{max_retries} for {email[:20]}...")
+                    await asyncio.sleep(2 * (retry + 1))
 
             # Account health tracking
-            email = account["email"]
             accounts_tried.add(email)
             if success:
                 account_errors[email] = 0
