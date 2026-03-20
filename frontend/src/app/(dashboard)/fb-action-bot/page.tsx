@@ -276,6 +276,7 @@ export default function FBActionBotPage() {
   const [leQuantityVariation, setLeQuantityVariation] = useState(true);
   const [leAutoOrderTrending, setLeAutoOrderTrending] = useState(false);
   const [leAutoOrderThreshold, setLeAutoOrderThreshold] = useState(3);
+  const [leAutoOrderCooldown, setLeAutoOrderCooldown] = useState(60);
   const [leLanguages, setLeLanguages] = useState<string[]>([]);
   const [leAggressiveLevel, setLeAggressiveLevel] = useState<"low" | "medium" | "high">("medium");
   const [leTargetEnabled, setLeTargetEnabled] = useState(false);
@@ -3668,13 +3669,24 @@ export default function FBActionBotPage() {
                   </div>
                 </div>
                 {leAutoOrderTrending && (
-                  <div className="pl-12">
-                    <label className="text-xs text-white/40 block mb-1">Threshold: {leAutoOrderThreshold} mentions in 60s</label>
-                    <input
-                      type="range" min={2} max={20} step={1} value={leAutoOrderThreshold}
-                      className="w-full accent-amber-400"
-                      onChange={(e) => setLeAutoOrderThreshold(parseInt(e.target.value))}
-                    />
+                  <div className="pl-12 space-y-2">
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1">Threshold: {leAutoOrderThreshold} mentions in 60s</label>
+                      <input
+                        type="range" min={2} max={20} step={1} value={leAutoOrderThreshold}
+                        className="w-full accent-amber-400"
+                        onChange={(e) => setLeAutoOrderThreshold(parseInt(e.target.value))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1">Cooldown: {leAutoOrderCooldown}s between auto-orders</label>
+                      <input
+                        type="range" min={10} max={600} step={10} value={leAutoOrderCooldown}
+                        className="w-full accent-amber-400"
+                        onChange={(e) => setLeAutoOrderCooldown(parseInt(e.target.value))}
+                      />
+                      <p className="text-xs text-white/30 mt-0.5">Wait time after each auto-order before next can trigger</p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3931,6 +3943,7 @@ export default function FBActionBotPage() {
                           comment_without_new: leCommentWithoutNew,
                       auto_order_trending: leAutoOrderTrending,
                       auto_order_trending_threshold: leAutoOrderTrending ? leAutoOrderThreshold : undefined,
+                      auto_order_trending_cooldown: leAutoOrderTrending ? leAutoOrderCooldown : undefined,
                           comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                           blacklist_words: leBlacklistWords.trim() || undefined,
                           stream_end_threshold: leStreamEndEnabled ? leStreamEndThreshold : 0,
@@ -4066,6 +4079,7 @@ export default function FBActionBotPage() {
                       comment_without_new: leCommentWithoutNew,
                       auto_order_trending: leAutoOrderTrending,
                       auto_order_trending_threshold: leAutoOrderTrending ? leAutoOrderThreshold : undefined,
+                      auto_order_trending_cooldown: leAutoOrderTrending ? leAutoOrderCooldown : undefined,
                       comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                       blacklist_words: leBlacklistWords.trim() || undefined,
                       stream_end_threshold: leStreamEndEnabled ? leStreamEndThreshold : 0,

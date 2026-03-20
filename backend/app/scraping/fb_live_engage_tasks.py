@@ -38,7 +38,7 @@ class AdaptiveState:
     aggressive_level: str = "medium"
     # Auto-order trending: track recent code mentions for auto place_order
     recent_code_mentions: dict = field(default_factory=dict)  # code → [timestamps]
-    auto_ordered_codes: set = field(default_factory=set)  # codes already auto-ordered this cycle
+    last_auto_order_time: float = 0.0  # monotonic timestamp of last auto-order
 
 
 def _extract_product_codes(message: str, code_re: re.Pattern | None = None) -> list[str]:
@@ -145,6 +145,7 @@ async def _execute_engagement(session_id: str):
                 "comment_without_new_max": session.comment_without_new_max or 3,
                 "auto_order_trending": bool(getattr(session, "auto_order_trending", False)),
                 "auto_order_trending_threshold": getattr(session, "auto_order_trending_threshold", None) or 3,
+                "auto_order_trending_cooldown": getattr(session, "auto_order_trending_cooldown", None) or 60,
                 "blacklist_words": session.blacklist_words or "",
                 "stream_end_threshold": session.stream_end_threshold if session.stream_end_threshold is not None else 10,
             }
@@ -847,27 +848,32 @@ async def _engage_loop(
                     new_order_weight, len(adaptive.detected_codes),
                 )
 
-            # ── Auto-order trending codes (alternating) ──
+            # ── Auto-order trending codes (alternating with cooldown) ──
             trending_code = None
             if config.get("auto_order_trending", False):
                 threshold = config.get("auto_order_trending_threshold", 3)
+                cooldown_secs = config.get("auto_order_trending_cooldown", 60)
                 now_check = monotonic()
-                for code_key, timestamps in list(adaptive.recent_code_mentions.items()):
-                    # Clean old timestamps (60s window)
-                    recent = [t for t in timestamps if now_check - t < 60]
-                    adaptive.recent_code_mentions[code_key] = recent
-                    if len(recent) >= threshold:
-                        # Alternate: ~50% auto-order, ~50% normal
-                        # Skip if we just auto-ordered this code (within last 2 comments)
-                        recent_auto = [p for p in posted_history[-3:] if code_key.lower() in p.lower()]
-                        if len(recent_auto) < 2 and random.random() < 0.5:
-                            trending_code = code_key
-                            for dc in adaptive.detected_codes:
-                                if dc.upper() == code_key:
-                                    trending_code = dc
-                                    break
-                            logger.info(f"[LiveEngage] Trending auto-order: {trending_code} ({len(recent)} mentions)")
-                            break
+
+                # Check cooldown — skip if last auto-order was too recent
+                since_last = now_check - adaptive.last_auto_order_time
+                if since_last >= cooldown_secs:
+                    for code_key, timestamps in list(adaptive.recent_code_mentions.items()):
+                        # Clean old timestamps (60s window)
+                        recent = [t for t in timestamps if now_check - t < 60]
+                        adaptive.recent_code_mentions[code_key] = recent
+                        if len(recent) >= threshold:
+                            # Alternate: ~50% auto-order, ~50% normal
+                            recent_auto = [p for p in posted_history[-3:] if code_key.lower() in p.lower()]
+                            if len(recent_auto) < 2 and random.random() < 0.5:
+                                trending_code = code_key
+                                for dc in adaptive.detected_codes:
+                                    if dc.upper() == code_key:
+                                        trending_code = dc
+                                        break
+                                adaptive.last_auto_order_time = now_check
+                                logger.info(f"[LiveEngage] Trending auto-order: {trending_code} ({len(recent)} mentions, cooldown={cooldown_secs}s)")
+                                break
 
             # Pick role — alternate between auto-order and normal
             if trending_code:

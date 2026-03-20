@@ -26,8 +26,11 @@ def upgrade():
         op.add_column('fb_live_engage_sessions', sa.Column('auto_order_trending', sa.Boolean(), nullable=True, server_default='false'))
     if not _col_exists('fb_live_engage_sessions', 'auto_order_trending_threshold'):
         op.add_column('fb_live_engage_sessions', sa.Column('auto_order_trending_threshold', sa.Integer(), nullable=True, server_default='3'))
+    if not _col_exists('fb_live_engage_sessions', 'auto_order_trending_cooldown'):
+        op.add_column('fb_live_engage_sessions', sa.Column('auto_order_trending_cooldown', sa.Integer(), nullable=True, server_default='60'))
 
 
 def downgrade():
+    op.drop_column('fb_live_engage_sessions', 'auto_order_trending_cooldown')
     op.drop_column('fb_live_engage_sessions', 'auto_order_trending_threshold')
     op.drop_column('fb_live_engage_sessions', 'auto_order_trending')

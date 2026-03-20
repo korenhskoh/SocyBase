@@ -2379,6 +2379,7 @@ class LiveEngageStartRequest(BaseModel):
     comment_without_new_max: int = Field(default=3, ge=1, le=20)  # max attempts before waiting
     auto_order_trending: bool = False  # auto place_order when code trends in comments
     auto_order_trending_threshold: int = Field(default=3, ge=2, le=20)  # mentions in 60s to trigger
+    auto_order_trending_cooldown: int = Field(default=60, ge=10, le=600)  # seconds between auto-orders
     blacklist_words: str | None = None  # comma-separated words to avoid
     stream_end_threshold: int = Field(default=10, ge=0, le=50)  # 0 = disabled
     scheduled_at: str | None = None  # ISO datetime for scheduled start
@@ -2530,6 +2531,7 @@ async def live_engage_start(
         comment_without_new_max=req.comment_without_new_max,
         auto_order_trending=req.auto_order_trending,
         auto_order_trending_threshold=req.auto_order_trending_threshold,
+        auto_order_trending_cooldown=req.auto_order_trending_cooldown,
         blacklist_words=req.blacklist_words,
         stream_end_threshold=req.stream_end_threshold,
         scheduled_at=_parse_scheduled_at(req.scheduled_at),
