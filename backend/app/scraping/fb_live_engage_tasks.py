@@ -152,6 +152,7 @@ async def _execute_engagement(session_id: str):
                     account_pool.append({
                         "email": acct.get("email", ""),
                         "cookie": acct.get("cookies", ""),
+                        "token": acct.get("token", ""),
                         "user_agent": acct.get("user_agent", ""),
                         "proxy": proxy,
                     })
@@ -175,9 +176,11 @@ async def _execute_engagement(session_id: str):
                     proxy = None
                     if lr.proxy_used and isinstance(lr.proxy_used, dict) and lr.proxy_used.get("host"):
                         proxy = lr.proxy_used
+                    token = meta.decrypt_token(lr.access_token_encrypted) if lr.access_token_encrypted else ""
                     account_pool.append({
                         "email": lr.email,
                         "cookie": cookie,
+                        "token": token,
                         "user_agent": lr.user_agent or "",
                         "proxy": proxy,
                     })
@@ -653,7 +656,7 @@ async def _engage_loop(
             if len(posted_history) > 30:
                 posted_history[:] = posted_history[-30:]
 
-            # Execute via AKNG
+            # Execute via AKNG (primary) → direct Graph API token (fallback)
             try:
                 resp = await client.execute_action(
                     cookie=account["cookie"],
@@ -665,8 +668,18 @@ async def _engage_loop(
             except Exception as exc:
                 resp = {"success": False, "error": str(exc)}
 
-            # Parse response
             success, error_msg = _parse_response(resp)
+
+            # Fallback: if AKNG failed and account has a token, try direct Graph API
+            if not success and account.get("token"):
+                logger.info(f"[LiveEngage] AKNG failed, trying direct token for {account['email'][:20]}...")
+                resp = await client.comment_direct(
+                    token=account["token"],
+                    post_id=post_id,
+                    content=content,
+                )
+                success = resp.get("success", False)
+                error_msg = resp.get("error") if not success else None
 
             # Account health tracking
             email = account["email"]

@@ -419,3 +419,25 @@ class FacebookGraphClient(AbstractSocialClient):
             timeout=httpx.Timeout(120.0, connect=15.0),
         )
         return response.json()
+
+    async def comment_direct(self, token: str, post_id: str, content: str) -> dict:
+        """Post a comment directly via Facebook Graph API using access token.
+
+        Bypasses AKNG — calls graph.facebook.com directly.
+        Used as fallback when AKNG fb_action fails.
+        """
+        try:
+            response = await self.client.post(
+                f"https://graph.facebook.com/{post_id}/comments",
+                data={"message": content, "access_token": token},
+                timeout=httpx.Timeout(30.0, connect=10.0),
+            )
+            data = response.json()
+            if response.status_code == 200 and data.get("id"):
+                return {"success": True, "data": data}
+            return {
+                "success": False,
+                "error": data.get("error", {}).get("message", str(data)),
+            }
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
