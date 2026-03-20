@@ -3413,7 +3413,7 @@ export default function FBActionBotPage() {
                         onClick={async () => {
                           try {
                             const res = await fbActionApi.liveEngageAccountsTemplate();
-                            const url = window.URL.createObjectURL(new Blob([res.data]));
+                            const url = window.URL.createObjectURL(res.data instanceof Blob ? res.data : new Blob([res.data]));
                             const a = document.createElement("a");
                             a.href = url;
                             a.download = "live_engage_accounts_template.csv";
@@ -4355,7 +4355,7 @@ export default function FBActionBotPage() {
                       onClick={async () => {
                         try {
                           const res = await fbActionApi.liveEngageExport(liveEngageSession.id, "csv");
-                          const url = window.URL.createObjectURL(new Blob([res.data]));
+                          const url = window.URL.createObjectURL(res.data instanceof Blob ? res.data : new Blob([res.data]));
                           const a = document.createElement("a");
                           a.href = url;
                           a.download = `engagement_report_${liveEngageSession.post_id}.csv`;

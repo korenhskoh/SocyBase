@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import random
+import re
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -2330,6 +2331,15 @@ async def ai_plan_my_posts(
 # ═══════════════════════════════════════════════════════════════════════
 
 
+def _parse_scheduled_at(val: str | None) -> datetime | None:
+    if not val:
+        return None
+    try:
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
 class LiveEngageDirectAccount(BaseModel):
     cookies: str
     email: str  # or phone number
@@ -2387,6 +2397,8 @@ async def live_engage_start(
     invalid_roles = set(req.role_distribution.keys()) - VALID_ROLES
     if invalid_roles:
         raise HTTPException(status_code=400, detail=f"Invalid roles: {invalid_roles}")
+    if any(v < 0 for v in req.role_distribution.values()):
+        raise HTTPException(status_code=400, detail="Role percentages cannot be negative")
     total_pct = sum(req.role_distribution.values())
     if total_pct != 100:
         raise HTTPException(status_code=400, detail=f"Role percentages must sum to 100, got {total_pct}")
@@ -2487,7 +2499,7 @@ async def live_engage_start(
         comment_without_new_max=req.comment_without_new_max,
         blacklist_words=req.blacklist_words,
         stream_end_threshold=req.stream_end_threshold,
-        scheduled_at=datetime.fromisoformat(req.scheduled_at.replace("Z", "+00:00")) if req.scheduled_at else None,
+        scheduled_at=_parse_scheduled_at(req.scheduled_at),
     )
     db.add(session)
     await db.commit()
@@ -3050,7 +3062,7 @@ async def live_engage_resume(
 @router.get("/live-engage/{session_id}/export")
 async def live_engage_export(
     session_id: str,
-    format: str = Query("csv", regex="^(csv|json)$"),
+    format: str = Query("csv", pattern="^(csv|json)$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -3133,10 +3145,10 @@ async def live_engage_export(
     for log in logs:
         writer.writerow([
             log.created_at.strftime("%Y-%m-%d %H:%M:%S") if log.created_at else "",
-            log.role,
-            log.status,
-            log.account_email,
-            log.content,
+            log.role or "",
+            log.status or "",
+            log.account_email or "",
+            log.content or "",
             log.reference_comment or "",
             log.error_message or "",
         ])
@@ -3145,27 +3157,31 @@ async def live_engage_export(
     writer.writerow([])
     writer.writerow(["=== SESSION SUMMARY ==="])
     writer.writerow(["Title", session.title or ""])
-    writer.writerow(["Post ID", session.post_id])
-    writer.writerow(["Status", session.status])
+    writer.writerow(["Post ID", session.post_id or ""])
+    writer.writerow(["Status", session.status or ""])
     writer.writerow(["Started", session.started_at.strftime("%Y-%m-%d %H:%M:%S") if session.started_at else ""])
     writer.writerow(["Ended", session.ended_at.strftime("%Y-%m-%d %H:%M:%S") if session.ended_at else ""])
     if session.ended_at and session.started_at:
         duration = (session.ended_at - session.started_at).total_seconds() / 60
         writer.writerow(["Duration", f"{duration:.1f} minutes"])
-    writer.writerow(["Total Posted", session.total_comments_posted])
-    writer.writerow(["Total Errors", session.total_errors])
-    writer.writerow(["Comments Monitored", session.comments_monitored])
-    writer.writerow(["Active Accounts", session.active_accounts])
-    if session.comments_by_role:
+    writer.writerow(["Total Posted", session.total_comments_posted or 0])
+    writer.writerow(["Total Errors", session.total_errors or 0])
+    writer.writerow(["Comments Monitored", session.comments_monitored or 0])
+    writer.writerow(["Active Accounts", session.active_accounts or 0])
+    if session.comments_by_role and isinstance(session.comments_by_role, dict):
         writer.writerow([])
         writer.writerow(["=== COMMENTS BY ROLE ==="])
         for role, count in session.comments_by_role.items():
             writer.writerow([role.replace("_", " ").title(), count])
 
-    output.seek(0)
-    filename = f"live_engage_{session.title or session_id}_{session.post_id}.csv"
+    # Encode as UTF-8 bytes with BOM for Excel compatibility
+    csv_bytes = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
+    # Sanitize filename
+    safe_title = re.sub(r'[^\w\s-]', '', session.title or "session")[:50].strip()
+    safe_post = re.sub(r'[^\w-]', '', session.post_id or "")[:30]
+    filename = f"live_engage_{safe_title}_{safe_post}.csv"
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        iter([csv_bytes]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
     )
