@@ -333,13 +333,48 @@ async def send_live_engage_notification(
     if details:
         text += f"\n{details}"
 
+    # Build inline buttons for active sessions
+    reply_markup = None
+    sid = str(session.id)
+    if event in ("started", "resumed"):
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "\u23F8 Pause", "callback_data": f"le:pause:{sid}"},
+                    {"text": "\u23F9 Stop", "callback_data": f"le:stop:{sid}"},
+                ],
+                [{"text": "\U0001F4CA Status", "callback_data": f"le:status:{sid}"}],
+            ]
+        }
+    elif event == "paused":
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "\u25B6 Resume", "callback_data": f"le:resume:{sid}"},
+                    {"text": "\u23F9 Stop", "callback_data": f"le:stop:{sid}"},
+                ],
+                [{"text": "\U0001F4CA Status", "callback_data": f"le:status:{sid}"}],
+            ]
+        }
+    elif event in ("completed", "stopped", "failed"):
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "\U0001F4CA View Details", "callback_data": f"le:status:{sid}"}],
+                [{"text": "\U0001F534 All Sessions", "callback_data": "le:list"}],
+            ]
+        }
+
+    payload: dict = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
+
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(url, json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-            })
+            await client.post(url, json=payload)
     except Exception as e:
         logger.warning(f"Failed to send livestream Telegram notification: {e}")

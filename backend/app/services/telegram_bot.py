@@ -2373,6 +2373,143 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(buttons),
         )
 
+    # ── Livestream Engagement Control ─────────────────────────────
+    elif data.startswith("le:"):
+        parts = data.split(":", 2)
+        le_action = parts[1]
+        le_session_id = parts[2] if len(parts) > 2 else ""
+
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            await query.edit_message_text("Please link your account first with /login")
+            return
+
+        from app.models.fb_live_engage import FBLiveEngageSession
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(FBLiveEngageSession).where(
+                    FBLiveEngageSession.id == le_session_id,
+                    FBLiveEngageSession.user_id == user.id,
+                )
+            )
+            session = result.scalar_one_or_none()
+            if not session:
+                await query.edit_message_text("\u274C Session not found")
+                return
+
+            if le_action == "status":
+                status_icons = {
+                    "running": "\U0001F534", "paused": "\u23F8", "completed": "\u2705",
+                    "stopped": "\u23F9", "failed": "\u274C", "scheduled": "\U0001F552",
+                }
+                icon = status_icons.get(session.status, "\u26AA")
+                text = (
+                    f"{icon} <b>Livestream Session</b>\n\n"
+                    f"<b>Title:</b> {session.title or session.post_id}\n"
+                    f"<b>Status:</b> {session.status}\n"
+                    f"<b>Posted:</b> {session.total_comments_posted or 0}\n"
+                    f"<b>Errors:</b> {session.total_errors or 0}\n"
+                    f"<b>Monitored:</b> {session.comments_monitored or 0}\n"
+                    f"<b>Accounts:</b> {session.active_accounts or 0}\n"
+                )
+                if session.live_metrics:
+                    m = session.live_metrics
+                    text += (
+                        f"\n<b>Velocity:</b> {m.get('velocity_cpm', 0)} CPM\n"
+                        f"<b>Detected Codes:</b> {', '.join(m.get('detected_codes', [])[:10]) or 'none'}\n"
+                    )
+
+                buttons = []
+                if session.status == "running":
+                    buttons.append([
+                        InlineKeyboardButton("\u23F8 Pause", callback_data=f"le:pause:{session.id}"),
+                        InlineKeyboardButton("\u23F9 Stop", callback_data=f"le:stop:{session.id}"),
+                    ])
+                elif session.status == "paused":
+                    buttons.append([
+                        InlineKeyboardButton("\u25B6 Resume", callback_data=f"le:resume:{session.id}"),
+                        InlineKeyboardButton("\u23F9 Stop", callback_data=f"le:stop:{session.id}"),
+                    ])
+                buttons.append([
+                    InlineKeyboardButton("\U0001F504 Refresh", callback_data=f"le:status:{session.id}"),
+                ])
+                buttons.append([
+                    InlineKeyboardButton("\u25C0 Back to Sessions", callback_data="le:list"),
+                ])
+
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+
+            elif le_action == "pause":
+                if session.status == "running":
+                    session.status = "paused"
+                    await db.commit()
+                    await query.answer("\u23F8 Paused", show_alert=True)
+                    # Refresh status view
+                    await callback_handler(update, context)
+                else:
+                    await query.answer(f"Cannot pause — status is {session.status}", show_alert=True)
+
+            elif le_action == "resume":
+                if session.status == "paused":
+                    session.status = "running"
+                    await db.commit()
+                    await query.answer("\u25B6 Resumed", show_alert=True)
+                    # Update callback data to refresh status
+                    query.data = f"le:status:{session.id}"
+                    await callback_handler(update, context)
+                else:
+                    await query.answer(f"Cannot resume — status is {session.status}", show_alert=True)
+
+            elif le_action == "stop":
+                if session.status in ("running", "paused"):
+                    session.status = "stopped"
+                    from datetime import datetime as _dt, timezone as _tz
+                    session.ended_at = _dt.now(_tz.utc)
+                    await db.commit()
+                    await query.answer("\u23F9 Stopped", show_alert=True)
+                    query.data = f"le:status:{session.id}"
+                    await callback_handler(update, context)
+                else:
+                    await query.answer(f"Cannot stop — status is {session.status}", show_alert=True)
+
+    elif data == "le:list":
+        user = await _get_user_by_chat_id(str(query.from_user.id))
+        if not user:
+            await query.edit_message_text("Please link your account first with /login")
+            return
+
+        from app.models.fb_live_engage import FBLiveEngageSession
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(FBLiveEngageSession)
+                .where(FBLiveEngageSession.user_id == user.id)
+                .order_by(FBLiveEngageSession.created_at.desc())
+                .limit(10)
+            )
+            sessions = result.scalars().all()
+
+        if not sessions:
+            await query.edit_message_text("No livestream sessions yet.")
+            return
+
+        status_icons = {
+            "running": "\U0001F534", "paused": "\u23F8", "completed": "\u2705",
+            "stopped": "\u23F9", "failed": "\u274C", "scheduled": "\U0001F552",
+        }
+        buttons = []
+        for s in sessions:
+            icon = status_icons.get(s.status, "\u26AA")
+            label = f"{icon} {s.title or s.post_id[:20]} ({s.total_comments_posted or 0} posted)"
+            buttons.append([InlineKeyboardButton(label, callback_data=f"le:status:{s.id}")])
+
+        await query.edit_message_text(
+            "\U0001F534 <b>Livestream Sessions</b>\n\nSelect a session:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+
 
 # ── Language Command ──────────────────────────────────────────────────────
 
@@ -2771,6 +2908,49 @@ def get_bot_token_sync() -> str:
     return token or ""
 
 
+async def livestream_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show livestream engagement sessions with control buttons."""
+    lang = _lang(context)
+    user = await _get_user_by_chat_id(str(update.effective_user.id))
+    if not user:
+        await update.message.reply_text(_t(lang, "link_first"), parse_mode="HTML")
+        return
+
+    from app.models.fb_live_engage import FBLiveEngageSession
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(FBLiveEngageSession)
+            .where(FBLiveEngageSession.user_id == user.id)
+            .order_by(FBLiveEngageSession.created_at.desc())
+            .limit(10)
+        )
+        sessions = result.scalars().all()
+
+    if not sessions:
+        await update.message.reply_text(
+            "\U0001F534 <b>Livestream Engagement</b>\n\nNo sessions yet. Start one from the web dashboard.",
+            parse_mode="HTML",
+        )
+        return
+
+    status_icons = {
+        "running": "\U0001F534", "paused": "\u23F8", "completed": "\u2705",
+        "stopped": "\u23F9", "failed": "\u274C", "scheduled": "\U0001F552",
+    }
+    buttons = []
+    for s in sessions:
+        icon = status_icons.get(s.status, "\u26AA")
+        label = f"{icon} {s.title or s.post_id[:20]} ({s.total_comments_posted or 0} posted)"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"le:status:{s.id}")])
+
+    await update.message.reply_text(
+        "\U0001F534 <b>Livestream Engagement</b>\n\nSelect a session to control:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
 def create_bot_app(token: str | None = None) -> Application:
     """Build and configure the Telegram bot application."""
     if not token:
@@ -2798,6 +2978,7 @@ def create_bot_app(token: str | None = None) -> Application:
     app.add_handler(CommandHandler("tbwallet", tbwallet_command))
     app.add_handler(CommandHandler("language", language_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(CommandHandler("livestream", livestream_command))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
