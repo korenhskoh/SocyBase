@@ -26,6 +26,14 @@ PRODUCT_CODE_RE = re.compile(
     r'(?:\s*[+＋]\s*(\d{1,3}))?'
 )
 
+# Code format presets for frequency-based detection
+CODE_FORMAT_PATTERNS = {
+    "numbers": re.compile(r'^\d{1,5}$'),            # 1, 8, 480, 12345
+    "letters_numbers": re.compile(r'^[a-zA-Z]{1,3}\d{1,5}$'),  # L6, E204, AB12
+    "any_alphanumeric": re.compile(r'^[a-zA-Z0-9]{1,6}$'),     # L6, 480, E204, ABC
+    "any_short": None,                                # anything ≤6 chars (broadest)
+}
+
 
 @dataclass
 class AdaptiveState:
@@ -274,34 +282,37 @@ async def _execute_engagement(session_id: str):
             aggressive_level=config.get("aggressive_level", "medium"),
         )
 
-        # Code pattern: if it looks like comma-separated codes (no regex special chars),
-        # treat as additional whitelist codes; otherwise compile as regex
+        # Code pattern field: supports 3 modes
+        #   1. Format preset name: "numbers", "letters_numbers", "any_alphanumeric", "any_short"
+        #   2. Comma-separated codes: "1,23,E204" → added to whitelist
+        #   3. Regex pattern: "[A-Z]\d{3}" → compiled for auto-detection
         custom_pattern = config.get("code_pattern", "") or ""
         if custom_pattern:
-            # Check if input has regex special characters
-            has_regex_chars = bool(re.search(r'[\\()\[\]{}|^$*+?.!]', custom_pattern))
-            if has_regex_chars:
+            # Check if it's a format preset name
+            if custom_pattern.strip().lower() in CODE_FORMAT_PATTERNS:
+                config["code_format"] = custom_pattern.strip().lower()
+                logger.info(f"[LiveEngage] Code format preset: {config['code_format']}")
+            elif bool(re.search(r'[\\()\[\]{}|^$*+?.!]', custom_pattern)):
+                # Has regex special chars → compile as regex
                 try:
                     adaptive.code_re = re.compile(custom_pattern)
                     logger.info(f"[LiveEngage] Using custom code regex: {custom_pattern}")
                 except re.error as e:
                     logger.warning(f"[LiveEngage] Invalid code_pattern '{custom_pattern}': {e}, using default")
             else:
-                # Treat as comma-separated codes — add to whitelist
-                pattern_codes = [c.strip() for c in custom_pattern.split(",") if c.strip()]
-                if pattern_codes:
-                    logger.info(f"[LiveEngage] Code pattern treated as whitelist: {pattern_codes}")
-                    # Will be merged with seed codes below
+                # Plain text → treat as comma-separated whitelist codes
+                logger.info(f"[LiveEngage] Code pattern treated as whitelist codes")
 
-        # Seed product codes from user config — used as whitelist for detection
+        # Seed product codes — used as whitelist for instant matching
         seed_codes_str = config.get("product_codes", "") or ""
-        # Merge seed codes + code_pattern codes into one whitelist
+        # Merge seed codes + code_pattern codes (if plain text) into one whitelist
         all_seed_codes: list[str] = []
         if seed_codes_str:
             all_seed_codes.extend(c.strip() for c in seed_codes_str.split(",") if c.strip())
-        if custom_pattern and not bool(re.search(r'[\\()\[\]{}|^$*+?.!]', custom_pattern)):
-            all_seed_codes.extend(c.strip() for c in custom_pattern.split(",") if c.strip())
-        # Deduplicate while preserving order
+        if custom_pattern and custom_pattern.strip().lower() not in CODE_FORMAT_PATTERNS:
+            if not bool(re.search(r'[\\()\[\]{}|^$*+?.!]', custom_pattern)):
+                all_seed_codes.extend(c.strip() for c in custom_pattern.split(",") if c.strip())
+        # Deduplicate
         seen_codes: set[str] = set()
         unique_codes: list[str] = []
         for c in all_seed_codes:
@@ -312,6 +323,18 @@ async def _execute_engagement(session_id: str):
             adaptive.detected_codes = unique_codes
             adaptive.code_whitelist = {c.upper() for c in unique_codes}
             logger.info(f"[LiveEngage] Code whitelist: {unique_codes}")
+
+        # Auto-detect code_format from seed codes if not explicitly set
+        if "code_format" not in config and unique_codes:
+            all_numeric = all(c.isdigit() for c in unique_codes)
+            all_alpha_num = all(re.match(r'^[a-zA-Z]{1,3}\d{1,5}$', c) for c in unique_codes)
+            if all_numeric:
+                config["code_format"] = "numbers"
+            elif all_alpha_num:
+                config["code_format"] = "letters_numbers"
+            else:
+                config["code_format"] = "any_alphanumeric"
+            logger.info(f"[LiveEngage] Auto-detected code format: {config['code_format']} from seeds")
 
         client = FacebookGraphClient()
 
@@ -499,24 +522,34 @@ async def _monitor_loop(
                                 codes_in_msg.append(original)
 
                 # Method 3: Frequency-based auto-detection for short messages
-                # Short messages (≤10 chars) that repeat from different viewers
-                # are almost certainly product codes (e.g. "1", "8", "480", "要")
+                # Uses code_format to filter what looks like a code
                 msg_stripped = message.strip()
                 if len(msg_stripped) <= 10 and not codes_in_msg:
-                    # Extract the core token (strip +N quantity suffix)
+                    # Extract the core token (strip +N quantity, order keywords)
                     core = re.sub(r'\s*[+＋]\s*\d{1,3}$', '', msg_stripped).strip()
+                    core = re.sub(r'\s+(nak|want|order|beli|pm|要|買)$', '', core, flags=re.IGNORECASE).strip()
                     if core and len(core) <= 6:
-                        core_upper = core.upper()
-                        # Track frequency: how many times this short msg appeared
-                        if not hasattr(adaptive, '_short_msg_freq'):
-                            adaptive._short_msg_freq = {}  # msg → {count, viewers}
-                        freq = adaptive._short_msg_freq.setdefault(core_upper, {"count": 0, "viewers": set()})
-                        freq["count"] += 1
-                        freq["viewers"].add(from_id)
-                        # If same short msg from 2+ different viewers → likely a code
-                        if len(freq["viewers"]) >= 2 and core_upper not in {c.upper() for c in codes_in_msg}:
-                            codes_in_msg.append(core)
-                            logger.info(f"[LiveEngage] Auto-detected code by frequency: '{core}' ({freq['count']} times, {len(freq['viewers'])} viewers)")
+                        # Check if core matches the expected code format
+                        code_format = config.get("code_format", "any_alphanumeric")
+                        format_re = CODE_FORMAT_PATTERNS.get(code_format)
+                        looks_like_code = True
+                        if format_re is not None:
+                            looks_like_code = bool(format_re.match(core))
+                        else:
+                            # "any_short" — accept anything ≤6 chars
+                            looks_like_code = len(core) <= 6
+
+                        if looks_like_code:
+                            core_upper = core.upper()
+                            if not hasattr(adaptive, '_short_msg_freq'):
+                                adaptive._short_msg_freq = {}
+                            freq = adaptive._short_msg_freq.setdefault(core_upper, {"count": 0, "viewers": set()})
+                            freq["count"] += 1
+                            freq["viewers"].add(from_id)
+                            # 2+ different viewers → likely a product code
+                            if len(freq["viewers"]) >= 2 and core_upper not in {c.upper() for c in codes_in_msg}:
+                                codes_in_msg.append(core)
+                                logger.info(f"[LiveEngage] Auto-detected code by frequency: '{core}' ({freq['count']} times, {len(freq['viewers'])} viewers)")
 
                 if codes_in_msg:
                     adaptive.code_comment_timestamps.append(now_ts)
