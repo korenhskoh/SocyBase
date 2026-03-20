@@ -3,6 +3,7 @@
 import json
 import logging
 import random
+import re
 from difflib import SequenceMatcher
 
 from openai import AsyncOpenAI
@@ -104,6 +105,18 @@ class AILiveEngageService:
             reference_comment, posted_history,
         )
 
+    # Regex patterns for extracting codes/numbers from any text
+    _CODE_RE = re.compile(r'\b([a-zA-Z]{1,3}\d{2,5})\b')  # m763, AB12, R2000
+    _NUMBER_RE = re.compile(r'\b(\d{1,5})\s*[号號]')  # 8号, 12號
+    _BARE_NUMBER_RE = re.compile(r'^(\d{1,5})$')  # just a number like "763"
+
+    def _extract_all_codes(self, text: str) -> list[str]:
+        """Extract product codes and number patterns from text."""
+        codes = self._CODE_RE.findall(text)
+        numbers = [f"{n}号" for n in self._NUMBER_RE.findall(text)]
+        bare = self._BARE_NUMBER_RE.findall(text.strip())
+        return codes + numbers + bare
+
     def _generate_order_comment(
         self,
         recent_comments: list[dict],
@@ -114,78 +127,95 @@ class AILiveEngageService:
     ) -> str:
         """Generate a place-order comment.
 
-        Priority: detected product codes > real viewer patterns > training comments > static templates.
-        Filters out recently posted content to avoid repetition.
+        Priority: detected codes > live codes/numbers > training codes/numbers >
+                  live order patterns > static templates.
+        Output is always code/number based — never general chat.
         """
-        # ── Priority 1: Use detected product codes ~80% of the time ──
-        if detected_codes and random.random() < 0.8:
-            code = random.choice(detected_codes)
+        order_phrases = ["nak", "want", "order", "beli", "pm", "要", "买", "拿", "下单"]
+
+        # ── Collect all available codes from every source ──
+        all_codes: list[str] = list(detected_codes or [])
+
+        # Extract codes from live comments
+        for c in recent_comments[-30:]:
+            msg = c.get("message", "").strip()
+            if msg:
+                all_codes.extend(self._extract_all_codes(msg))
+
+        # Extract codes from training/past comments
+        if training_comments:
+            for ln in training_comments.strip().split("\n"):
+                ln = ln.strip()
+                if ln:
+                    all_codes.extend(self._extract_all_codes(ln))
+
+        # Deduplicate while preserving order
+        seen_upper: set[str] = set()
+        unique_codes: list[str] = []
+        for code in all_codes:
+            if code.upper() not in seen_upper:
+                seen_upper.add(code.upper())
+                unique_codes.append(code)
+
+        # ── Generate order comment from codes ──
+        if unique_codes:
+            code = random.choice(unique_codes)
+
+            # Filter out recently posted
+            if posted_history:
+                recent_posted = {p.lower().strip() for p in posted_history[-10:]}
+                available = [c for c in unique_codes if c.lower() not in recent_posted]
+                if available:
+                    code = random.choice(available)
+
             roll = random.random()
-            if quantity_variation and roll < 0.3:
+            if quantity_variation and roll < 0.25:
                 qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
                 return f"{code} +{qty}"
-            elif roll < 0.5:
-                phrase = random.choice(["nak", "want", "order", "beli", "pm"])
+            elif roll < 0.45:
+                phrase = random.choice(order_phrases)
                 return f"{code} {phrase}"
+            elif roll < 0.55:
+                return f"+1 {code}"
             return code
 
-        # ── Priority 2: Copy real viewer order patterns from scraped comments ──
+        # ── Fallback: copy short order-like patterns from live comments ──
         order_signals = {
-            "+1", "nak", "order", "want", "beli", "pm", "interested",
-            "mau", "cod", "buy", "book", "reserved", "mine", "me",
-            "saya", "aku", "confirm", "done", "paid", "bayar",
-            # Chinese/CJK order signals
-            "要", "买", "購", "下单", "下單", "拿", "收", "订", "訂",
-            "付", "给我", "給我", "我要", "来一个", "來一個", "多少钱", "多少錢",
-            "怎么买", "怎麼買", "价格", "價格", "几号", "幾號",
+            "+1", "nak", "order", "want", "beli", "pm",
+            "mau", "cod", "buy", "book", "reserved",
+            "要", "买", "拿", "下单", "收", "订",
         }
-
         live_patterns: list[str] = []
         for c in recent_comments[-30:]:
             msg = c.get("message", "").strip()
             if not msg:
                 continue
-            msg_lower = msg.lower()
-            if len(msg) <= 40 and any(kw in msg_lower for kw in order_signals):
-                live_patterns.append(msg)
-            elif len(msg) <= 15:
+            if len(msg) <= 15 or (len(msg) <= 40 and any(kw in msg.lower() for kw in order_signals)):
                 live_patterns.append(msg)
 
-        # Deduplicate while preserving order
-        seen = set()
-        unique_patterns: list[str] = []
-        for p in live_patterns:
-            key = p.lower().strip()
-            if key not in seen:
-                seen.add(key)
-                unique_patterns.append(p)
+        if live_patterns:
+            # Deduplicate
+            seen: set[str] = set()
+            candidates = []
+            for p in live_patterns:
+                if p.lower() not in seen:
+                    seen.add(p.lower())
+                    candidates.append(p)
+            if posted_history:
+                recent_posted = {p.lower().strip() for p in posted_history[-10:]}
+                filtered = [c for c in candidates if c.lower().strip() not in recent_posted]
+                if filtered:
+                    candidates = filtered
+            if candidates:
+                return random.choice(candidates)
 
-        if unique_patterns:
-            candidates = unique_patterns
-        elif training_comments:
-            # ── Priority 3: Fall back to uploaded training/past comments ──
-            lines = [ln.strip() for ln in training_comments.strip().split("\n") if ln.strip()]
-            # Filter to lines that look like orders (short + contain order keywords)
-            order_lines = [
-                ln for ln in lines
-                if len(ln) <= 40 and any(kw in ln.lower() for kw in order_signals)
-            ]
-            if order_lines:
-                candidates = order_lines
-            else:
-                # No order-like lines found — fall through to static templates
-                candidates = list(ORDER_PATTERNS)
-        else:
-            # ── Priority 4: Static templates as last resort ──
-            candidates = list(ORDER_PATTERNS)
-
-        # Filter out recently posted to avoid repetition
+        # ── Last resort: static templates ──
+        candidates = list(ORDER_PATTERNS)
         if posted_history:
-            recent_posted = set(p.lower().strip() for p in posted_history[-10:])
+            recent_posted = {p.lower().strip() for p in posted_history[-10:]}
             filtered = [c for c in candidates if c.lower().strip() not in recent_posted]
             if filtered:
                 candidates = filtered
-
         return random.choice(candidates)
 
     async def _generate_ai_comment(
