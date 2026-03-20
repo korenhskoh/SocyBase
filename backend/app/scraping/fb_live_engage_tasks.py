@@ -690,16 +690,35 @@ async def _engage_loop(
                 account_errors[email] = account_errors.get(email, 0) + 1
                 consecutive_errors += 1
 
-                # Remove account after 3 consecutive errors
-                if account_errors[email] >= 3 and len(account_pool) > 1:
+                # Detect permanent errors — remove immediately, no retries
+                permanent_errors = (
+                    "session has been invalidated",
+                    "changed their password",
+                    "user changed the password",
+                    "login required",
+                    "account has been disabled",
+                    "account is temporarily locked",
+                    "checkpoint required",
+                )
+                is_permanent = error_msg and any(
+                    pe in error_msg.lower() for pe in permanent_errors
+                )
+
+                # Remove account: immediately for permanent errors, after 3 for transient
+                should_remove = is_permanent or account_errors[email] >= 3
+                if should_remove and len(account_pool) > 1:
                     account_pool[:] = [a for a in account_pool if a["email"] != email]
+                    reason = "permanent error" if is_permanent else f"{account_errors[email]} consecutive errors"
                     logger.warning(
                         f"[LiveEngage] Removed account {email[:20]}... "
-                        f"({account_errors[email]} consecutive errors, {len(account_pool)} remaining)"
+                        f"({reason}, {len(account_pool)} remaining)"
                     )
+                    # Don't count permanent removals toward consecutive auto-stop
+                    if is_permanent:
+                        consecutive_errors = max(0, consecutive_errors - 1)
 
-                # Auto-stop on 10 consecutive errors across all accounts
-                if consecutive_errors >= 10:
+                # Auto-stop only if ALL remaining accounts are failing
+                if consecutive_errors >= max(10, len(account_pool) * 3):
                     logger.warning(f"[LiveEngage] {consecutive_errors} consecutive errors — auto-stopping")
                     stop_event.set()
                     break
