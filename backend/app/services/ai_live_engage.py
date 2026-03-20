@@ -102,16 +102,37 @@ class AILiveEngageService:
         )
 
     # Regex patterns for extracting codes/numbers from any text
-    _CODE_RE = re.compile(r'\b([a-zA-Z]{1,3}\d{2,5})\b')  # m763, AB12, R2000
-    _NUMBER_RE = re.compile(r'(\d{1,5})\s*[号號]')  # 8号, 12號 (no \b — CJK boundary issues)
-    _BARE_NUMBER_RE = re.compile(r'^(\d{1,5})$')  # just a number like "763"
+    # Regex: code/number patterns with optional quantity — captures the WHOLE order string
+    _ORDER_PATTERN_RE = re.compile(
+        r'(?:^|\s)'
+        r'('
+        r'[a-zA-Z]{1,3}\d{1,5}'   # code like L6, m763, AB12
+        r'|'
+        r'\d{1,5}\s*[号號]?'       # number like 8, 8号
+        r')'
+        r'(\s*[+＋]\s*\d{1,3})?'   # optional quantity: +1, +2, ＋3
+        r'',
+        re.MULTILINE,
+    )
+    _CODE_RE = re.compile(r'[a-zA-Z]{1,3}\d{1,5}|\d{1,5}\s*[号號]')
 
-    def _extract_all_codes(self, text: str) -> list[str]:
-        """Extract product codes and number patterns from text."""
-        codes = self._CODE_RE.findall(text)
-        numbers = [f"{n}号" for n in self._NUMBER_RE.findall(text)]
-        bare = self._BARE_NUMBER_RE.findall(text.strip())
-        return codes + numbers + bare
+    def _extract_order_patterns_from_comments(self, comments: list[dict]) -> list[str]:
+        """Extract real order patterns (code + qty) exactly as viewers write them."""
+        patterns: list[str] = []
+        for c in comments[-30:]:
+            msg = c.get("message", "").strip()
+            if not msg or len(msg) > 30:
+                continue
+            # Check if this short message looks like an order
+            matches = self._ORDER_PATTERN_RE.findall(msg)
+            if matches:
+                # Use the original message as-is (preserves viewer's exact format)
+                patterns.append(msg.strip())
+        return patterns
+
+    def _extract_codes(self, text: str) -> list[str]:
+        """Extract just the code/number part from text."""
+        return self._CODE_RE.findall(text)
 
     def _generate_order_comment(
         self,
@@ -123,29 +144,53 @@ class AILiveEngageService:
     ) -> str:
         """Generate a place-order comment.
 
-        Priority: detected codes > live codes/numbers > training codes/numbers >
-                  live order patterns > static templates.
-        Output is always code/number based — never general chat.
+        Priority 1: Copy real viewer order patterns exactly (L6 +1, m763 nak)
+        Priority 2: Use detected codes with variations
+        Priority 3: Extract codes from training comments
+        Priority 4: Static templates
         """
-        order_phrases = ["nak", "want", "order", "beli", "pm", "要", "买", "拿", "下单"]
+        recent_posted = {p.lower().strip() for p in (posted_history or [])[-15:]}
 
-        # ── Collect all available codes from every source ──
+        # ── Priority 1: Copy REAL order patterns from live comments ──
+        # This captures the exact format viewers use (L6 +1, 8号, m763 要)
+        real_patterns = self._extract_order_patterns_from_comments(recent_comments)
+        if real_patterns:
+            # Deduplicate
+            seen: set[str] = set()
+            unique = []
+            for p in real_patterns:
+                if p.lower() not in seen and p.lower() not in recent_posted:
+                    seen.add(p.lower())
+                    unique.append(p)
+            if unique:
+                # 70% chance: use real pattern as-is
+                if random.random() < 0.7:
+                    return random.choice(unique)
+                # 30% chance: pick a code from patterns and add variation
+                codes_from_patterns = []
+                for p in unique:
+                    codes_from_patterns.extend(self._extract_codes(p))
+                if codes_from_patterns:
+                    code = random.choice(codes_from_patterns)
+                    if quantity_variation:
+                        qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
+                        return f"{code} +{qty}"
+                    return code
+
+        # ── Priority 2: Use detected codes with format from live patterns ──
         all_codes: list[str] = list(detected_codes or [])
 
-        # Extract codes from live comments
+        # Also extract from live comments and training
         for c in recent_comments[-30:]:
             msg = c.get("message", "").strip()
             if msg:
-                all_codes.extend(self._extract_all_codes(msg))
-
-        # Extract codes from training/past comments
+                all_codes.extend(self._extract_codes(msg))
         if training_comments:
             for ln in training_comments.strip().split("\n"):
-                ln = ln.strip()
-                if ln:
-                    all_codes.extend(self._extract_all_codes(ln))
+                if ln.strip():
+                    all_codes.extend(self._extract_codes(ln.strip()))
 
-        # Deduplicate while preserving order
+        # Deduplicate
         seen_upper: set[str] = set()
         unique_codes: list[str] = []
         for code in all_codes:
@@ -153,32 +198,25 @@ class AILiveEngageService:
                 seen_upper.add(code.upper())
                 unique_codes.append(code)
 
-        # ── Generate order comment from codes ──
         if unique_codes:
-            code = random.choice(unique_codes)
+            # Filter out recently posted codes
+            available = [c for c in unique_codes if c.lower() not in recent_posted]
+            code = random.choice(available) if available else random.choice(unique_codes)
 
-            # Filter out recently posted
-            if posted_history:
-                recent_posted = {p.lower().strip() for p in posted_history[-10:]}
-                available = [c for c in unique_codes if c.lower() not in recent_posted]
-                if available:
-                    code = random.choice(available)
-
+            # Generate variation — weighted to match common livestream patterns
             roll = random.random()
-            if quantity_variation and roll < 0.25:
+            if quantity_variation and roll < 0.35:
                 qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
                 return f"{code} +{qty}"
-            elif roll < 0.45:
-                phrase = random.choice(order_phrases)
-                return f"{code} {phrase}"
-            elif roll < 0.55:
-                return f"+1 {code}"
+            elif roll < 0.50:
+                # Use order phrases seen in live chat, or defaults
+                phrases = ["nak", "要", "+1", "order", "买"]
+                return f"{code} {random.choice(phrases)}"
             return code
 
-        # ── Fallback: copy short order-like patterns from live comments ──
+        # ── Priority 3: Short order-like patterns from live chat ──
         order_signals = {
             "+1", "nak", "order", "want", "beli", "pm",
-            "mau", "cod", "buy", "book", "reserved",
             "要", "买", "拿", "下单", "收", "订",
         }
         live_patterns: list[str] = []
@@ -190,29 +228,16 @@ class AILiveEngageService:
                 live_patterns.append(msg)
 
         if live_patterns:
-            # Deduplicate
-            seen: set[str] = set()
-            candidates = []
-            for p in live_patterns:
-                if p.lower() not in seen:
-                    seen.add(p.lower())
-                    candidates.append(p)
-            if posted_history:
-                recent_posted = {p.lower().strip() for p in posted_history[-10:]}
-                filtered = [c for c in candidates if c.lower().strip() not in recent_posted]
-                if filtered:
-                    candidates = filtered
-            if candidates:
-                return random.choice(candidates)
-
-        # ── Last resort: static templates ──
-        candidates = list(ORDER_PATTERNS)
-        if posted_history:
-            recent_posted = {p.lower().strip() for p in posted_history[-10:]}
-            filtered = [c for c in candidates if c.lower().strip() not in recent_posted]
+            unique_live = list({p.lower(): p for p in live_patterns}.values())
+            filtered = [p for p in unique_live if p.lower() not in recent_posted]
             if filtered:
-                candidates = filtered
-        return random.choice(candidates)
+                return random.choice(filtered)
+            if unique_live:
+                return random.choice(unique_live)
+
+        # ── Priority 4: Static templates ──
+        templates = [p for p in ORDER_PATTERNS if p.lower() not in recent_posted]
+        return random.choice(templates) if templates else random.choice(ORDER_PATTERNS)
 
     async def _generate_ai_comment(
         self,
