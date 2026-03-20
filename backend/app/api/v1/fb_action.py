@@ -2603,6 +2603,51 @@ async def live_engage_parse_accounts_csv(
     }
 
 
+@router.get("/live-engage/import-comments/{job_id}")
+async def live_engage_import_comments(
+    job_id: str,
+    limit: int = Query(500, ge=1, le=2000),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch comment messages from a scrape job for importing into Style Guide."""
+    from app.models.job import ScrapingJob, ExtractedComment
+
+    # Verify job ownership
+    job_result = await db.execute(
+        select(ScrapingJob).where(
+            ScrapingJob.id == job_id,
+            ScrapingJob.tenant_id == user.tenant_id,
+        )
+    )
+    job = job_result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Fetch comments
+    result = await db.execute(
+        select(ExtractedComment.comment_text, ExtractedComment.commenter_name)
+        .where(
+            ExtractedComment.job_id == job_id,
+            ExtractedComment.comment_text.isnot(None),
+            ExtractedComment.comment_text != "",
+        )
+        .order_by(ExtractedComment.comment_time.desc().nulls_last())
+        .limit(limit)
+    )
+    comments = result.all()
+
+    return {
+        "job_id": str(job.id),
+        "job_input": job.input_value,
+        "total": len(comments),
+        "comments": [
+            {"name": c[1] or "", "message": c[0]}
+            for c in comments
+        ],
+    }
+
+
 @router.get("/live-engage/history")
 async def live_engage_history(
     user: User = Depends(get_current_user),

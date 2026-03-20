@@ -672,6 +672,8 @@ export const fbActionApi = {
     api.delete(`/fb-action/live-engage/presets/${presetId}`),
   liveEngageStatus: (sessionId: string) =>
     api.get(`/fb-action/live-engage/${sessionId}`),
+  liveEngageImportComments: (jobId: string, limit?: number) =>
+    api.get(`/fb-action/live-engage/import-comments/${jobId}`, { params: { limit: limit || 500 } }),
   liveEngageExport: (sessionId: string, format: string = "csv") =>
     api.get(`/fb-action/live-engage/${sessionId}/export`, {
       params: { format },

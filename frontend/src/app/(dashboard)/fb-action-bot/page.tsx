@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { fbActionApi, competitorsApi, creditsApi } from "@/lib/api-client";
+import { fbActionApi, jobsApi, competitorsApi, creditsApi } from "@/lib/api-client";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 // All 13 AKNG fb_action actions
 const ACTIONS = [
@@ -290,6 +291,8 @@ export default function FBActionBotPage() {
   const [lePresets, setLePresets] = useState<any[]>([]);
   const [lePreviewSamples, setLePreviewSamples] = useState<any[]>([]);
   const [lePreviewLoading, setLePreviewLoading] = useState(false);
+  const [leImportJobs, setLeImportJobs] = useState<any[]>([]);
+  const [leImportLoading, setLeImportLoading] = useState(false);
   const [leStarting, setLeStarting] = useState(false);
   const lePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
@@ -3454,7 +3457,7 @@ export default function FBActionBotPage() {
                     value={leTrainingComments}
                     onChange={(e) => setLeTrainingComments(e.target.value)}
                   />
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <label className="text-xs text-amber-400/80 cursor-pointer hover:text-amber-300">
                       <input
                         type="file"
@@ -3473,12 +3476,57 @@ export default function FBActionBotPage() {
                       />
                       Or upload .txt / .csv file
                     </label>
+                    <span className="text-white/15">|</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setLeImportLoading(true);
+                        try {
+                          const res = await jobsApi.list({ page: 1, page_size: 50, status: "completed" });
+                          setLeImportJobs(res.data.items || []);
+                        } catch { showToast("error", "Failed to load jobs"); }
+                        setLeImportLoading(false);
+                      }}
+                      className="text-xs text-blue-400/80 cursor-pointer hover:text-blue-300"
+                    >
+                      {leImportLoading ? "Loading..." : "Import from Scrape Job"}
+                    </button>
                     {leTrainingComments && (
                       <span className="text-xs text-white/30">
-                        {leTrainingComments.split("\n").filter(l => l.trim()).length} lines loaded
+                        {leTrainingComments.split("\n").filter((l: string) => l.trim()).length} lines loaded
                       </span>
                     )}
                   </div>
+                  {leImportJobs.length > 0 && (
+                    <div className="mt-2 bg-white/5 border border-white/10 rounded-lg p-2 space-y-1 max-h-40 overflow-y-auto">
+                      <p className="text-xs text-white/30 mb-1">Select a job to import comment messages:</p>
+                      {leImportJobs.map((j: any) => (
+                        <button
+                          key={j.id}
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const res = await fbActionApi.liveEngageImportComments(j.id);
+                              const messages = (res.data.comments || []).map((c: any) => c.message).filter(Boolean);
+                              if (messages.length === 0) {
+                                showToast("error", "No comments found in this job");
+                                return;
+                              }
+                              setLeTrainingComments((prev: string) =>
+                                prev ? prev + "\n" + messages.join("\n") : messages.join("\n")
+                              );
+                              showToast("success", `Imported ${messages.length} comments from "${j.input_value}"`);
+                              setLeImportJobs([]);
+                            } catch { showToast("error", "Failed to import comments"); }
+                          }}
+                          className="w-full text-left px-2 py-1.5 rounded text-xs text-white/60 hover:bg-white/10 transition flex justify-between"
+                        >
+                          <span className="truncate">{j.input_value}</span>
+                          <span className="text-white/25 flex-shrink-0 ml-2">{j.scraped_count || 0} profiles</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-white/40 block mb-1">AI Instructions (optional)</label>
@@ -4084,6 +4132,63 @@ export default function FBActionBotPage() {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Charts */}
+              {liveEngageLogs.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Activity Timeline */}
+                  <div className="glass-card p-5">
+                    <h3 className="text-xs font-medium text-white/40 mb-3">Activity Timeline</h3>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <AreaChart data={(() => {
+                        const buckets: Record<string, { time: string; success: number; error: number }> = {};
+                        liveEngageLogs.slice().reverse().forEach((log: any) => {
+                          if (!log.created_at) return;
+                          const t = new Date(log.created_at);
+                          const key = t.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                          if (!buckets[key]) buckets[key] = { time: key, success: 0, error: 0 };
+                          if (log.status === "success") buckets[key].success++;
+                          else buckets[key].error++;
+                        });
+                        return Object.values(buckets);
+                      })()}>
+                        <XAxis dataKey="time" tick={{ fontSize: 10, fill: "#ffffff40" }} />
+                        <YAxis tick={{ fontSize: 10, fill: "#ffffff40" }} width={30} />
+                        <Tooltip contentStyle={{ backgroundColor: "#1a1a2e", border: "1px solid #ffffff20", borderRadius: 8, fontSize: 12 }} />
+                        <Area type="monotone" dataKey="success" stroke="#34d399" fill="#34d39920" stackId="1" />
+                        <Area type="monotone" dataKey="error" stroke="#f87171" fill="#f8717120" stackId="1" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Role Distribution Pie */}
+                  <div className="glass-card p-5">
+                    <h3 className="text-xs font-medium text-white/40 mb-3">Role Distribution</h3>
+                    {Object.keys(liveEngageSession?.comments_by_role || {}).length > 0 ? (
+                      <ResponsiveContainer width="100%" height={180}>
+                        <PieChart>
+                          <Pie
+                            data={Object.entries(liveEngageSession?.comments_by_role || {}).map(([role, count]) => ({
+                              name: role.replace(/_/g, " "),
+                              value: count as number,
+                            }))}
+                            cx="50%" cy="50%" innerRadius={40} outerRadius={70}
+                            paddingAngle={2} dataKey="value"
+                            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                          >
+                            {Object.keys(liveEngageSession?.comments_by_role || {}).map((_: string, i: number) => (
+                              <Cell key={i} fill={["#f59e0b", "#3b82f6", "#8b5cf6", "#10b981", "#ec4899", "#06b6d4"][i % 6]} />
+                            ))}
+                          </Pie>
+                          <Tooltip contentStyle={{ backgroundColor: "#1a1a2e", border: "1px solid #ffffff20", borderRadius: 8, fontSize: 12 }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <p className="text-white/30 text-xs text-center py-8">Waiting for data...</p>
+                    )}
+                  </div>
                 </div>
               )}
 
