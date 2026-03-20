@@ -2596,11 +2596,68 @@ async def live_engage_parse_accounts_csv(
     if len(accounts) > 200:
         raise HTTPException(status_code=400, detail=f"Too many accounts ({len(accounts)}). Max 200.")
 
+    # Duplicate detection
+    seen_emails: set[str] = set()
+    seen_cookies: set[str] = set()
+    duplicates: list[str] = []
+    unique_accounts: list[dict] = []
+    for acct in accounts:
+        email_key = acct["email"].lower().strip()
+        cookie_key = acct["cookies"][:50]  # first 50 chars as fingerprint
+        if email_key in seen_emails:
+            duplicates.append(f"Duplicate email: {acct['email']}")
+            continue
+        if cookie_key in seen_cookies:
+            duplicates.append(f"Duplicate cookies: {acct['email']}")
+            continue
+        seen_emails.add(email_key)
+        seen_cookies.add(cookie_key)
+        unique_accounts.append(acct)
+
     return {
-        "accounts": accounts,
-        "total": len(accounts),
+        "accounts": unique_accounts,
+        "total": len(unique_accounts),
+        "duplicates": duplicates[:10],
         "errors": errors[:10],
     }
+
+
+@router.get("/live-engage/recent-accounts")
+async def live_engage_recent_accounts(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return recent sessions that used direct CSV accounts for reuse."""
+    result = await db.execute(
+        select(FBLiveEngageSession)
+        .where(
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+            FBLiveEngageSession.direct_accounts_encrypted.isnot(None),
+        )
+        .order_by(FBLiveEngageSession.created_at.desc())
+        .limit(5)
+    )
+    sessions = result.scalars().all()
+
+    items = []
+    for s in sessions:
+        try:
+            import json as _json
+            from app.services.meta_api import MetaAPIService
+            meta = MetaAPIService()
+            decrypted = meta.decrypt_token(s.direct_accounts_encrypted)
+            accounts = _json.loads(decrypted)
+            items.append({
+                "session_id": str(s.id),
+                "title": s.title or s.post_id,
+                "account_count": len(accounts),
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "accounts": accounts,
+            })
+        except Exception:
+            continue
+
+    return {"recent": items}
 
 
 @router.get("/live-engage/import-comments/{job_id}")
@@ -2654,20 +2711,29 @@ async def live_engage_history(
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    status: str | None = Query(None),
+    search: str | None = Query(None),
 ):
-    """List livestream engagement sessions (most recent first)."""
+    """List livestream engagement sessions with optional filters."""
     offset = (page - 1) * page_size
 
-    count_result = await db.execute(
-        select(func.count(FBLiveEngageSession.id)).where(
-            FBLiveEngageSession.tenant_id == user.tenant_id
+    filters = [FBLiveEngageSession.tenant_id == user.tenant_id]
+    if status:
+        filters.append(FBLiveEngageSession.status == status)
+    if search:
+        filters.append(
+            (FBLiveEngageSession.title.ilike(f"%{search}%")) |
+            (FBLiveEngageSession.post_id.ilike(f"%{search}%"))
         )
+
+    count_result = await db.execute(
+        select(func.count(FBLiveEngageSession.id)).where(*filters)
     )
     total = count_result.scalar() or 0
 
     result = await db.execute(
         select(FBLiveEngageSession)
-        .where(FBLiveEngageSession.tenant_id == user.tenant_id)
+        .where(*filters)
         .order_by(FBLiveEngageSession.created_at.desc())
         .offset(offset)
         .limit(page_size)

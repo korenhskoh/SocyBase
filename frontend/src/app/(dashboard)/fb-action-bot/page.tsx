@@ -293,6 +293,10 @@ export default function FBActionBotPage() {
   const [lePreviewLoading, setLePreviewLoading] = useState(false);
   const [leImportJobs, setLeImportJobs] = useState<any[]>([]);
   const [leImportLoading, setLeImportLoading] = useState(false);
+  const [leRecentAccounts, setLeRecentAccounts] = useState<any[]>([]);
+  const [leHistory, setLeHistory] = useState<any[]>([]);
+  const [leHistoryFilter, setLeHistoryFilter] = useState("");
+  const [leHistorySearch, setLeHistorySearch] = useState("");
   const [leStarting, setLeStarting] = useState(false);
   const lePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
@@ -445,6 +449,7 @@ export default function FBActionBotPage() {
   useEffect(() => {
     if (activeTab === "livestream") {
       fbActionApi.liveEngagePresets().then((r) => setLePresets(r.data.presets || [])).catch(() => {});
+      fbActionApi.liveEngageHistory({ page: 1, page_size: 20 }).then((r) => setLeHistory(r.data.sessions || [])).catch(() => {});
     }
   }, [activeTab]);
 
@@ -3271,16 +3276,33 @@ export default function FBActionBotPage() {
                   Target Livestream
                 </h3>
                 <div>
-                  <label className="text-xs text-white/40 block mb-1">Livestream URL (optional — for reference)</label>
+                  <label className="text-xs text-white/40 block mb-1">Livestream URL or Post ID</label>
                   <input
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
-                    placeholder="https://facebook.com/page/videos/123..."
+                    placeholder="Paste URL or Post ID — auto-detects post ID from URL"
                     value={lePostUrl}
-                    onChange={(e) => setLePostUrl(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setLePostUrl(val);
+                      // Auto-extract post_id from Facebook URL
+                      if (val.includes("facebook.com") || val.includes("fb.watch")) {
+                        const videoMatch = val.match(/\/videos\/(\d+)/);
+                        const reelMatch = val.match(/\/reel\/(\d+)/);
+                        const watchMatch = val.match(/[?&]v=(\d+)/);
+                        const postMatch = val.match(/\/posts\/(pfbid\w+|\d+)/);
+                        const fbidMatch = val.match(/fbid=(\d+)/);
+                        const storyMatch = val.match(/story_fbid=(\d+)/);
+                        const id = videoMatch?.[1] || reelMatch?.[1] || watchMatch?.[1] || postMatch?.[1] || fbidMatch?.[1] || storyMatch?.[1];
+                        if (id) setLePostId(id);
+                      } else if (/^\d+$/.test(val.trim())) {
+                        // Pure numeric — treat as post ID directly
+                        setLePostId(val.trim());
+                      }
+                    }}
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-white/40 block mb-1">Post ID (required — for commenting)</label>
+                  <label className="text-xs text-white/40 block mb-1">Post ID {lePostId ? <span className="text-emerald-400">(detected)</span> : "(required)"}</label>
                   <input
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
                     placeholder="Post or video ID"
@@ -3323,7 +3345,12 @@ export default function FBActionBotPage() {
                     >Login Batch</button>
                     <button
                       type="button"
-                      onClick={() => { setLeAccountSource("csv"); setLeLoginBatchId(""); }}
+                      onClick={() => {
+                        setLeAccountSource("csv"); setLeLoginBatchId("");
+                        if (leRecentAccounts.length === 0) {
+                          fbActionApi.liveEngageRecentAccounts().then((r) => setLeRecentAccounts(r.data.recent || [])).catch(() => {});
+                        }
+                      }}
                       className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                         leAccountSource === "csv" ? "bg-white/15 text-white" : "text-white/40 hover:text-white/60"
                       }`}
@@ -3370,11 +3397,10 @@ export default function FBActionBotPage() {
                             try {
                               const res = await fbActionApi.liveEngageParseAccountsCsv(file);
                               setLeDirectAccounts(res.data.accounts);
-                              if (res.data.errors?.length) {
-                                showToast("success", `${res.data.total} accounts loaded, ${res.data.errors.length} rows skipped`);
-                              } else {
-                                showToast("success", `${res.data.total} accounts loaded`);
-                              }
+                              const parts = [`${res.data.total} accounts loaded`];
+                              if (res.data.duplicates?.length) parts.push(`${res.data.duplicates.length} duplicates removed`);
+                              if (res.data.errors?.length) parts.push(`${res.data.errors.length} rows skipped`);
+                              showToast("success", parts.join(", "));
                             } catch (err: any) {
                               showToast("error", err.response?.data?.detail || "Failed to parse CSV");
                             }
@@ -3411,6 +3437,26 @@ export default function FBActionBotPage() {
                       </div>
                     )}
                     <p className="text-xs text-white/30">CSV columns: cookies (required), email (required), token, twofa, proxy_host, proxy_port, proxy_username, proxy_password, user_agent</p>
+                    {leRecentAccounts.length > 0 && leDirectAccounts.length === 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs text-white/30 mb-1">Recent uploads:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {leRecentAccounts.map((r: any) => (
+                            <button
+                              key={r.session_id}
+                              type="button"
+                              onClick={() => {
+                                setLeDirectAccounts(r.accounts);
+                                showToast("success", `Loaded ${r.account_count} accounts from "${r.title}"`);
+                              }}
+                              className="px-2 py-1 bg-white/5 border border-white/10 rounded text-xs text-white/50 hover:bg-white/10 hover:text-white/70 transition"
+                            >
+                              {r.title} ({r.account_count})
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -4002,6 +4048,77 @@ export default function FBActionBotPage() {
                   <>▶ Start Engagement</>
                 )}
               </button>
+              {/* Session History */}
+              {leHistory.length > 0 && (
+                <div className="glass-card p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-medium text-white/60">Session History</h3>
+                    <div className="flex gap-2">
+                      <select
+                        className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/60 focus:outline-none"
+                        value={leHistoryFilter}
+                        onChange={(e) => {
+                          setLeHistoryFilter(e.target.value);
+                          fbActionApi.liveEngageHistory({ page: 1, page_size: 20, status: e.target.value || undefined, search: leHistorySearch || undefined })
+                            .then((r) => setLeHistory(r.data.sessions || [])).catch(() => {});
+                        }}
+                      >
+                        <option value="">All Status</option>
+                        <option value="running">Running</option>
+                        <option value="paused">Paused</option>
+                        <option value="completed">Completed</option>
+                        <option value="stopped">Stopped</option>
+                        <option value="failed">Failed</option>
+                      </select>
+                      <input
+                        className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/60 placeholder-white/20 w-32 focus:outline-none"
+                        placeholder="Search..."
+                        value={leHistorySearch}
+                        onChange={(e) => {
+                          setLeHistorySearch(e.target.value);
+                          fbActionApi.liveEngageHistory({ page: 1, page_size: 20, status: leHistoryFilter || undefined, search: e.target.value || undefined })
+                            .then((r) => setLeHistory(r.data.sessions || [])).catch(() => {});
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    {leHistory.map((s: any) => (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2 hover:bg-white/10 cursor-pointer transition"
+                        onClick={() => {
+                          fbActionApi.liveEngageStatus(s.id).then((r) => {
+                            setLiveEngageSession(r.data);
+                            setLiveEngageLogs(r.data.logs || []);
+                            setLiveEngagePhase("running");
+                          }).catch(() => showToast("error", "Failed to load session"));
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${
+                            s.status === "running" ? "bg-red-500 animate-pulse" :
+                            s.status === "paused" ? "bg-amber-500" :
+                            s.status === "completed" ? "bg-emerald-500" :
+                            "bg-white/20"
+                          }`} />
+                          <span className="text-xs text-white/70">{s.title || s.post_id}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                            s.status === "running" ? "bg-red-500/20 text-red-300" :
+                            s.status === "paused" ? "bg-amber-500/20 text-amber-300" :
+                            s.status === "completed" ? "bg-emerald-500/20 text-emerald-300" :
+                            "bg-white/10 text-white/40"
+                          }`}>{s.status}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-white/30">
+                          <span>{s.total_comments_posted} posted</span>
+                          <span>{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             /* ── Live Dashboard ── */

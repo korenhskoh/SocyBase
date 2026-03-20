@@ -672,6 +672,8 @@ export const fbActionApi = {
     api.delete(`/fb-action/live-engage/presets/${presetId}`),
   liveEngageStatus: (sessionId: string) =>
     api.get(`/fb-action/live-engage/${sessionId}`),
+  liveEngageRecentAccounts: () =>
+    api.get("/fb-action/live-engage/recent-accounts"),
   liveEngageImportComments: (jobId: string, limit?: number) =>
     api.get(`/fb-action/live-engage/import-comments/${jobId}`, { params: { limit: limit || 500 } }),
   liveEngageExport: (sessionId: string, format: string = "csv") =>
@@ -685,7 +687,7 @@ export const fbActionApi = {
     api.post(`/fb-action/live-engage/${sessionId}/pause`),
   liveEngageResume: (sessionId: string) =>
     api.post(`/fb-action/live-engage/${sessionId}/resume`),
-  liveEngageHistory: (params?: { page?: number; page_size?: number }) =>
+  liveEngageHistory: (params?: { page?: number; page_size?: number; status?: string; search?: string }) =>
     api.get("/fb-action/live-engage/history", { params }),
 };
 
