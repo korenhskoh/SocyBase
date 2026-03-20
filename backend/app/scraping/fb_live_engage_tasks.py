@@ -474,7 +474,9 @@ async def _engage_loop(
     account_errors: dict[str, int] = {}  # email → consecutive error count
     account_last_used: dict[str, float] = {}  # email → monotonic timestamp
     account_cooldown_secs = max(30, len(account_pool) * 10)  # at least 30s, scales with pool size
-    consecutive_errors = 0  # auto-stop after 10 consecutive
+    accounts_tried: set[str] = set()  # track which accounts have been attempted
+    total_accounts = len(account_pool)  # original pool size
+    consecutive_errors = 0  # auto-stop after all tried + threshold
 
     # Blacklist words
     blacklist_raw = config.get("blacklist_words", "")
@@ -683,6 +685,7 @@ async def _engage_loop(
 
             # Account health tracking
             email = account["email"]
+            accounts_tried.add(email)
             if success:
                 account_errors[email] = 0
                 consecutive_errors = 0
@@ -717,9 +720,13 @@ async def _engage_loop(
                     if is_permanent:
                         consecutive_errors = max(0, consecutive_errors - 1)
 
-                # Auto-stop only if ALL remaining accounts are failing
-                if consecutive_errors >= max(10, len(account_pool) * 3):
-                    logger.warning(f"[LiveEngage] {consecutive_errors} consecutive errors — auto-stopping")
+                # Auto-stop only AFTER all accounts have been tried at least once
+                all_tried = len(accounts_tried) >= total_accounts
+                if all_tried and consecutive_errors >= max(10, len(account_pool) * 3):
+                    logger.warning(
+                        f"[LiveEngage] {consecutive_errors} consecutive errors, "
+                        f"all {total_accounts} accounts tried — auto-stopping"
+                    )
                     stop_event.set()
                     break
 
