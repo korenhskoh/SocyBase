@@ -3131,9 +3131,13 @@ async def live_engage_trigger_code(
     db: AsyncSession = Depends(get_db),
 ):
     """Add a code to the trigger queue. Supports multiple codes."""
+    try:
+        sid = uuid.UUID(session_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
     result = await db.execute(
         select(FBLiveEngageSession).where(
-            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.id == sid,
             FBLiveEngageSession.tenant_id == user.tenant_id,
         )
     )
@@ -3182,9 +3186,13 @@ async def live_engage_update_trigger(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a trigger in the queue (pause, resume, delete, reorder)."""
+    try:
+        sid = uuid.UUID(session_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
     result = await db.execute(
         select(FBLiveEngageSession).where(
-            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.id == sid,
             FBLiveEngageSession.tenant_id == user.tenant_id,
         )
     )
@@ -3231,9 +3239,13 @@ async def live_engage_update_settings(
     db: AsyncSession = Depends(get_db),
 ):
     """Update session settings in real-time while running."""
+    try:
+        sid = uuid.UUID(session_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
     result = await db.execute(
         select(FBLiveEngageSession).where(
-            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.id == sid,
             FBLiveEngageSession.tenant_id == user.tenant_id,
         )
     )
