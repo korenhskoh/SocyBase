@@ -2830,6 +2830,7 @@ async def live_engage_preview_comments(
     ]
 
     seed_codes = [c.strip() for c in (req.product_codes or "").split(",") if c.strip()]
+    languages_str = ",".join(req.languages) if req.languages else ""
     samples = []
     for _ in range(5):
         role = random.choices(roles, weights=weights, k=1)[0]
@@ -2842,6 +2843,7 @@ async def live_engage_preview_comments(
                 ai_instructions=req.ai_instructions or "",
                 detected_codes=seed_codes or None,
                 quantity_variation=req.quantity_variation,
+                languages=languages_str,
             )
             samples.append({"role": role, "content": content})
         except Exception as exc:
