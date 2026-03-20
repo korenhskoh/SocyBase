@@ -41,32 +41,43 @@ ORDER_PATTERNS = (
 
 ROLE_DESCRIPTIONS = {
     "ask_question": (
-        "Ask a genuine product question about something specific. "
-        "Examples: price, shipping, sizes, availability, color options, material. "
-        "Keep it casual and short — like a real person typing fast in chat."
+        "Ask a genuine product question about something visible or being discussed RIGHT NOW. "
+        "Base your question on what the host is showing or what other viewers are asking about. "
+        "Topics: price, size, color, material, shipping, availability, how to use, comparison. "
+        "Keep it SHORT (3-10 words) — like a real person typing fast on their phone in chat. "
+        "Use casual tone, abbreviations OK, slight typos OK. "
+        "Examples: '这个多少钱', 'ada size lain tak?', 'how much this one', '几号的？', 'can ship to penang?'"
     ),
     "place_order": (
         "Post an order comment. Keep it very short (1-5 words)."
     ),
     "repeat_question": (
-        "Rephrase a question from recent comments in your own words. "
-        "Pick a real question and reword it slightly to show multiple people have the same interest. "
-        "Do NOT copy the exact wording — paraphrase naturally."
+        "You MUST pick ONE specific question from the recent comments and rephrase it in your own words. "
+        "This shows the host that MULTIPLE people want to know the same thing. "
+        "Change the wording but keep the same meaning. Do NOT ask a new question. "
+        "Example: if someone asked '多少钱？' → you write '价格怎么算的' or 'berapa ni?'. "
+        "Match the language that most viewers are using."
     ),
     "good_vibe": (
-        "Post a brief positive comment about the product or stream. "
-        "Keep it grounded and casual — like a normal viewer, NOT an overly excited fan. "
-        "Avoid superlatives like 'amazing', 'incredible', 'the best ever'. "
-        "Simple and believable, e.g. 'looks nice', 'good price eh', 'quality looks ok'."
+        "Post a VERY brief reaction (2-6 words). You are a casual viewer, not a salesperson. "
+        "Comment on what you SEE in the stream — the product, the host's energy, or the chat vibe. "
+        "Must feel spontaneous and real, like you typed it in 2 seconds without thinking. "
+        "GOOD: '不错', '好看', 'cantik', 'nice colour', '这个可以', 'quality ok la' "
+        "BAD: '这个产品真的太棒了非常值得购买' (too long, too salesy, not believable)"
     ),
     "react_comment": (
-        "React naturally to a specific recent comment. Agree with it, add to it, "
-        "or build on what they said. Keep it short and conversational."
+        "React to a SPECIFIC recent viewer comment. You MUST reference what they said. "
+        "Agree, disagree gently, add your perspective, or ask a follow-up. "
+        "Keep it conversational — like two viewers chatting in the live stream. "
+        "Example: viewer says '这个颜色好看' → you: '对啊这个绿蛮正的' or 'betul cantik warna dia'. "
+        "Do NOT be generic — your reply must clearly relate to what the specific viewer said."
     ),
     "share_experience": (
-        "Share a very brief personal note about the product or brand. "
-        "Keep it casual and believable — avoid sounding like a testimonial ad. "
-        "e.g. 'bought last month still good' or 'my friend recommended this'."
+        "Share a BRIEF personal touch about owning/using this type of product. "
+        "Must be 1 sentence, casual, and sound like a normal person sharing — not an ad. "
+        "Mention a specific detail (who you gave it to, how long you've had it, what happened). "
+        "GOOD: '上次买了个送妈妈，她戴了都不肯脱', 'beli bulan lepas masih ok lagi' "
+        "BAD: '我强烈推荐这个产品，质量非常好！' (sounds like a paid review)"
     ),
 }
 
@@ -365,7 +376,7 @@ class AILiveEngageService:
                 "and adapt it to the CURRENT livestream topics above.\n\n"
             )
 
-        # Language instruction
+        # Language instruction — auto-detect from comments if not specified
         lang_str = ""
         if languages:
             lang_list = [l.strip().capitalize() for l in languages.split(",") if l.strip()]
@@ -376,21 +387,43 @@ class AILiveEngageService:
                     f"You MUST write your comment in one of these languages: {lang_str}.\n"
                     f"Pick the most natural one for the current conversation context.\n\n"
                 )
+        elif recent_comments:
+            # Auto-detect dominant language from recent comments
+            all_msgs = " ".join(c.get("message", "") for c in recent_comments[-10:])
+            has_chinese = bool(re.search(r'[\u4e00-\u9fff]', all_msgs))
+            has_malay = bool(re.search(r'\b(nak|beli|berapa|cantik|ada|tak|saya|awak|boleh)\b', all_msgs, re.IGNORECASE))
+            detected_langs = []
+            if has_chinese:
+                detected_langs.append("Chinese")
+            if has_malay:
+                detected_langs.append("Malay")
+            if not detected_langs:
+                detected_langs.append("English")
+            lang_str = ", ".join(detected_langs)
+            system_prompt += (
+                f"=== LANGUAGE (auto-detected from live chat) ===\n"
+                f"The viewers are mostly using: {lang_str}. Write in this language.\n\n"
+            )
 
         system_prompt += (
-            "Rules:\n"
+            "=== STRICT RULES ===\n"
             "- " + (
                 f"Write in {lang_str}" if lang_str else
-                "Match the language of current live comments (auto-detect Malay/English/etc.)"
+                "Auto-detect and match the language most viewers are using (Chinese/Malay/English/mixed)"
             ) + "\n"
-            "- 1-2 sentences max, casual livestream chat tone\n"
-            "- No hashtags, no more than 1 emoji\n"
-            "- Sound like a NORMAL viewer — not overly enthusiastic or salesy\n"
-            "- Do NOT use exclamation marks excessively (max 1 per comment)\n"
-            "- Avoid superlatives (amazing, incredible, best ever, absolutely love)\n"
-            "- Keep it grounded and believable — imperfect grammar is OK\n"
-            "- Vary sentence structure and length from previous comments\n"
-            "- Do NOT repeat any current comment or our posted comments\n\n"
+            "- MAX 1-2 short sentences. Most livestream comments are 3-15 words\n"
+            "- Casual chat tone — you're typing on a phone while watching\n"
+            "- NO hashtags. Max 1 emoji (optional). No @ mentions\n"
+            "- Sound like a REAL viewer — imperfect grammar, abbreviations, slang are GOOD\n"
+            "- Do NOT use exclamation marks excessively (max 1)\n"
+            "- NEVER use superlatives: amazing, incredible, best ever, absolutely, definitely\n"
+            "- NEVER sound like an advertisement or sponsored comment\n"
+            "- Keep it grounded — like someone casually watching, not deeply invested\n"
+            "- Mixed language is natural and OK (e.g. 'wah 这个 not bad la', '好看 cantik')\n"
+            "- Vary your comment length — some short (2-4 words), some medium (5-12 words)\n"
+            "- Each comment must feel like a DIFFERENT person typed it\n"
+            "- NEVER repeat anything from current comments or our posted history\n"
+            "- Reference what is CURRENTLY being shown/discussed — not generic product comments\n\n"
             'Return JSON: {"comment": "your comment text"}'
         )
 
@@ -440,15 +473,45 @@ class AILiveEngageService:
         except Exception as exc:
             logger.warning(f"[LiveEngage] AI generation failed for role={role}: {exc}")
 
-        # Fallback: generic comment if AI fails
-        fallbacks = {
-            "ask_question": "How much is this?",
-            "good_vibe": "Looks nice",
-            "react_comment": "Same here",
-            "repeat_question": "Ya I also want to know",
-            "share_experience": "Bought before, quite good",
+        # Fallback: language-aware generic comment if AI fails
+        fallbacks_by_lang = {
+            "chinese": {
+                "ask_question": ["多少钱", "有其他颜色吗", "可以包邮吗", "还有货吗"],
+                "good_vibe": ["不错", "好看", "可以", "质量不错"],
+                "react_comment": ["对啊", "是的", "确实", "我也觉得"],
+                "repeat_question": ["也想知道", "对呀多少钱", "怎么买"],
+                "share_experience": ["之前买过不错", "朋友推荐的", "用了很久了"],
+            },
+            "malay": {
+                "ask_question": ["berapa ni?", "ada size lain?", "boleh pos?", "still available?"],
+                "good_vibe": ["cantik", "nice", "ok la", "not bad"],
+                "react_comment": ["betul", "sama la", "agreed", "ya kan"],
+                "repeat_question": ["berapa eh?", "nak tau jugak", "how much ah"],
+                "share_experience": ["beli dulu ok je", "kawan recommend", "pakai lama dah"],
+            },
+            "english": {
+                "ask_question": ["how much?", "any other colors?", "can ship?", "still available?"],
+                "good_vibe": ["looks nice", "not bad", "good quality", "nice one"],
+                "react_comment": ["same here", "agree", "true", "yeah"],
+                "repeat_question": ["want to know too", "how much is it?", "same question"],
+                "share_experience": ["bought before quite good", "friend recommended", "have one already"],
+            },
         }
-        return fallbacks.get(role, "Nice")
+        # Pick language from setting or auto-detect
+        lang_key = "english"
+        if languages:
+            first_lang = languages.split(",")[0].strip().lower()
+            if first_lang in fallbacks_by_lang:
+                lang_key = first_lang
+        elif recent_comments:
+            all_msgs = " ".join(c.get("message", "") for c in recent_comments[-5:])
+            if re.search(r'[\u4e00-\u9fff]', all_msgs):
+                lang_key = "chinese"
+            elif re.search(r'\b(nak|beli|cantik|berapa)\b', all_msgs, re.IGNORECASE):
+                lang_key = "malay"
+        pool = fallbacks_by_lang.get(lang_key, fallbacks_by_lang["english"])
+        options = pool.get(role, pool.get("good_vibe", ["nice"]))
+        return random.choice(options)
 
     @staticmethod
     def _is_too_similar(comment: str, posted_history: list[str] | None, threshold: float = 0.55) -> bool:

@@ -1101,7 +1101,19 @@ async def _engage_loop(
 
                 if not content:
                     if role in ("react_comment", "repeat_question") and recent_comments:
-                        ref = random.choice(recent_comments[-10:]) if len(recent_comments) >= 3 else recent_comments[-1]
+                        # Smart reference selection based on role
+                        candidates = recent_comments[-15:]
+                        if role == "repeat_question":
+                            # Prefer comments that look like questions (? or question words)
+                            question_markers = {"?", "？", "吗", "嗎", "多少", "几", "幾", "怎么", "怎麼", "哪", "什么", "什麼", "ada", "berapa", "how", "what", "where", "when", "can"}
+                            questions = [c for c in candidates if any(m in c.get("message", "").lower() for m in question_markers)]
+                            ref = random.choice(questions) if questions else random.choice(candidates)
+                        elif role == "react_comment":
+                            # Prefer substantive comments (>5 chars, not just codes/orders)
+                            substantive = [c for c in candidates if len(c.get("message", "").strip()) > 5]
+                            ref = random.choice(substantive) if substantive else random.choice(candidates)
+                        else:
+                            ref = random.choice(candidates)
                         reference_comment = f"{ref.get('from_name', '')}: {ref.get('message', '')}"
 
                     content = await ai_service.generate_comment(
