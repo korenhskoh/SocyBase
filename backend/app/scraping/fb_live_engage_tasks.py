@@ -286,8 +286,11 @@ async def _execute_engagement(session_id: str):
                 select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
             )
             s = result.scalar_one_or_none()
-            if s and s.status == "running":
+            if s and s.status in ("running", "paused"):
                 s.status = "completed"
+                logger.info(f"[LiveEngage] Session {session_id} finalized as completed "
+                            f"(posted={s.total_comments_posted}, errors={s.total_errors}, "
+                            f"monitored={s.comments_monitored}, accounts={s.active_accounts})")
             if s:
                 s.ended_at = datetime.now(timezone.utc)
             await db.commit()
@@ -981,15 +984,22 @@ async def _engage_loop(
                     if is_permanent:
                         consecutive_errors = max(0, consecutive_errors - 1)
 
-                # Auto-stop only AFTER all accounts have been tried at least once
+                # Auto-stop only when ALL accounts exhausted and errors are very high
                 all_tried = len(accounts_tried) >= total_accounts
-                if all_tried and consecutive_errors >= max(10, len(account_pool) * 3):
+                # Require 30+ consecutive errors (or pool*5) AND all accounts tried
+                auto_stop_threshold = max(30, len(account_pool) * 5)
+                if all_tried and consecutive_errors >= auto_stop_threshold:
                     logger.warning(
-                        f"[LiveEngage] {consecutive_errors} consecutive errors, "
+                        f"[LiveEngage] {consecutive_errors} consecutive errors (threshold={auto_stop_threshold}), "
                         f"all {total_accounts} accounts tried — auto-stopping"
                     )
                     stop_event.set()
                     break
+                elif consecutive_errors > 0 and consecutive_errors % 10 == 0:
+                    logger.warning(
+                        f"[LiveEngage] {consecutive_errors} consecutive errors so far "
+                        f"(auto-stop at {auto_stop_threshold}, pool={len(account_pool)})"
+                    )
 
             # Log action
             try:
