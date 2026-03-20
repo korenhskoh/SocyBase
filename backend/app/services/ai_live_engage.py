@@ -134,6 +134,10 @@ class AILiveEngageService:
             "+1", "nak", "order", "want", "beli", "pm", "interested",
             "mau", "cod", "buy", "book", "reserved", "mine", "me",
             "saya", "aku", "confirm", "done", "paid", "bayar",
+            # Chinese/CJK order signals
+            "要", "买", "購", "下单", "下單", "拿", "收", "订", "訂",
+            "付", "给我", "給我", "我要", "来一个", "來一個", "多少钱", "多少錢",
+            "怎么买", "怎麼買", "价格", "價格", "几号", "幾號",
         }
 
         live_patterns: list[str] = []
@@ -161,9 +165,16 @@ class AILiveEngageService:
         elif training_comments:
             # ── Priority 3: Fall back to uploaded training/past comments ──
             lines = [ln.strip() for ln in training_comments.strip().split("\n") if ln.strip()]
-            # Filter to short order-like lines (≤40 chars)
-            short_lines = [ln for ln in lines if len(ln) <= 40]
-            candidates = short_lines if short_lines else lines[:50]
+            # Filter to lines that look like orders (short + contain order keywords)
+            order_lines = [
+                ln for ln in lines
+                if len(ln) <= 40 and any(kw in ln.lower() for kw in order_signals)
+            ]
+            if order_lines:
+                candidates = order_lines
+            else:
+                # No order-like lines found — fall through to static templates
+                candidates = list(ORDER_PATTERNS)
         else:
             # ── Priority 4: Static templates as last resort ──
             candidates = list(ORDER_PATTERNS)
