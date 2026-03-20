@@ -3284,6 +3284,7 @@ export default function FBActionBotPage() {
                     onChange={(e) => {
                       const val = e.target.value;
                       setLePostUrl(val);
+                      if (!val.trim()) { setLePostId(""); return; }
                       // Auto-extract post_id from Facebook URL
                       if (val.includes("facebook.com") || val.includes("fb.watch")) {
                         const videoMatch = val.match(/\/videos\/(\d+)/);
@@ -3293,9 +3294,8 @@ export default function FBActionBotPage() {
                         const fbidMatch = val.match(/fbid=(\d+)/);
                         const storyMatch = val.match(/story_fbid=(\d+)/);
                         const id = videoMatch?.[1] || reelMatch?.[1] || watchMatch?.[1] || postMatch?.[1] || fbidMatch?.[1] || storyMatch?.[1];
-                        if (id) setLePostId(id);
+                        setLePostId(id || "");
                       } else if (/^\d+$/.test(val.trim())) {
-                        // Pure numeric — treat as post ID directly
                         setLePostId(val.trim());
                       }
                     }}
@@ -4075,9 +4075,14 @@ export default function FBActionBotPage() {
                         placeholder="Search..."
                         value={leHistorySearch}
                         onChange={(e) => {
-                          setLeHistorySearch(e.target.value);
-                          fbActionApi.liveEngageHistory({ page: 1, page_size: 20, status: leHistoryFilter || undefined, search: e.target.value || undefined })
-                            .then((r) => setLeHistory(r.data.sessions || [])).catch(() => {});
+                          const val = e.target.value;
+                          setLeHistorySearch(val);
+                          // Debounce search — wait 400ms after typing stops
+                          clearTimeout((window as any).__leSearchTimer);
+                          (window as any).__leSearchTimer = setTimeout(() => {
+                            fbActionApi.liveEngageHistory({ page: 1, page_size: 20, status: leHistoryFilter || undefined, search: val || undefined })
+                              .then((r) => setLeHistory(r.data.sessions || [])).catch(() => {});
+                          }, 400);
                         }}
                       />
                     </div>
@@ -4092,6 +4097,21 @@ export default function FBActionBotPage() {
                             setLiveEngageSession(r.data);
                             setLiveEngageLogs(r.data.logs || []);
                             setLiveEngagePhase("running");
+                            // Start polling if session is still active
+                            if (["running", "paused"].includes(r.data.status)) {
+                              if (lePollRef.current) clearInterval(lePollRef.current);
+                              const sid = r.data.id;
+                              lePollRef.current = setInterval(async () => {
+                                try {
+                                  const statusRes = await fbActionApi.liveEngageStatus(sid);
+                                  setLiveEngageSession(statusRes.data);
+                                  setLiveEngageLogs(statusRes.data.logs || []);
+                                  if (!["running", "paused"].includes(statusRes.data.status)) {
+                                    if (lePollRef.current) clearInterval(lePollRef.current);
+                                  }
+                                } catch { /* ignore poll errors */ }
+                              }, 5000);
+                            }
                           }).catch(() => showToast("error", "Failed to load session"));
                         }}
                       >

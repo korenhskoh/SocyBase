@@ -2639,14 +2639,14 @@ async def live_engage_recent_accounts(
     )
     sessions = result.scalars().all()
 
+    from app.services.meta_api import MetaAPIService
+    meta = MetaAPIService()
+
     items = []
     for s in sessions:
         try:
-            import json as _json
-            from app.services.meta_api import MetaAPIService
-            meta = MetaAPIService()
             decrypted = meta.decrypt_token(s.direct_accounts_encrypted)
-            accounts = _json.loads(decrypted)
+            accounts = json.loads(decrypted)
             items.append({
                 "session_id": str(s.id),
                 "title": s.title or s.post_id,
