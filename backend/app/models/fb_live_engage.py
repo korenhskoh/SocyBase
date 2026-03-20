@@ -61,6 +61,7 @@ class FBLiveEngageSession(Base):
     product_codes: Mapped[str | None] = mapped_column(Text)
     code_pattern: Mapped[str | None] = mapped_column(String(500))
     quantity_variation: Mapped[bool] = mapped_column(Boolean, default=True)
+    languages: Mapped[str | None] = mapped_column(String(100))  # comma-separated: chinese,malay,english
     blacklist_words: Mapped[str | None] = mapped_column(Text)  # comma-separated words to avoid
     comment_without_new: Mapped[bool] = mapped_column(Boolean, default=False)
     comment_without_new_max: Mapped[int] = mapped_column(Integer, default=3)
@@ -160,6 +161,7 @@ class FBLiveEngagePreset(Base):
     target_comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     target_comments_count: Mapped[int | None] = mapped_column(Integer)
     target_comments_period_minutes: Mapped[int | None] = mapped_column(Integer)
+    languages: Mapped[str | None] = mapped_column(String(100))
     blacklist_words: Mapped[str | None] = mapped_column(Text)
     comment_without_new: Mapped[bool] = mapped_column(Boolean, default=False)
     comment_without_new_max: Mapped[int] = mapped_column(Integer, default=3)

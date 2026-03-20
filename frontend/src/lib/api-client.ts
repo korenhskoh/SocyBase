@@ -643,6 +643,7 @@ export const fbActionApi = {
     target_comments_enabled?: boolean;
     target_comments_count?: number;
     target_comments_period_minutes?: number;
+    languages?: string[];
     comment_without_new?: boolean;
     comment_without_new_max?: number;
     blacklist_words?: string;

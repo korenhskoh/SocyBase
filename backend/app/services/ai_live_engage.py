@@ -83,16 +83,12 @@ class AILiveEngageService:
         posted_history: list[str] | None = None,
         detected_codes: list[str] | None = None,
         quantity_variation: bool = True,
+        languages: str = "",
     ) -> str:
         """Generate a single livestream comment for the given role.
 
         For `place_order` role, returns a random template (no AI call).
         For all others, calls GPT-4o with role-specific prompts.
-
-        Args:
-            posted_history: List of our recently posted comments (last ~15) so
-                AI can avoid repeating similar content.
-            quantity_variation: If True, add +N quantity to product code orders.
         """
         if role == "place_order":
             return self._generate_order_comment(
@@ -102,7 +98,7 @@ class AILiveEngageService:
 
         return await self._generate_ai_comment(
             role, recent_comments, business_context, training_comments, ai_instructions,
-            reference_comment, posted_history,
+            reference_comment, posted_history, languages,
         )
 
     # Regex patterns for extracting codes/numbers from any text
@@ -227,12 +223,9 @@ class AILiveEngageService:
         ai_instructions: str,
         reference_comment: str | None = None,
         posted_history: list[str] | None = None,
+        languages: str = "",
     ) -> str:
-        """Call GPT-4o to generate a single comment.
-
-        Includes posted_history so the AI knows what we already said and avoids
-        repeating similar content, structure, or phrasing.
-        """
+        """Call GPT-4o to generate a single comment."""
         role_desc = ROLE_DESCRIPTIONS.get(role, "Post a natural comment.")
 
         # Build training sample
@@ -311,9 +304,23 @@ class AILiveEngageService:
                 "and adapt it to the CURRENT livestream topics above.\n\n"
             )
 
+        # Language instruction
+        if languages:
+            lang_list = [l.strip().capitalize() for l in languages.split(",") if l.strip()]
+            if lang_list:
+                lang_str = ", ".join(lang_list)
+                system_prompt += (
+                    f"=== LANGUAGE REQUIREMENT ===\n"
+                    f"You MUST write your comment in one of these languages: {lang_str}.\n"
+                    f"Pick the most natural one for the current conversation context.\n\n"
+                )
+
         system_prompt += (
             "Rules:\n"
-            "- Match the language of current live comments (auto-detect Malay/English/etc.)\n"
+            "- " + (
+                f"Write in {lang_str}" if languages and lang_list else
+                "Match the language of current live comments (auto-detect Malay/English/etc.)"
+            ) + "\n"
             "- 1-2 sentences max, casual livestream chat tone\n"
             "- No hashtags, no more than 1 emoji\n"
             "- Sound like a NORMAL viewer — not overly enthusiastic or salesy\n"

@@ -2364,6 +2364,7 @@ class LiveEngageStartRequest(BaseModel):
     target_comments_enabled: bool = False
     target_comments_count: int | None = Field(default=None, ge=1, le=5000)
     target_comments_period_minutes: int | None = Field(default=None, ge=5, le=720)
+    languages: list[str] | None = None  # e.g. ["chinese", "malay", "english"]
     comment_without_new: bool = False  # generate comments even without new viewer comments
     comment_without_new_max: int = Field(default=3, ge=1, le=20)  # max attempts before waiting
     blacklist_words: str | None = None  # comma-separated words to avoid
@@ -2481,6 +2482,7 @@ async def live_engage_start(
         target_comments_enabled=req.target_comments_enabled,
         target_comments_count=req.target_comments_count,
         target_comments_period_minutes=req.target_comments_period_minutes,
+        languages=",".join(req.languages) if req.languages else None,
         comment_without_new=req.comment_without_new,
         comment_without_new_max=req.comment_without_new_max,
         blacklist_words=req.blacklist_words,

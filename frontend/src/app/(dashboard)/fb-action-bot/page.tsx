@@ -274,6 +274,7 @@ export default function FBActionBotPage() {
   const [leProductCodes, setLeProductCodes] = useState("");
   const [leCodePattern, setLeCodePattern] = useState("");
   const [leQuantityVariation, setLeQuantityVariation] = useState(true);
+  const [leLanguages, setLeLanguages] = useState<string[]>([]);
   const [leAggressiveLevel, setLeAggressiveLevel] = useState<"low" | "medium" | "high">("medium");
   const [leTargetEnabled, setLeTargetEnabled] = useState(false);
   const [leTargetCount, setLeTargetCount] = useState(100);
@@ -3490,6 +3491,31 @@ export default function FBActionBotPage() {
                   />
                 </div>
                 <div>
+                  <label className="text-xs text-white/40 block mb-1">Comment Language (optional)</label>
+                  <div className="flex gap-3">
+                    {[
+                      { key: "chinese", label: "Chinese" },
+                      { key: "malay", label: "Malay" },
+                      { key: "english", label: "English" },
+                    ].map(({ key, label }) => (
+                      <label key={key} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={leLanguages.includes(key)}
+                          onChange={(e) => {
+                            setLeLanguages((prev) =>
+                              e.target.checked ? [...prev, key] : prev.filter((l) => l !== key)
+                            );
+                          }}
+                          className="w-4 h-4 rounded bg-white/10 border-white/20 text-amber-500 focus:ring-amber-500/30"
+                        />
+                        <span className="text-sm text-white/60">{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-white/30 mt-1">Leave unchecked to auto-detect from live comments</p>
+                </div>
+                <div>
                   <label className="text-xs text-white/40 block mb-1">Seed Product Codes (optional)</label>
                   <input
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
@@ -3745,6 +3771,7 @@ export default function FBActionBotPage() {
                           business_context: leContext,
                           training_comments: leTrainingComments || undefined,
                           ai_instructions: leInstructions || undefined,
+                      languages: leLanguages.length > 0 ? leLanguages : undefined,
                           product_codes: leProductCodes.trim() || undefined,
                           code_pattern: leCodePattern.trim() || undefined,
                           quantity_variation: leQuantityVariation,
@@ -3791,6 +3818,7 @@ export default function FBActionBotPage() {
                             setLeTargetEnabled(p.target_comments_enabled || false);
                             setLeTargetCount(p.target_comments_count || 100);
                             setLeTargetPeriod(p.target_comments_period_minutes || 60);
+                            setLeLanguages(p.languages || []);
                             setLeCommentWithoutNew(p.comment_without_new || false);
                             setLeCommentWithoutNewMax(p.comment_without_new_max || 3);
                             setLeBlacklistWords(p.blacklist_words || "");
@@ -3832,6 +3860,7 @@ export default function FBActionBotPage() {
                         business_context: leContext,
                         training_comments: leTrainingComments || undefined,
                         ai_instructions: leInstructions || undefined,
+                      languages: leLanguages.length > 0 ? leLanguages : undefined,
                         product_codes: leProductCodes.trim() || undefined,
                         quantity_variation: leQuantityVariation,
                       });
@@ -3877,6 +3906,7 @@ export default function FBActionBotPage() {
                       business_context: leContext,
                       training_comments: leTrainingComments || undefined,
                       ai_instructions: leInstructions || undefined,
+                      languages: leLanguages.length > 0 ? leLanguages : undefined,
                       scrape_interval_seconds: leScrapeInterval,
                       product_codes: leProductCodes.trim() || undefined,
                       code_pattern: leCodePattern.trim() || undefined,

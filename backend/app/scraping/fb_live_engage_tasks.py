@@ -127,6 +127,7 @@ async def _execute_engagement(session_id: str):
                 "target_comments_enabled": bool(session.target_comments_enabled),
                 "target_comments_count": session.target_comments_count or 0,
                 "target_comments_period_minutes": session.target_comments_period_minutes or 60,
+                "languages": session.languages or "",
                 "comment_without_new": bool(session.comment_without_new),
                 "comment_without_new_max": session.comment_without_new_max or 3,
                 "blacklist_words": session.blacklist_words or "",
@@ -656,6 +657,7 @@ async def _engage_loop(
                     posted_history=posted_history,
                     detected_codes=adaptive.detected_codes,
                     quantity_variation=adaptive.quantity_variation,
+                    languages=config.get("languages", ""),
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] AI generation error: {exc}")
