@@ -503,6 +503,7 @@ async def _engage_loop(
     # Account health tracking — remove accounts after 5 consecutive errors
     account_errors: dict[str, int] = {}  # email → consecutive error count
     token_errors: dict[str, int] = {}  # email → token error count (switch to AKNG after 3)
+    token_disabled: set[str] = set()  # emails where token has no permission (skip permanently)
     account_last_used: dict[str, float] = {}  # email → monotonic timestamp
     account_cooldown_secs = max(30, len(account_pool) * 10)  # at least 30s, scales with pool size
     accounts_tried: set[str] = set()  # track which accounts have been attempted
@@ -904,7 +905,11 @@ async def _engage_loop(
             success = False
             error_msg = None
             email = account["email"]
-            use_token_first = account.get("token") and token_errors.get(email, 0) < 3
+            use_token_first = (
+                account.get("token")
+                and email not in token_disabled
+                and token_errors.get(email, 0) < 3
+            )
             max_retries = 3
 
             for retry in range(max_retries):
@@ -923,14 +928,22 @@ async def _engage_loop(
                         error_msg = str(exc)
 
                     if success:
-                        token_errors[email] = 0  # reset on success
+                        token_errors[email] = 0
                         break
 
-                    # Token failed — track error count
-                    token_errors[email] = token_errors.get(email, 0) + 1
-                    if token_errors[email] >= 3:
-                        logger.info(f"[LiveEngage] Token failed 3x for {email[:20]}, switching to AKNG")
+                    # Detect permission errors — disable token permanently for this session
+                    if error_msg and any(pe in error_msg.lower() for pe in (
+                        "does not exist", "missing permissions", "unsupported post",
+                        "not accessible", "(#200)", "(#100)",
+                    )):
+                        token_disabled.add(email)
+                        logger.info(f"[LiveEngage] Token disabled for {email[:20]}: no permission")
                         use_token_first = False
+                    else:
+                        token_errors[email] = token_errors.get(email, 0) + 1
+                        if token_errors[email] >= 3:
+                            logger.info(f"[LiveEngage] Token failed 3x for {email[:20]}, switching to AKNG")
+                            use_token_first = False
 
                     # Fallback to AKNG
                     try:
@@ -959,8 +972,8 @@ async def _engage_loop(
                         resp = {"success": False, "error": str(exc)}
                     success, error_msg = _parse_response(resp)
 
-                    # Fallback to token if AKNG failed and token available
-                    if not success and account.get("token"):
+                    # Fallback to token if AKNG failed and token available (not disabled)
+                    if not success and account.get("token") and email not in token_disabled:
                         logger.info(f"[LiveEngage] AKNG failed, trying token for {email[:20]}...")
                         try:
                             resp = await client.comment_direct(
