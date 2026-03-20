@@ -390,6 +390,7 @@ async def export_fan_analysis(
         "Engagement Score", "First Seen", "Last Seen",
         "Bot Score", "Is Bot", "Buying Intent", "Sentiment",
         "Interests", "Persona", "Phone", "Location",
+        "Comment Messages",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
@@ -423,6 +424,9 @@ async def export_fan_analysis(
             "Persona": cached.persona_type if cached else "",
             "Phone": profile.phone if profile else "",
             "Location": profile.location if profile else "",
+            "Comment Messages": " | ".join(
+                c["comment_text"] for c in comments_by_user.get(uid, [])[:10] if c.get("comment_text")
+            ) or "",
         })
 
     content = output.getvalue()

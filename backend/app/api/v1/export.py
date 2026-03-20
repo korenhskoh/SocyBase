@@ -10,7 +10,8 @@ import io
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
-from app.models.job import ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile
+from sqlalchemy import func
+from app.models.job import ScrapingJob, ScrapedProfile, ScrapedPost, PageAuthorProfile, ExtractedComment
 from app.schemas.export import ExportRequest, FacebookAdsExportRequest
 
 router = APIRouter()
@@ -49,13 +50,48 @@ async def _get_author(db: AsyncSession, job_id: UUID) -> PageAuthorProfile | Non
     return result.scalar_one_or_none()
 
 
-# Standard 20-field format (renamed: Last Name→Surname, Hometown→City, Location→Country)
+# Standard 20-field format + comment enrichment
 FIELDNAMES = [
     "ID", "Name", "First Name", "Surname",
     "Gender", "Birthday", "Phone", "Relationship", "Education", "Work",
     "Position", "City", "Country", "Website", "Languages",
     "UsernameLink", "Username", "About", "Picture URL", "Updated Time",
 ]
+
+ENRICHED_FIELDNAMES = FIELDNAMES + [
+    "Total Comments", "Comment Messages", "First Comment", "Last Comment",
+]
+
+
+async def _get_comment_map(db: AsyncSession, job_id: UUID) -> dict:
+    """Build a map of user_id → {count, messages, first_time, last_time} from ExtractedComment."""
+    result = await db.execute(
+        select(
+            ExtractedComment.commenter_user_id,
+            func.count(ExtractedComment.id).label("total"),
+            func.min(ExtractedComment.comment_time).label("first_time"),
+            func.max(ExtractedComment.comment_time).label("last_time"),
+        )
+        .where(ExtractedComment.job_id == job_id)
+        .group_by(ExtractedComment.commenter_user_id)
+    )
+    stats = {row[0]: {"total": row[1], "first_time": row[2], "last_time": row[3]} for row in result.all()}
+
+    # Fetch actual comment texts (up to 10 per user for export)
+    for user_id in stats:
+        msg_result = await db.execute(
+            select(ExtractedComment.comment_text)
+            .where(
+                ExtractedComment.job_id == job_id,
+                ExtractedComment.commenter_user_id == user_id,
+                ExtractedComment.comment_text.isnot(None),
+            )
+            .order_by(ExtractedComment.comment_time.desc().nulls_last())
+            .limit(10)
+        )
+        stats[user_id]["messages"] = [r[0] for r in msg_result.all() if r[0]]
+
+    return stats
 
 # Facebook Ads Manager custom audience format
 FB_ADS_FIELDNAMES = [
@@ -87,13 +123,17 @@ async def export_csv(
     )
     profiles = result.scalars().all()
 
-    # Generate CSV
+    # Get comment data for enrichment
+    comment_map = await _get_comment_map(db, job_id)
+
+    # Generate CSV with enriched fields
     output = io.StringIO()
 
-    writer = csv.DictWriter(output, fieldnames=FIELDNAMES)
+    writer = csv.DictWriter(output, fieldnames=ENRICHED_FIELDNAMES)
     writer.writeheader()
 
     for p in profiles:
+        cdata = comment_map.get(p.platform_user_id, {})
         writer.writerow({
             "ID": p.platform_user_id,
             "Name": p.name or "NA",
@@ -115,6 +155,10 @@ async def export_csv(
             "About": p.about or "NA",
             "Picture URL": p.picture_url or "NA",
             "Updated Time": p.scraped_at.strftime("%Y-%m-%d %H:%M:%S") if p.scraped_at else "NA",
+            "Total Comments": cdata.get("total", 0),
+            "Comment Messages": " | ".join(cdata.get("messages", [])) or "NA",
+            "First Comment": cdata.get("first_time", "").strftime("%Y-%m-%d %H:%M") if cdata.get("first_time") else "NA",
+            "Last Comment": cdata.get("last_time", "").strftime("%Y-%m-%d %H:%M") if cdata.get("last_time") else "NA",
         })
 
     # UTF-8 BOM so Excel on Mac/Windows handles non-ASCII correctly
@@ -248,13 +292,16 @@ async def export_xlsx(
             ws.cell(row=row_idx, column=10, value=p.post_url or "")
     else:
         ws.title = "Scraped Profiles"
-        headers = FIELDNAMES
+        headers = ENRICHED_FIELDNAMES
 
         result = await db.execute(
             select(ScrapedProfile)
             .where(ScrapedProfile.job_id == job_id, ScrapedProfile.scrape_status == "success")
         )
         profiles = result.scalars().all()
+
+        # Get comment data for enrichment
+        comment_map = await _get_comment_map(db, job_id)
 
         for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col_idx, value=header)
@@ -263,6 +310,7 @@ async def export_xlsx(
             cell.alignment = Alignment(horizontal="center")
 
         for row_idx, p in enumerate(profiles, 2):
+            cdata = comment_map.get(p.platform_user_id, {})
             ws.cell(row=row_idx, column=1, value=p.platform_user_id)
             ws.cell(row=row_idx, column=2, value=p.name or "NA")
             ws.cell(row=row_idx, column=3, value=p.first_name or "NA")
@@ -283,6 +331,37 @@ async def export_xlsx(
             ws.cell(row=row_idx, column=18, value=p.about or "NA")
             ws.cell(row=row_idx, column=19, value=p.picture_url or "NA")
             ws.cell(row=row_idx, column=20, value=p.scraped_at.strftime("%Y-%m-%d %H:%M:%S") if p.scraped_at else "NA")
+            ws.cell(row=row_idx, column=21, value=cdata.get("total", 0))
+            ws.cell(row=row_idx, column=22, value=" | ".join(cdata.get("messages", [])) or "NA")
+            ws.cell(row=row_idx, column=23, value=cdata.get("first_time", "").strftime("%Y-%m-%d %H:%M") if cdata.get("first_time") else "NA")
+            ws.cell(row=row_idx, column=24, value=cdata.get("last_time", "").strftime("%Y-%m-%d %H:%M") if cdata.get("last_time") else "NA")
+
+        # ── Comments Sheet (all raw comments) ──
+        ws_comments = wb.create_sheet("Comments")
+        comment_headers = ["User ID", "User Name", "Post ID", "Comment ID", "Message", "Comment Time"]
+        for col_idx, header in enumerate(comment_headers, 1):
+            cell = ws_comments.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+
+        comments_result = await db.execute(
+            select(ExtractedComment)
+            .where(ExtractedComment.job_id == job_id)
+            .order_by(ExtractedComment.comment_time.asc().nulls_last())
+        )
+        all_comments = comments_result.scalars().all()
+        for row_idx, c in enumerate(all_comments, 2):
+            ws_comments.cell(row=row_idx, column=1, value=c.commenter_user_id or "")
+            ws_comments.cell(row=row_idx, column=2, value=c.commenter_name or "")
+            ws_comments.cell(row=row_idx, column=3, value=c.post_id or "")
+            ws_comments.cell(row=row_idx, column=4, value=c.comment_id or "")
+            ws_comments.cell(row=row_idx, column=5, value=c.comment_text or "")
+            ws_comments.cell(row=row_idx, column=6, value=c.comment_time.strftime("%Y-%m-%d %H:%M:%S") if c.comment_time else "")
+
+        for col in ws_comments.columns:
+            col_letter = col[0].column_letter
+            ws_comments.column_dimensions[col_letter].width = 25
 
     # Author Info sheet (if available)
     author = await _get_author(db, job_id)
