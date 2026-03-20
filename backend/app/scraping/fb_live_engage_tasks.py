@@ -36,6 +36,9 @@ class AdaptiveState:
     code_re: re.Pattern = field(default_factory=lambda: PRODUCT_CODE_RE)
     quantity_variation: bool = True
     aggressive_level: str = "medium"
+    # Auto-order trending: track recent code mentions for auto place_order
+    recent_code_mentions: dict = field(default_factory=dict)  # code → [timestamps]
+    auto_ordered_codes: set = field(default_factory=set)  # codes already auto-ordered this cycle
 
 
 def _extract_product_codes(message: str, code_re: re.Pattern | None = None) -> list[str]:
@@ -140,6 +143,8 @@ async def _execute_engagement(session_id: str):
                 "languages": session.languages or "",
                 "comment_without_new": bool(session.comment_without_new),
                 "comment_without_new_max": session.comment_without_new_max or 3,
+                "auto_order_trending": bool(getattr(session, "auto_order_trending", False)),
+                "auto_order_trending_threshold": getattr(session, "auto_order_trending_threshold", None) or 3,
                 "blacklist_words": session.blacklist_words or "",
                 "stream_end_threshold": session.stream_end_threshold if session.stream_end_threshold is not None else 10,
             }
@@ -431,6 +436,16 @@ async def _monitor_loop(
                         if code.upper() not in known_upper:
                             adaptive.detected_codes.append(code)
                             known_upper.add(code.upper())
+                        # Track recent mentions for trending detection
+                        code_key = code.upper()
+                        if code_key not in adaptive.recent_code_mentions:
+                            adaptive.recent_code_mentions[code_key] = []
+                        adaptive.recent_code_mentions[code_key].append(now_ts)
+                        # Keep only last 60s of mentions
+                        cutoff = now_ts - 60
+                        adaptive.recent_code_mentions[code_key] = [
+                            t for t in adaptive.recent_code_mentions[code_key] if t > cutoff
+                        ]
                     # Bound to last 50 unique codes
                     if len(adaptive.detected_codes) > 50:
                         adaptive.detected_codes = adaptive.detected_codes[-50:]
@@ -832,8 +847,34 @@ async def _engage_loop(
                     new_order_weight, len(adaptive.detected_codes),
                 )
 
-            # Pick role via weighted random, avoiding consecutive same role
-            role = random.choices(roles, weights=weights, k=1)[0]
+            # ── Auto-order trending codes ──
+            trending_code = None
+            if config.get("auto_order_trending", False):
+                threshold = config.get("auto_order_trending_threshold", 3)
+                now_check = monotonic()
+                for code_key, timestamps in list(adaptive.recent_code_mentions.items()):
+                    # Clean old timestamps
+                    recent = [t for t in timestamps if now_check - t < 60]
+                    adaptive.recent_code_mentions[code_key] = recent
+                    if len(recent) >= threshold and code_key not in adaptive.auto_ordered_codes:
+                        trending_code = code_key
+                        # Find original case from detected_codes
+                        for dc in adaptive.detected_codes:
+                            if dc.upper() == code_key:
+                                trending_code = dc
+                                break
+                        adaptive.auto_ordered_codes.add(code_key)
+                        logger.info(f"[LiveEngage] Trending code detected: {trending_code} ({len(recent)} mentions in 60s)")
+                        break
+                # Reset auto_ordered after 2 minutes so same code can trigger again
+                if now_check % 120 < 5:
+                    adaptive.auto_ordered_codes.clear()
+
+            # Pick role — override with place_order if trending code detected
+            if trending_code:
+                role = "place_order"
+            else:
+                role = random.choices(roles, weights=weights, k=1)[0]
             if role == last_role and len(roles) > 1:
                 # Re-roll once to avoid consecutive same role
                 for _ in range(3):
@@ -863,14 +904,29 @@ async def _engage_loop(
 
             # Generate comment
             reference_comment = None
+            content = None
             try:
-                if role in ("react_comment", "repeat_question") and recent_comments:
-                    ref = random.choice(recent_comments[-10:]) if len(recent_comments) >= 3 else recent_comments[-1]
-                    reference_comment = f"{ref.get('from_name', '')}: {ref.get('message', '')}"
+                # If trending code triggered place_order, generate directly
+                if trending_code and role == "place_order":
+                    qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
+                    roll = random.random()
+                    if adaptive.quantity_variation and roll < 0.4:
+                        content = f"{trending_code} +{qty}"
+                    elif roll < 0.6:
+                        content = f"+1 {trending_code}"
+                    else:
+                        content = trending_code
+                    reference_comment = f"Auto-order trending: {trending_code}"
+                    role = "auto_order"
 
-                content = await ai_service.generate_comment(
-                    role=role,
-                    recent_comments=recent_comments,
+                if not content:
+                    if role in ("react_comment", "repeat_question") and recent_comments:
+                        ref = random.choice(recent_comments[-10:]) if len(recent_comments) >= 3 else recent_comments[-1]
+                        reference_comment = f"{ref.get('from_name', '')}: {ref.get('message', '')}"
+
+                    content = await ai_service.generate_comment(
+                        role=role,
+                        recent_comments=recent_comments,
                     business_context=config["business_context"],
                     training_comments=config["training_comments"],
                     ai_instructions=config["ai_instructions"],

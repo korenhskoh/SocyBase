@@ -65,6 +65,8 @@ class FBLiveEngageSession(Base):
     blacklist_words: Mapped[str | None] = mapped_column(Text)  # comma-separated words to avoid
     comment_without_new: Mapped[bool] = mapped_column(Boolean, default=False)
     comment_without_new_max: Mapped[int] = mapped_column(Integer, default=3)
+    auto_order_trending: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_order_trending_threshold: Mapped[int] = mapped_column(Integer, default=3)
 
     # Page owner — comments from this ID are ignored (livestream host)
     page_owner_id: Mapped[str | None] = mapped_column(String(100))

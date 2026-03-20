@@ -274,6 +274,8 @@ export default function FBActionBotPage() {
   const [leProductCodes, setLeProductCodes] = useState("");
   const [leCodePattern, setLeCodePattern] = useState("");
   const [leQuantityVariation, setLeQuantityVariation] = useState(true);
+  const [leAutoOrderTrending, setLeAutoOrderTrending] = useState(false);
+  const [leAutoOrderThreshold, setLeAutoOrderThreshold] = useState(3);
   const [leLanguages, setLeLanguages] = useState<string[]>([]);
   const [leAggressiveLevel, setLeAggressiveLevel] = useState<"low" | "medium" | "high">("medium");
   const [leTargetEnabled, setLeTargetEnabled] = useState(false);
@@ -3650,6 +3652,31 @@ export default function FBActionBotPage() {
                     <p className="text-xs text-white/30">Add +1, +2, +3 to order comments (e.g. &quot;m763 +2&quot;)</p>
                   </div>
                 </div>
+                <div className="flex items-center gap-3">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={leAutoOrderTrending}
+                      onChange={(e) => setLeAutoOrderTrending(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-white/10 rounded-full peer peer-checked:bg-amber-500/60 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  </label>
+                  <div>
+                    <span className="text-sm text-white/70">Auto-Order Trending Codes</span>
+                    <p className="text-xs text-white/30">Automatically place orders when a code is mentioned {leAutoOrderThreshold}+ times in 60s</p>
+                  </div>
+                </div>
+                {leAutoOrderTrending && (
+                  <div className="pl-12">
+                    <label className="text-xs text-white/40 block mb-1">Threshold: {leAutoOrderThreshold} mentions in 60s</label>
+                    <input
+                      type="range" min={2} max={20} step={1} value={leAutoOrderThreshold}
+                      className="w-full accent-amber-400"
+                      onChange={(e) => setLeAutoOrderThreshold(parseInt(e.target.value))}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Aggressive Level & Timing */}
@@ -3902,6 +3929,8 @@ export default function FBActionBotPage() {
                           target_comments_count: leTargetCount,
                           target_comments_period_minutes: leTargetPeriod,
                           comment_without_new: leCommentWithoutNew,
+                      auto_order_trending: leAutoOrderTrending,
+                      auto_order_trending_threshold: leAutoOrderTrending ? leAutoOrderThreshold : undefined,
                           comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                           blacklist_words: leBlacklistWords.trim() || undefined,
                           stream_end_threshold: leStreamEndEnabled ? leStreamEndThreshold : 0,
@@ -4035,6 +4064,8 @@ export default function FBActionBotPage() {
                       target_comments_count: leTargetEnabled ? leTargetCount : undefined,
                       target_comments_period_minutes: leTargetEnabled ? leTargetPeriod : undefined,
                       comment_without_new: leCommentWithoutNew,
+                      auto_order_trending: leAutoOrderTrending,
+                      auto_order_trending_threshold: leAutoOrderTrending ? leAutoOrderThreshold : undefined,
                       comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                       blacklist_words: leBlacklistWords.trim() || undefined,
                       stream_end_threshold: leStreamEndEnabled ? leStreamEndThreshold : 0,
@@ -4617,6 +4648,7 @@ export default function FBActionBotPage() {
                           {log.created_at ? new Date(log.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : ""}
                         </span>
                         <span className={`w-24 flex-shrink-0 capitalize font-medium ${
+                          log.role === "auto_order" ? "text-orange-400/90 font-bold" :
                           log.role === "triggered" ? "text-red-400/90 font-bold" :
                           log.role === "place_order" ? "text-amber-400/70" :
                           log.role === "ask_question" ? "text-blue-400/70" :
@@ -4624,7 +4656,7 @@ export default function FBActionBotPage() {
                           log.role === "repeat_question" ? "text-cyan-400/70" :
                           log.role === "good_vibe" ? "text-emerald-400/70" :
                           "text-pink-400/70"
-                        }`}>{log.role === "triggered" ? "⚡ Triggered" : log.role?.replace(/_/g, " ")}</span>
+                        }`}>{log.role === "auto_order" ? "🔥 Auto Order" : log.role === "triggered" ? "⚡ Triggered" : log.role?.replace(/_/g, " ")}</span>
                         <span className="text-white/25 w-32 flex-shrink-0 truncate">{log.account_email}</span>
                         <span className={`flex-1 truncate ${log.status === "success" ? "text-white/60" : "text-red-400/60"}`}>
                           {log.status === "success" ? log.content : (log.error_message || "Error")}
