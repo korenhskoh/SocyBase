@@ -39,6 +39,7 @@ class AdaptiveState:
     code_re: re.Pattern = field(default_factory=lambda: PRODUCT_CODE_RE)
     quantity_variation: bool = True
     aggressive_level: str = "medium"
+    code_whitelist: set = field(default_factory=set)  # user-defined codes for whitelist matching
     # Auto-order trending: track recent code mentions for auto place_order
     recent_code_mentions: dict = field(default_factory=dict)  # code → [timestamps]
     last_auto_order_time: float = 0.0  # monotonic timestamp of last auto-order
@@ -282,10 +283,12 @@ async def _execute_engagement(session_id: str):
             except re.error as e:
                 logger.warning(f"[LiveEngage] Invalid code_pattern '{custom_pattern}': {e}, using default")
 
-        # Seed product codes from user config
+        # Seed product codes from user config — used as whitelist for detection
         seed_codes_str = config.get("product_codes", "") or ""
         if seed_codes_str:
             adaptive.detected_codes = [c.strip() for c in seed_codes_str.split(",") if c.strip()]
+            # Also set as whitelist for matching in live comments
+            adaptive.code_whitelist = {c.strip().upper() for c in seed_codes_str.split(",") if c.strip()}
 
         client = FacebookGraphClient()
 
@@ -451,10 +454,31 @@ async def _monitor_loop(
                 })
                 new_count += 1
 
-                # ── Product code detection ──
+                # ── Product code detection (regex + whitelist) ──
                 now_ts = monotonic()
                 adaptive.comment_timestamps.append(now_ts)
+
+                # Method 1: Regex-based detection
                 codes_in_msg = _extract_product_codes(message, adaptive.code_re)
+
+                # Method 2: Whitelist matching — check if any user-defined code
+                # appears in the comment (case-insensitive, word boundary aware)
+                if adaptive.code_whitelist:
+                    msg_upper = message.upper().strip()
+                    # Tokenize: split by spaces, commas, plus signs
+                    tokens = set(re.split(r'[\s,+＋]+', msg_upper))
+                    for wl_code in adaptive.code_whitelist:
+                        if wl_code in tokens or msg_upper == wl_code:
+                            # Found a whitelist match — add if not already from regex
+                            if wl_code not in {c.upper() for c in codes_in_msg}:
+                                # Use the original case from detected_codes if available
+                                original = wl_code
+                                for dc in adaptive.detected_codes:
+                                    if dc.upper() == wl_code:
+                                        original = dc
+                                        break
+                                codes_in_msg.append(original)
+
                 if codes_in_msg:
                     adaptive.code_comment_timestamps.append(now_ts)
                     known_upper = {c.upper() for c in adaptive.detected_codes}
@@ -779,6 +803,19 @@ async def _engage_loop(
                         config["auto_order_trending_cooldown"] = s.auto_order_trending_cooldown or 60
                         adaptive.quantity_variation = s.quantity_variation if s.quantity_variation is not None else True
                         adaptive.aggressive_level = s.aggressive_level or "medium"
+
+                        # Refresh code whitelist from seed codes
+                        new_seed = s.product_codes or ""
+                        config["product_codes"] = new_seed
+                        if new_seed:
+                            new_codes = [c.strip() for c in new_seed.split(",") if c.strip()]
+                            adaptive.code_whitelist = {c.upper() for c in new_codes}
+                            # Add new seed codes to detected_codes
+                            known = {c.upper() for c in adaptive.detected_codes}
+                            for nc in new_codes:
+                                if nc.upper() not in known:
+                                    adaptive.detected_codes.append(nc)
+                                    known.add(nc.upper())
 
                         # Rebuild role weights
                         base_role_dist.clear()
