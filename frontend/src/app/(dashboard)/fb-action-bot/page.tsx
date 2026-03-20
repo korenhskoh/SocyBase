@@ -256,6 +256,10 @@ export default function FBActionBotPage() {
   const [liveEngagePhase, setLiveEngagePhase] = useState<"setup" | "running">("setup");
   const [liveEngageSession, setLiveEngageSession] = useState<any>(null);
   const [liveEngageLogs, setLiveEngageLogs] = useState<any[]>([]);
+  const [smartSetupUrl, setSmartSetupUrl] = useState("");
+  const [smartSetupLoading, setSmartSetupLoading] = useState(false);
+  const [smartSetupResult, setSmartSetupResult] = useState<any>(null);
+  const [smartSetupStep, setSmartSetupStep] = useState("");
   const [lePostUrl, setLePostUrl] = useState("");
   const [lePostId, setLePostId] = useState("");
   const [leTitle, setLeTitle] = useState("");
@@ -3376,6 +3380,127 @@ export default function FBActionBotPage() {
                   </div>
                 </div>
               </details>
+
+              {/* ── Smart Setup ── */}
+              <div className="glass-card p-5 space-y-3">
+                <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
+                  <svg className="h-4 w-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                  Smart Setup
+                  <span className="text-[10px] text-white/20">— auto-generate config from Facebook page/video</span>
+                </h3>
+                <div className="flex gap-2">
+                  <input placeholder="Paste Facebook page URL or livestream video URL" value={smartSetupUrl}
+                    onChange={(e) => setSmartSetupUrl(e.target.value)}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-amber-500/50" />
+                  <button disabled={smartSetupLoading || !smartSetupUrl.trim()}
+                    onClick={async () => {
+                      setSmartSetupLoading(true);
+                      setSmartSetupStep("Fetching page & comments...");
+                      setSmartSetupResult(null);
+                      try {
+                        const url = smartSetupUrl.trim();
+                        const isVideo = url.includes("/videos/") || url.includes("/posts/") || /^\d{10,}$/.test(url);
+                        setSmartSetupStep("AI analyzing data...");
+                        const res = await fbActionApi.liveEngageSmartSetup({
+                          page_url: isVideo ? undefined : url,
+                          video_url: isVideo ? url : url,
+                          max_comments: 200,
+                        });
+                        setSmartSetupResult(res.data);
+                        setSmartSetupStep("");
+                        showToast("success", `Analyzed ${res.data.stats?.comments_analyzed || 0} comments`);
+                      } catch (err: any) {
+                        showToast("error", err.response?.data?.detail || "Analysis failed");
+                        setSmartSetupStep("");
+                      }
+                      setSmartSetupLoading(false);
+                    }}
+                    className="px-5 py-2.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 rounded-lg text-sm font-medium transition disabled:opacity-40 whitespace-nowrap">
+                    {smartSetupLoading ? (<span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
+                      Analyzing...
+                    </span>) : "Analyze"}
+                  </button>
+                </div>
+                {smartSetupLoading && smartSetupStep && (
+                  <p className="text-xs text-amber-300/60 animate-pulse">{smartSetupStep}</p>
+                )}
+                {smartSetupResult && (
+                  <div className="space-y-3 border-t border-white/10 pt-3">
+                    {smartSetupResult.page_info?.name && (
+                      <div className="flex items-center gap-3">
+                        {smartSetupResult.page_info.picture && (
+                          <img src={smartSetupResult.page_info.picture} alt="" className="w-10 h-10 rounded-full" />
+                        )}
+                        <div>
+                          <p className="text-sm text-white/80 font-medium">{smartSetupResult.page_info.name}</p>
+                          <p className="text-xs text-white/30">{smartSetupResult.page_info.category}</p>
+                        </div>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className="bg-white/5 rounded-lg p-2 text-center">
+                        <p className="text-lg font-bold text-emerald-400">{smartSetupResult.stats?.comments_analyzed || 0}</p>
+                        <p className="text-[10px] text-white/30">Comments</p>
+                      </div>
+                      <div className="bg-white/5 rounded-lg p-2 text-center">
+                        <p className="text-lg font-bold text-blue-400">{Object.keys(smartSetupResult.stats?.languages || {}).length}</p>
+                        <p className="text-[10px] text-white/30">Languages</p>
+                      </div>
+                      <div className="bg-white/5 rounded-lg p-2 text-center">
+                        <p className="text-lg font-bold text-amber-400">{smartSetupResult.stats?.codes_detected?.length || 0}</p>
+                        <p className="text-[10px] text-white/30">Codes</p>
+                      </div>
+                      <div className="bg-white/5 rounded-lg p-2 text-center">
+                        <p className="text-lg font-bold text-purple-400">{smartSetupResult.stats?.avg_comment_length || 0}</p>
+                        <p className="text-[10px] text-white/30">Avg Len</p>
+                      </div>
+                    </div>
+                    {smartSetupResult.stats?.languages && (
+                      <div className="flex gap-2 flex-wrap">
+                        {Object.entries(smartSetupResult.stats.languages).map(([lang, count]: [string, any]) => (
+                          <span key={lang} className="px-2 py-0.5 bg-blue-500/10 text-blue-300 rounded text-xs">{lang}: {count}</span>
+                        ))}
+                      </div>
+                    )}
+                    {smartSetupResult.stats?.codes_detected?.length > 0 && (
+                      <div className="flex gap-1.5 flex-wrap items-center">
+                        <span className="text-xs text-white/30">Codes:</span>
+                        {smartSetupResult.stats.codes_detected.map((code: string) => (
+                          <span key={code} className="px-2 py-0.5 bg-amber-500/10 text-amber-300 rounded text-xs font-mono">{code}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => {
+                        const cfg = smartSetupResult.config;
+                        if (!cfg) return;
+                        if (smartSetupResult.post_id) { setLePostId(smartSetupResult.post_id); if (smartSetupUrl.includes("facebook.com")) setLePostUrl(smartSetupUrl); }
+                        if (cfg.suggested_title) setLeTitle(cfg.suggested_title);
+                        if (cfg.business_context) setLeContext(cfg.business_context);
+                        if (cfg.ai_instructions) setLeInstructions(cfg.ai_instructions);
+                        if (cfg.training_comments) setLeTrainingComments(cfg.training_comments);
+                        if (cfg.product_codes) setLeProductCodes(cfg.product_codes);
+                        if (cfg.code_pattern) setLeCodePattern(cfg.code_pattern);
+                        if (cfg.role_distribution) setLeRoles(cfg.role_distribution);
+                        if (cfg.aggressive_level) setLeAggressiveLevel(cfg.aggressive_level);
+                        if (cfg.languages) setLeLanguages(cfg.languages);
+                        if (cfg.quantity_variation !== undefined) setLeQuantityVariation(cfg.quantity_variation);
+                        if (cfg.auto_order_trending !== undefined) setLeAutoOrderTrending(cfg.auto_order_trending);
+                        if (cfg.auto_order_trending_threshold) setLeAutoOrderThreshold(cfg.auto_order_trending_threshold);
+                        setSmartSetupResult(null);
+                        showToast("success", "Config applied! Review and adjust before starting.");
+                      }} className="flex-1 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-lg text-sm font-medium transition">
+                        Apply Config
+                      </button>
+                      <button onClick={() => setSmartSetupResult(null)}
+                        className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/40 rounded-lg text-sm transition">
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Target */}
               <div className="glass-card p-5 space-y-3">

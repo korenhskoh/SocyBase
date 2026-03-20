@@ -2386,6 +2386,12 @@ class LiveEngageStartRequest(BaseModel):
     scheduled_at: str | None = None  # ISO datetime for scheduled start
 
 
+class SmartSetupRequest(BaseModel):
+    page_url: str | None = None
+    video_url: str | None = None
+    max_comments: int = Field(default=200, ge=50, le=500)
+
+
 @router.post("/live-engage/start")
 async def live_engage_start(
     req: LiveEngageStartRequest,
@@ -2667,6 +2673,200 @@ async def live_engage_parse_accounts_csv(
         "total": len(unique_accounts),
         "duplicates": duplicates[:10],
         "errors": errors[:10],
+    }
+
+
+def _detect_languages_from_comments(comments: list[str]) -> dict[str, int]:
+    stats = {"chinese": 0, "malay": 0, "english": 0}
+    chinese_re = re.compile(r'[\u4e00-\u9fff]')
+    malay_kw = {"nak", "beli", "berapa", "cantik", "ada", "tak", "boleh", "saya", "mau", "harga"}
+    for msg in comments:
+        if chinese_re.search(msg):
+            stats["chinese"] += 1
+        elif any(kw in msg.lower().split() for kw in malay_kw):
+            stats["malay"] += 1
+        else:
+            stats["english"] += 1
+    return {k: v for k, v in stats.items() if v > 0}
+
+
+def _extract_codes_from_comments(comments: list[str]) -> list[str]:
+    code_re = re.compile(r'\b([a-zA-Z]{1,3}\d{1,5})\b')
+    number_re = re.compile(r'^\s*(\d{1,5})\s*(?:[+＋]\s*\d{1,3})?\s*$')
+    counts: dict[str, int] = {}
+    for msg in comments:
+        for m in code_re.findall(msg):
+            counts[m.upper()] = counts.get(m.upper(), 0) + 1
+        if len(msg.strip()) <= 10:
+            nm = number_re.match(msg.strip())
+            if nm:
+                counts[nm.group(1)] = counts.get(nm.group(1), 0) + 1
+    return [c for c, n in sorted(counts.items(), key=lambda x: -x[1]) if n >= 2][:20]
+
+
+def _parse_json_safe(content: str, fallback=None):
+    content = content.strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+    if content.endswith("```"):
+        content = content[:-3]
+    try:
+        return json.loads(content.strip())
+    except (json.JSONDecodeError, ValueError):
+        return fallback or {}
+
+
+@router.post("/live-engage/smart-setup")
+async def live_engage_smart_setup(
+    req: SmartSetupRequest,
+    user: User = Depends(get_current_user),
+):
+    """Analyze Facebook page + video and auto-generate livestream engagement config."""
+    if not req.page_url and not req.video_url:
+        raise HTTPException(status_code=400, detail="Provide at least a page URL or video URL")
+
+    from app.scraping.clients.facebook import FacebookGraphClient
+    from openai import AsyncOpenAI
+    from app.config import get_settings
+    import asyncio as aio
+
+    settings = get_settings()
+    client = FacebookGraphClient()
+    openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+    # ── Stage 1: Fetch page info ──
+    page_info = {}
+    if req.page_url:
+        try:
+            parsed = client.parse_page_input(req.page_url)
+            pid = parsed.get("page_id")
+            if pid:
+                raw = await client.get_object_details(
+                    pid, fields="name,about,description,category,website,picture.width(200)"
+                )
+                if isinstance(raw, dict):
+                    page_info = raw.get("data", raw) if isinstance(raw.get("data"), dict) else raw
+        except Exception as exc:
+            logger.warning(f"[SmartSetup] Page fetch failed: {exc}")
+
+    # ── Stage 2: Scrape comments ──
+    all_comments: list[str] = []
+    post_id = None
+    url_to_scrape = req.video_url or req.page_url
+    if url_to_scrape:
+        try:
+            parsed = client.parse_post_url(url_to_scrape)
+            post_id = parsed.get("post_id")
+        except Exception:
+            candidate = url_to_scrape.strip().split("/")[-1].split("?")[0]
+            if candidate.isdigit():
+                post_id = candidate
+
+        if post_id:
+            cursor = None
+            for _ in range(max(1, req.max_comments // 50)):
+                try:
+                    resp = await client.get_post_comments(post_id, limit=50, comment_filter="stream", after=cursor)
+                    cdata, ncursor = [], None
+                    if isinstance(resp, dict):
+                        d = resp.get("data", resp)
+                        if isinstance(d, dict):
+                            co = d.get("comments", d)
+                            if isinstance(co, dict):
+                                cdata = co.get("data", [])
+                                ncursor = co.get("paging", {}).get("cursors", {}).get("after")
+                            elif isinstance(co, list):
+                                cdata = co
+                    for c in cdata:
+                        msg = c.get("message", "").strip()
+                        if msg:
+                            all_comments.append(msg)
+                    if not ncursor or not cdata:
+                        break
+                    cursor = ncursor
+                except Exception as exc:
+                    logger.warning(f"[SmartSetup] Comment fetch failed: {exc}")
+                    break
+
+    if not page_info and not all_comments:
+        raise HTTPException(status_code=400, detail="Could not fetch data. Check URLs are valid and public.")
+
+    # ── Stage 3: AI Analysis ──
+    lang_stats = _detect_languages_from_comments(all_comments) if all_comments else {"english": 1}
+    detected_codes = _extract_codes_from_comments(all_comments) if all_comments else []
+    avg_len = round(sum(len(c) for c in all_comments) / max(len(all_comments), 1)) if all_comments else 0
+    unique = list(dict.fromkeys(all_comments))[:100]
+
+    page_sum = ""
+    if page_info:
+        page_sum = f"Name: {page_info.get('name', '?')}\nCategory: {page_info.get('category', '?')}\nAbout: {page_info.get('about', '')}\nDescription: {page_info.get('description', '')}"
+
+    dominant = max(lang_stats, key=lang_stats.get) if lang_stats else "english"
+    lang_list = [k for k, v in sorted(lang_stats.items(), key=lambda x: -x[1]) if v > 0]
+    comments_sample = "\n".join(f"- {c}" for c in unique)
+
+    prompt = f"""You are a Facebook Livestream engagement expert. Analyze this data and generate optimal config.
+
+=== PAGE ===
+{page_sum or "N/A"}
+
+=== COMMENTS ({len(all_comments)} total, {len(unique)} unique) ===
+{comments_sample or "N/A"}
+
+=== DETECTED ===
+Languages: {json.dumps(lang_stats)}
+Codes (2+ occurrences): {', '.join(detected_codes) or 'None'}
+Avg comment length: {avg_len} chars
+
+Generate JSON:
+{{"business_context":"2-4 sentences specific to THIS business in {dominant}","ai_instructions":"1-2 sentence rules for AI tone/language","training_comments":"50-80 REAL comments from above (one per line, do NOT invent)","languages":{json.dumps(lang_list)},"product_codes":"{', '.join(detected_codes[:15])}","code_pattern":"examples or preset (numbers/letters_numbers/any_alphanumeric)","role_distribution":{{"ask_question":N,"place_order":N,"repeat_question":N,"good_vibe":N,"react_comment":N,"share_experience":N}},"aggressive_level":"low/medium/high","quantity_variation":true,"auto_order_trending":{str(bool(detected_codes)).lower()},"auto_order_trending_threshold":3,"suggested_title":"short name"}}
+
+Rules: role_distribution sums to 100. If heavy ordering→place_order 50-60%. training_comments MUST be real from sample."""
+
+    try:
+        ai_resp = await aio.wait_for(
+            openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": "Generate the config."},
+                ],
+                temperature=0.3, max_tokens=4000,
+                response_format={"type": "json_object"},
+            ),
+            timeout=60,
+        )
+        config = _parse_json_safe(ai_resp.choices[0].message.content or "{}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {exc}")
+
+    # Normalize role distribution to 100
+    roles = config.get("role_distribution", {})
+    total = sum(roles.values())
+    if total > 0 and total != 100:
+        factor = 100 / total
+        config["role_distribution"] = {k: max(1, round(v * factor)) for k, v in roles.items()}
+        diff = 100 - sum(config["role_distribution"].values())
+        if diff:
+            top = max(config["role_distribution"], key=config["role_distribution"].get)
+            config["role_distribution"][top] += diff
+
+    return {
+        "config": config,
+        "page_info": {
+            "name": page_info.get("name", ""),
+            "category": page_info.get("category", ""),
+            "about": page_info.get("about", ""),
+            "picture": (page_info.get("picture") or {}).get("data", {}).get("url", ""),
+        } if page_info else None,
+        "stats": {
+            "comments_analyzed": len(all_comments),
+            "unique_comments": len(unique),
+            "codes_detected": detected_codes,
+            "languages": lang_stats,
+            "avg_comment_length": avg_len,
+        },
+        "post_id": post_id,
     }
 
 
