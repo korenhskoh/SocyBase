@@ -504,8 +504,7 @@ async def _engage_loop(
     account_last_used: dict[str, float] = {}  # email → monotonic timestamp
     account_cooldown_secs = max(30, len(account_pool) * 10)  # at least 30s, scales with pool size
     accounts_tried: set[str] = set()  # track which accounts have been attempted
-    total_accounts = len(account_pool)  # original pool size
-    consecutive_errors = 0  # auto-stop after all tried + threshold
+    consecutive_errors = 0  # tracks consecutive failures for logging
 
     # Comment without new viewer comments
     comment_without_new = config.get("comment_without_new", False)
@@ -984,21 +983,16 @@ async def _engage_loop(
                     if is_permanent:
                         consecutive_errors = max(0, consecutive_errors - 1)
 
-                # Auto-stop only when ALL accounts exhausted and errors are very high
-                all_tried = len(accounts_tried) >= total_accounts
-                # Require 30+ consecutive errors (or pool*5) AND all accounts tried
-                auto_stop_threshold = max(30, len(account_pool) * 5)
-                if all_tried and consecutive_errors >= auto_stop_threshold:
-                    logger.warning(
-                        f"[LiveEngage] {consecutive_errors} consecutive errors (threshold={auto_stop_threshold}), "
-                        f"all {total_accounts} accounts tried — auto-stopping"
-                    )
+                # Only auto-stop if ALL accounts are removed (pool empty)
+                # Otherwise just log warnings and keep trying with remaining accounts
+                if len(account_pool) == 0:
+                    logger.warning(f"[LiveEngage] All accounts removed — no accounts left to post with")
                     stop_event.set()
                     break
                 elif consecutive_errors > 0 and consecutive_errors % 10 == 0:
                     logger.warning(
-                        f"[LiveEngage] {consecutive_errors} consecutive errors so far "
-                        f"(auto-stop at {auto_stop_threshold}, pool={len(account_pool)})"
+                        f"[LiveEngage] {consecutive_errors} consecutive errors "
+                        f"(pool={len(account_pool)}, will keep trying)"
                     )
 
             # Log action

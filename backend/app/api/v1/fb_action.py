@@ -2391,7 +2391,22 @@ async def live_engage_start(
     """Start a livestream engagement session with bulk accounts."""
     from app.models.fb_login_batch import FBLoginBatch
 
-    # Check for active sessions — warn if one is already running
+    # Auto-cleanup stale sessions (stuck as "running" for >4 hours = zombie)
+    stale_cutoff = datetime.now(timezone.utc) - __import__("datetime").timedelta(hours=4)
+    stale_result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+            FBLiveEngageSession.status.in_(["running", "paused"]),
+            FBLiveEngageSession.started_at < stale_cutoff,
+        )
+    )
+    for stale in stale_result.scalars().all():
+        stale.status = "completed"
+        stale.ended_at = datetime.now(timezone.utc)
+        stale.error_message = "Auto-completed: session was stale (stuck >4h)"
+    await db.commit()
+
+    # Check for truly active sessions
     active_result = await db.execute(
         select(func.count(FBLiveEngageSession.id)).where(
             FBLiveEngageSession.tenant_id == user.tenant_id,
