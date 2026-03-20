@@ -274,21 +274,44 @@ async def _execute_engagement(session_id: str):
             aggressive_level=config.get("aggressive_level", "medium"),
         )
 
-        # Compile custom code pattern regex if provided
+        # Code pattern: if it looks like comma-separated codes (no regex special chars),
+        # treat as additional whitelist codes; otherwise compile as regex
         custom_pattern = config.get("code_pattern", "") or ""
         if custom_pattern:
-            try:
-                adaptive.code_re = re.compile(custom_pattern)
-                logger.info(f"[LiveEngage] Using custom code pattern: {custom_pattern}")
-            except re.error as e:
-                logger.warning(f"[LiveEngage] Invalid code_pattern '{custom_pattern}': {e}, using default")
+            # Check if input has regex special characters
+            has_regex_chars = bool(re.search(r'[\\()\[\]{}|^$*+?.!]', custom_pattern))
+            if has_regex_chars:
+                try:
+                    adaptive.code_re = re.compile(custom_pattern)
+                    logger.info(f"[LiveEngage] Using custom code regex: {custom_pattern}")
+                except re.error as e:
+                    logger.warning(f"[LiveEngage] Invalid code_pattern '{custom_pattern}': {e}, using default")
+            else:
+                # Treat as comma-separated codes — add to whitelist
+                pattern_codes = [c.strip() for c in custom_pattern.split(",") if c.strip()]
+                if pattern_codes:
+                    logger.info(f"[LiveEngage] Code pattern treated as whitelist: {pattern_codes}")
+                    # Will be merged with seed codes below
 
         # Seed product codes from user config — used as whitelist for detection
         seed_codes_str = config.get("product_codes", "") or ""
+        # Merge seed codes + code_pattern codes into one whitelist
+        all_seed_codes: list[str] = []
         if seed_codes_str:
-            adaptive.detected_codes = [c.strip() for c in seed_codes_str.split(",") if c.strip()]
-            # Also set as whitelist for matching in live comments
-            adaptive.code_whitelist = {c.strip().upper() for c in seed_codes_str.split(",") if c.strip()}
+            all_seed_codes.extend(c.strip() for c in seed_codes_str.split(",") if c.strip())
+        if custom_pattern and not bool(re.search(r'[\\()\[\]{}|^$*+?.!]', custom_pattern)):
+            all_seed_codes.extend(c.strip() for c in custom_pattern.split(",") if c.strip())
+        # Deduplicate while preserving order
+        seen_codes: set[str] = set()
+        unique_codes: list[str] = []
+        for c in all_seed_codes:
+            if c.upper() not in seen_codes:
+                seen_codes.add(c.upper())
+                unique_codes.append(c)
+        if unique_codes:
+            adaptive.detected_codes = unique_codes
+            adaptive.code_whitelist = {c.upper() for c in unique_codes}
+            logger.info(f"[LiveEngage] Code whitelist: {unique_codes}")
 
         client = FacebookGraphClient()
 
