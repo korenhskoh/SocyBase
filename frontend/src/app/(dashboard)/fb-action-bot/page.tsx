@@ -3278,6 +3278,105 @@ export default function FBActionBotPage() {
         <>
           {liveEngagePhase === "setup" ? (
             <div className="space-y-4 max-w-3xl">
+
+              {/* ── How It Works Guide ── */}
+              <details className="glass-card p-4 group">
+                <summary className="text-sm font-medium text-white/60 cursor-pointer flex items-center gap-2 select-none">
+                  <svg className="h-4 w-4 text-blue-400 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
+                  How Livestream Engagement Works
+                  <span className="text-[10px] text-white/20 ml-2">(click to expand)</span>
+                </summary>
+                <div className="mt-3 space-y-4 text-xs text-white/50 leading-relaxed">
+
+                  {/* Overview */}
+                  <div className="bg-white/5 rounded-lg p-3 space-y-2">
+                    <p className="text-white/70 font-medium">Overview</p>
+                    <p>The system monitors real comments on your Facebook livestream, then generates and posts AI comments that blend naturally with viewer conversation. It uses your product info and live chat context to create relevant, believable comments.</p>
+                    <div className="grid grid-cols-3 gap-2 mt-2">
+                      <div className="bg-white/5 rounded p-2 text-center">
+                        <p className="text-emerald-400 text-lg font-bold">Monitor</p>
+                        <p>Scrapes live comments every 4-12s</p>
+                      </div>
+                      <div className="bg-white/5 rounded p-2 text-center">
+                        <p className="text-blue-400 text-lg font-bold">Generate</p>
+                        <p>AI creates comments based on context</p>
+                      </div>
+                      <div className="bg-white/5 rounded p-2 text-center">
+                        <p className="text-amber-400 text-lg font-bold">Post</p>
+                        <p>Posts via your uploaded accounts</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Setup Steps */}
+                  <div className="bg-white/5 rounded-lg p-3 space-y-2">
+                    <p className="text-white/70 font-medium">Quick Setup (4 steps)</p>
+                    <div className="space-y-1.5">
+                      <p><span className="text-amber-400 font-bold">1.</span> <span className="text-white/60">Paste your livestream URL</span> — system auto-extracts the Post ID</p>
+                      <p><span className="text-amber-400 font-bold">2.</span> <span className="text-white/60">Upload accounts CSV</span> — cookies + email (min 2 accounts). These accounts post the comments</p>
+                      <p><span className="text-amber-400 font-bold">3.</span> <span className="text-white/60">Set business context</span> — describe what you sell so AI generates relevant comments</p>
+                      <p><span className="text-amber-400 font-bold">4.</span> <span className="text-white/60">Click Start</span> — system begins monitoring and posting automatically</p>
+                    </div>
+                  </div>
+
+                  {/* Roles */}
+                  <div className="bg-white/5 rounded-lg p-3 space-y-2">
+                    <p className="text-white/70 font-medium">Role Distribution</p>
+                    <p>Each comment is assigned a role. Adjust the sliders to control what types of comments are posted:</p>
+                    <div className="space-y-1">
+                      <p><span className="text-amber-400">Place Order</span> — posts order comments using detected product codes. <span className="text-white/30">Example: &quot;480 +1&quot;, &quot;L6 nak&quot;</span></p>
+                      <p><span className="text-blue-400">Ask Question</span> — AI asks about product details based on your business context. <span className="text-white/30">Example: &quot;这个有不同尺寸吗？&quot;</span></p>
+                      <p><span className="text-purple-400">Repeat Question</span> — AI paraphrases a real viewer question to show demand. <span className="text-white/30">Example: viewer asks &quot;多少钱&quot; → bot: &quot;价格怎么算？&quot;</span></p>
+                      <p><span className="text-emerald-400">Good Vibe</span> — brief positive reaction. <span className="text-white/30">Example: &quot;质感不错&quot;, &quot;性价比高&quot;</span></p>
+                      <p><span className="text-cyan-400">React Comment</span> — responds to a specific viewer comment naturally. <span className="text-white/30">Example: &quot;对啊我也觉得好看&quot;</span></p>
+                      <p><span className="text-pink-400">Share Experience</span> — brief personal note about the product. <span className="text-white/30">Example: &quot;上次买的朋友都说好看&quot;</span></p>
+                    </div>
+                  </div>
+
+                  {/* AI Config */}
+                  <div className="bg-white/5 rounded-lg p-3 space-y-2">
+                    <p className="text-white/70 font-medium">AI Configuration</p>
+                    <div className="space-y-1">
+                      <p><span className="text-white/60 font-medium">Business Context</span> — Tell the AI what you sell. The more detail, the better the comments. <span className="text-white/30">Example: &quot;翡翠珠宝，20年经验，直播卖玉，品质保证&quot;</span></p>
+                      <p><span className="text-white/60 font-medium">Style Guide Comments</span> — Upload or paste real past comments. AI learns the tone, slang, and writing style — but content comes from live comments. <span className="text-white/30">Upload a .txt file with 100+ real comments for best results.</span></p>
+                      <p><span className="text-white/60 font-medium">AI Instructions</span> — Custom rules for the AI. <span className="text-white/30">Example: &quot;用华语，自然式，正常字数&quot;</span></p>
+                      <p><span className="text-white/60 font-medium">Comment Language</span> — Tick which languages to use. AI will only generate in selected languages.</p>
+                    </div>
+                  </div>
+
+                  {/* Code Detection */}
+                  <div className="bg-white/5 rounded-lg p-3 space-y-2">
+                    <p className="text-white/70 font-medium">Product Code Detection</p>
+                    <p>The system auto-detects product codes from live viewer comments for Place Order comments:</p>
+                    <div className="space-y-1">
+                      <p><span className="text-white/60 font-medium">Known Product Codes</span> — enter codes you already know (e.g. <code className="bg-white/10 px-1 rounded">480,388,168</code>). These are matched instantly from the first comment.</p>
+                      <p><span className="text-white/60 font-medium">Code Pattern Examples</span> — teach the system what codes look like by example (e.g. <code className="bg-white/10 px-1 rounded">8,1,E204</code>). System learns: &quot;codes are numbers or letter+number&quot; and auto-detects new ones.</p>
+                      <p><span className="text-white/60 font-medium">Auto-detection</span> — when 2+ different viewers post the same short message (e.g. &quot;8&quot;, &quot;8&quot;, &quot;8&quot;), system recognizes it as a product code automatically.</p>
+                    </div>
+                  </div>
+
+                  {/* Trending & Trigger */}
+                  <div className="bg-white/5 rounded-lg p-3 space-y-2">
+                    <p className="text-white/70 font-medium">Auto-Order Trending & Priority Trigger</p>
+                    <div className="space-y-1">
+                      <p><span className="text-white/60 font-medium">Auto-Order Trending</span> — when a code gets 3+ mentions in 60 seconds, system auto-generates Place Order comments with that code. Alternates 50/50 with normal comments. Configurable cooldown between triggers.</p>
+                      <p><span className="text-white/60 font-medium">Priority Trigger</span> — during a running session, manually add a code to burst-post immediately. Set count (how many) and duration (spread over how many minutes). Use when you want to push a specific product NOW.</p>
+                    </div>
+                  </div>
+
+                  {/* Tips */}
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 space-y-1">
+                    <p className="text-amber-300 font-medium">Tips for Best Results</p>
+                    <p>• Set Place Order to 40-60% — it drives sales and uses no AI credits</p>
+                    <p>• Write detailed Business Context — AI generates better questions/reactions</p>
+                    <p>• Upload 100+ real past comments as Style Guide — AI matches your audience tone</p>
+                    <p>• Use &quot;Preview 5 Sample Comments&quot; button to test before starting</p>
+                    <p>• Start with Medium aggressive level, adjust if needed while running</p>
+                    <p>• Enter known product codes for instant detection, or leave empty for auto-detect</p>
+                  </div>
+                </div>
+              </details>
+
               {/* Target */}
               <div className="glass-card p-5 space-y-3">
                 <h3 className="text-sm font-medium text-white/60 flex items-center gap-2">
