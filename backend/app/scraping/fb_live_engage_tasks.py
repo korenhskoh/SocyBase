@@ -477,30 +477,46 @@ async def _monitor_loop(
                 })
                 new_count += 1
 
-                # ── Product code detection (regex + whitelist) ──
+                # ── Product code detection (3 methods) ──
                 now_ts = monotonic()
                 adaptive.comment_timestamps.append(now_ts)
 
-                # Method 1: Regex-based detection
+                # Method 1: Regex-based detection (L6, m763, E204)
                 codes_in_msg = _extract_product_codes(message, adaptive.code_re)
 
-                # Method 2: Whitelist matching — check if any user-defined code
-                # appears in the comment (case-insensitive, word boundary aware)
+                # Method 2: Whitelist matching — user-defined seed codes
                 if adaptive.code_whitelist:
                     msg_upper = message.upper().strip()
-                    # Tokenize: split by spaces, commas, plus signs
                     tokens = set(re.split(r'[\s,+＋]+', msg_upper))
                     for wl_code in adaptive.code_whitelist:
                         if wl_code in tokens or msg_upper == wl_code:
-                            # Found a whitelist match — add if not already from regex
                             if wl_code not in {c.upper() for c in codes_in_msg}:
-                                # Use the original case from detected_codes if available
                                 original = wl_code
                                 for dc in adaptive.detected_codes:
                                     if dc.upper() == wl_code:
                                         original = dc
                                         break
                                 codes_in_msg.append(original)
+
+                # Method 3: Frequency-based auto-detection for short messages
+                # Short messages (≤10 chars) that repeat from different viewers
+                # are almost certainly product codes (e.g. "1", "8", "480", "要")
+                msg_stripped = message.strip()
+                if len(msg_stripped) <= 10 and not codes_in_msg:
+                    # Extract the core token (strip +N quantity suffix)
+                    core = re.sub(r'\s*[+＋]\s*\d{1,3}$', '', msg_stripped).strip()
+                    if core and len(core) <= 6:
+                        core_upper = core.upper()
+                        # Track frequency: how many times this short msg appeared
+                        if not hasattr(adaptive, '_short_msg_freq'):
+                            adaptive._short_msg_freq = {}  # msg → {count, viewers}
+                        freq = adaptive._short_msg_freq.setdefault(core_upper, {"count": 0, "viewers": set()})
+                        freq["count"] += 1
+                        freq["viewers"].add(from_id)
+                        # If same short msg from 2+ different viewers → likely a code
+                        if len(freq["viewers"]) >= 2 and core_upper not in {c.upper() for c in codes_in_msg}:
+                            codes_in_msg.append(core)
+                            logger.info(f"[LiveEngage] Auto-detected code by frequency: '{core}' ({freq['count']} times, {len(freq['viewers'])} viewers)")
 
                 if codes_in_msg:
                     adaptive.code_comment_timestamps.append(now_ts)
