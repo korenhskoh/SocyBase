@@ -329,12 +329,9 @@ async def send_live_engage_notification(
         f"<b>Session:</b> {title}\n"
         f"<b>ID:</b> <code>{short_id}...</code>"
         f"{stats}"
-        f"\n{details}" if details else
-        f"{icon} <b>Livestream: {event.upper()}</b>\n\n"
-        f"<b>Session:</b> {title}\n"
-        f"<b>ID:</b> <code>{short_id}...</code>"
-        f"{stats}"
     )
+    if details:
+        text += f"\n{details}"
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:

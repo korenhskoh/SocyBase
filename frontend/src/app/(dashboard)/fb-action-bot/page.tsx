@@ -4375,8 +4375,8 @@ export default function FBActionBotPage() {
                           const ai = (document.getElementById("le-live-ai") as HTMLTextAreaElement)?.value;
                           if (aggro) updates.aggressive_level = aggro;
                           updates.quantity_variation = qty === "true";
-                          if (minD) updates.min_delay_seconds = minD;
-                          if (maxD) updates.max_delay_seconds = maxD;
+                          if (!isNaN(minD) && minD > 0) updates.min_delay_seconds = minD;
+                          if (!isNaN(maxD) && maxD > 0) updates.max_delay_seconds = maxD;
                           updates.blacklist_words = bl || "";
                           updates.ai_instructions = ai || "";
                           try {
