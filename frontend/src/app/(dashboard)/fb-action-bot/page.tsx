@@ -4105,20 +4105,95 @@ export default function FBActionBotPage() {
 
               {/* Activity Log */}
               <div className="glass-card p-5">
-                <h3 className="text-xs font-medium text-white/40 mb-3">Activity Log</h3>
-                <div className="space-y-1.5 max-h-96 overflow-y-auto">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-medium text-white/40">Activity Log ({liveEngageLogs.length} entries)</h3>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await fbActionApi.liveEngageExport(liveEngageSession.id, "csv");
+                          const url = window.URL.createObjectURL(new Blob([res.data]));
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `engagement_report_${liveEngageSession.post_id}.csv`;
+                          a.click();
+                          window.URL.revokeObjectURL(url);
+                        } catch { showToast("error", "Export failed"); }
+                      }}
+                      className="px-2 py-1 bg-white/5 border border-white/10 rounded text-xs text-white/40 hover:bg-white/10"
+                    >Export CSV</button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await fbActionApi.liveEngageExport(liveEngageSession.id, "json");
+                          const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: "application/json" });
+                          const url = window.URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `engagement_report_${liveEngageSession.post_id}.json`;
+                          a.click();
+                          window.URL.revokeObjectURL(url);
+                        } catch { showToast("error", "Export failed"); }
+                      }}
+                      className="px-2 py-1 bg-white/5 border border-white/10 rounded text-xs text-white/40 hover:bg-white/10"
+                    >Export JSON</button>
+                  </div>
+                </div>
+                <div className="space-y-0 max-h-[500px] overflow-y-auto">
                   {liveEngageLogs.length === 0 && (
-                    <p className="text-white/30 text-xs">No activity yet...</p>
+                    <p className="text-white/30 text-xs py-4 text-center">No activity yet...</p>
                   )}
                   {liveEngageLogs.map((log: any) => (
-                    <div key={log.id} className="flex items-start gap-2 text-xs py-1.5 border-b border-white/5">
-                      <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${log.status === "success" ? "bg-emerald-400" : "bg-red-400"}`} />
-                      <span className="text-amber-400/60 w-28 flex-shrink-0 capitalize">{log.role?.replace(/_/g, " ")}</span>
-                      <span className="text-white/30 w-28 flex-shrink-0 truncate">{log.account_email}</span>
-                      <span className={`flex-1 truncate ${log.status === "success" ? "text-white/60" : "text-red-400/60"}`}>
-                        {log.status === "success" ? log.content : log.error_message || "Error"}
-                      </span>
-                    </div>
+                    <details key={log.id} className="group border-b border-white/5">
+                      <summary className="flex items-center gap-2 text-xs py-2 cursor-pointer hover:bg-white/5 px-2 rounded">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${log.status === "success" ? "bg-emerald-400" : "bg-red-400"}`} />
+                        <span className="text-white/25 w-16 flex-shrink-0 font-mono">
+                          {log.created_at ? new Date(log.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : ""}
+                        </span>
+                        <span className={`w-24 flex-shrink-0 capitalize font-medium ${
+                          log.role === "place_order" ? "text-amber-400/70" :
+                          log.role === "ask_question" ? "text-blue-400/70" :
+                          log.role === "react_comment" ? "text-purple-400/70" :
+                          log.role === "repeat_question" ? "text-cyan-400/70" :
+                          log.role === "good_vibe" ? "text-emerald-400/70" :
+                          "text-pink-400/70"
+                        }`}>{log.role?.replace(/_/g, " ")}</span>
+                        <span className="text-white/25 w-32 flex-shrink-0 truncate">{log.account_email}</span>
+                        <span className={`flex-1 truncate ${log.status === "success" ? "text-white/60" : "text-red-400/60"}`}>
+                          {log.status === "success" ? log.content : (log.error_message || "Error")}
+                        </span>
+                      </summary>
+                      <div className="pl-8 pr-4 pb-3 pt-1 space-y-1.5 bg-white/[0.02] rounded-b">
+                        <div className="grid grid-cols-[100px_1fr] gap-x-3 gap-y-1 text-xs">
+                          <span className="text-white/25">Status</span>
+                          <span className={log.status === "success" ? "text-emerald-400" : "text-red-400"}>{log.status}</span>
+                          <span className="text-white/25">Account</span>
+                          <span className="text-white/50 font-mono">{log.account_email}</span>
+                          <span className="text-white/25">Time</span>
+                          <span className="text-white/50">{log.created_at ? new Date(log.created_at).toLocaleString() : "N/A"}</span>
+                          {log.status === "success" && (
+                            <>
+                              <span className="text-white/25">Content</span>
+                              <span className="text-white/70">{log.content}</span>
+                            </>
+                          )}
+                          {log.reference_comment && (
+                            <>
+                              <span className="text-white/25">Replying to</span>
+                              <span className="text-white/40 italic">{log.reference_comment}</span>
+                            </>
+                          )}
+                          {log.error_message && (
+                            <>
+                              <span className="text-white/25">Error</span>
+                              <span className="text-red-400/70 break-all">{log.error_message}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </details>
                   ))}
                 </div>
               </div>

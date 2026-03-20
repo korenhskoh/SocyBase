@@ -672,6 +672,11 @@ export const fbActionApi = {
     api.delete(`/fb-action/live-engage/presets/${presetId}`),
   liveEngageStatus: (sessionId: string) =>
     api.get(`/fb-action/live-engage/${sessionId}`),
+  liveEngageExport: (sessionId: string, format: string = "csv") =>
+    api.get(`/fb-action/live-engage/${sessionId}/export`, {
+      params: { format },
+      responseType: format === "csv" ? "blob" : undefined,
+    }),
   liveEngageStop: (sessionId: string) =>
     api.post(`/fb-action/live-engage/${sessionId}/stop`),
   liveEngagePause: (sessionId: string) =>

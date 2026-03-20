@@ -2934,3 +2934,127 @@ async def live_engage_resume(
     session.status = "running"
     await db.commit()
     return {"id": str(session.id), "status": "running"}
+
+
+@router.get("/live-engage/{session_id}/export")
+async def live_engage_export(
+    session_id: str,
+    format: str = Query("csv", regex="^(csv|json)$"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export detailed engagement report with all logs."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Fetch ALL logs (not just last 30)
+    logs_result = await db.execute(
+        select(FBLiveEngageLog)
+        .where(FBLiveEngageLog.session_id == session.id)
+        .order_by(FBLiveEngageLog.created_at.asc())
+    )
+    logs = logs_result.scalars().all()
+
+    if format == "json":
+        report = {
+            "session": {
+                "id": str(session.id),
+                "title": session.title,
+                "post_id": session.post_id,
+                "post_url": session.post_url,
+                "status": session.status,
+                "started_at": session.started_at.isoformat() if session.started_at else None,
+                "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+                "duration_minutes": round(
+                    (session.ended_at - session.started_at).total_seconds() / 60, 1
+                ) if session.ended_at and session.started_at else None,
+                "total_comments_posted": session.total_comments_posted,
+                "total_errors": session.total_errors,
+                "comments_monitored": session.comments_monitored,
+                "active_accounts": session.active_accounts,
+                "comments_by_role": session.comments_by_role,
+                "role_distribution": session.role_distribution,
+                "aggressive_level": session.aggressive_level,
+                "live_metrics": session.live_metrics,
+                "error_message": session.error_message,
+            },
+            "logs": [
+                {
+                    "timestamp": log.created_at.isoformat() if log.created_at else None,
+                    "role": log.role,
+                    "status": log.status,
+                    "account": log.account_email,
+                    "content": log.content,
+                    "reference_comment": log.reference_comment,
+                    "error": log.error_message,
+                }
+                for log in logs
+            ],
+            "summary": {
+                "total_logs": len(logs),
+                "success_count": sum(1 for l in logs if l.status == "success"),
+                "error_count": sum(1 for l in logs if l.status != "success"),
+                "unique_accounts_used": len({l.account_email for l in logs}),
+                "roles_breakdown": {},
+            },
+        }
+        # Build roles breakdown
+        for log in logs:
+            key = f"{log.role}_{log.status}"
+            report["summary"]["roles_breakdown"][key] = report["summary"]["roles_breakdown"].get(key, 0) + 1
+
+        return report
+
+    # CSV export
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Timestamp", "Role", "Status", "Account", "Content",
+        "Reference Comment", "Error Message",
+    ])
+    for log in logs:
+        writer.writerow([
+            log.created_at.strftime("%Y-%m-%d %H:%M:%S") if log.created_at else "",
+            log.role,
+            log.status,
+            log.account_email,
+            log.content,
+            log.reference_comment or "",
+            log.error_message or "",
+        ])
+
+    # Add summary rows at the end
+    writer.writerow([])
+    writer.writerow(["=== SESSION SUMMARY ==="])
+    writer.writerow(["Title", session.title or ""])
+    writer.writerow(["Post ID", session.post_id])
+    writer.writerow(["Status", session.status])
+    writer.writerow(["Started", session.started_at.strftime("%Y-%m-%d %H:%M:%S") if session.started_at else ""])
+    writer.writerow(["Ended", session.ended_at.strftime("%Y-%m-%d %H:%M:%S") if session.ended_at else ""])
+    if session.ended_at and session.started_at:
+        duration = (session.ended_at - session.started_at).total_seconds() / 60
+        writer.writerow(["Duration", f"{duration:.1f} minutes"])
+    writer.writerow(["Total Posted", session.total_comments_posted])
+    writer.writerow(["Total Errors", session.total_errors])
+    writer.writerow(["Comments Monitored", session.comments_monitored])
+    writer.writerow(["Active Accounts", session.active_accounts])
+    if session.comments_by_role:
+        writer.writerow([])
+        writer.writerow(["=== COMMENTS BY ROLE ==="])
+        for role, count in session.comments_by_role.items():
+            writer.writerow([role.replace("_", " ").title(), count])
+
+    output.seek(0)
+    filename = f"live_engage_{session.title or session_id}_{session.post_id}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
