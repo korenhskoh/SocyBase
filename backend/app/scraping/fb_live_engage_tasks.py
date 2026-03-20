@@ -847,30 +847,29 @@ async def _engage_loop(
                     new_order_weight, len(adaptive.detected_codes),
                 )
 
-            # ── Auto-order trending codes ──
+            # ── Auto-order trending codes (alternating) ──
             trending_code = None
             if config.get("auto_order_trending", False):
                 threshold = config.get("auto_order_trending_threshold", 3)
                 now_check = monotonic()
                 for code_key, timestamps in list(adaptive.recent_code_mentions.items()):
-                    # Clean old timestamps
+                    # Clean old timestamps (60s window)
                     recent = [t for t in timestamps if now_check - t < 60]
                     adaptive.recent_code_mentions[code_key] = recent
-                    if len(recent) >= threshold and code_key not in adaptive.auto_ordered_codes:
-                        trending_code = code_key
-                        # Find original case from detected_codes
-                        for dc in adaptive.detected_codes:
-                            if dc.upper() == code_key:
-                                trending_code = dc
-                                break
-                        adaptive.auto_ordered_codes.add(code_key)
-                        logger.info(f"[LiveEngage] Trending code detected: {trending_code} ({len(recent)} mentions in 60s)")
-                        break
-                # Reset auto_ordered after 2 minutes so same code can trigger again
-                if now_check % 120 < 5:
-                    adaptive.auto_ordered_codes.clear()
+                    if len(recent) >= threshold:
+                        # Alternate: ~50% auto-order, ~50% normal
+                        # Skip if we just auto-ordered this code (within last 2 comments)
+                        recent_auto = [p for p in posted_history[-3:] if code_key.lower() in p.lower()]
+                        if len(recent_auto) < 2 and random.random() < 0.5:
+                            trending_code = code_key
+                            for dc in adaptive.detected_codes:
+                                if dc.upper() == code_key:
+                                    trending_code = dc
+                                    break
+                            logger.info(f"[LiveEngage] Trending auto-order: {trending_code} ({len(recent)} mentions)")
+                            break
 
-            # Pick role — override with place_order if trending code detected
+            # Pick role — alternate between auto-order and normal
             if trending_code:
                 role = "place_order"
             else:
