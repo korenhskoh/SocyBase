@@ -297,6 +297,11 @@ export default function FBActionBotPage() {
   const [leHistory, setLeHistory] = useState<any[]>([]);
   const [leHistoryFilter, setLeHistoryFilter] = useState("");
   const [leHistorySearch, setLeHistorySearch] = useState("");
+  const [leTriggerCode, setLeTriggerCode] = useState("");
+  const [leTriggerCount, setLeTriggerCount] = useState(5);
+  const [leTriggerDuration, setLeTriggerDuration] = useState(2);
+  const [leTriggerLoading, setLeTriggerLoading] = useState(false);
+  const [leEditSettings, setLeEditSettings] = useState(false);
   const [leStarting, setLeStarting] = useState(false);
   const lePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
@@ -4236,6 +4241,156 @@ export default function FBActionBotPage() {
                   )}
                 </div>
               </div>
+
+              {/* Priority Code Trigger */}
+              {["running", "paused"].includes(liveEngageSession?.status) && (
+                <div className="glass-card p-5 space-y-3">
+                  <h3 className="text-xs font-medium text-white/40">Priority Code Trigger</h3>
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1">
+                      <label className="text-xs text-white/30 block mb-1">Code</label>
+                      <input
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
+                        placeholder="e.g. L6, m763, 8号"
+                        value={leTriggerCode}
+                        onChange={(e) => setLeTriggerCode(e.target.value)}
+                      />
+                    </div>
+                    <div className="w-20">
+                      <label className="text-xs text-white/30 block mb-1">Count</label>
+                      <input type="number" min={1} max={50} value={leTriggerCount}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-sm text-white focus:outline-none"
+                        onChange={(e) => setLeTriggerCount(Math.max(1, parseInt(e.target.value) || 1))} />
+                    </div>
+                    <div className="w-20">
+                      <label className="text-xs text-white/30 block mb-1">Minutes</label>
+                      <input type="number" min={1} max={10} value={leTriggerDuration}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-sm text-white focus:outline-none"
+                        onChange={(e) => setLeTriggerDuration(Math.max(1, parseInt(e.target.value) || 1))} />
+                    </div>
+                    <button
+                      disabled={leTriggerLoading || !leTriggerCode.trim()}
+                      onClick={async () => {
+                        setLeTriggerLoading(true);
+                        try {
+                          await fbActionApi.liveEngageTriggerCode(liveEngageSession.id, {
+                            code: leTriggerCode.trim(),
+                            count: leTriggerCount,
+                            duration_minutes: leTriggerDuration,
+                          });
+                          showToast("success", `Triggered: ${leTriggerCode} x${leTriggerCount} for ${leTriggerDuration}min`);
+                          setLeTriggerCode("");
+                        } catch (err: any) { showToast("error", err.response?.data?.detail || "Trigger failed"); }
+                        setLeTriggerLoading(false);
+                      }}
+                      className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-sm font-medium transition disabled:opacity-40"
+                    >
+                      {leTriggerLoading ? "..." : "Trigger"}
+                    </button>
+                  </div>
+                  {/* Detected codes quick-select */}
+                  {liveEngageSession?.live_metrics?.detected_codes?.length > 0 && (
+                    <div>
+                      <p className="text-xs text-white/30 mb-1">Detected codes (click to trigger):</p>
+                      <div className="flex flex-wrap gap-1">
+                        {liveEngageSession.live_metrics.detected_codes.map((code: string, i: number) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => setLeTriggerCode(code)}
+                            className={`px-2 py-0.5 rounded text-xs transition ${
+                              leTriggerCode === code
+                                ? "bg-amber-500/30 border border-amber-400/50 text-amber-300"
+                                : "bg-white/5 border border-white/10 text-white/50 hover:bg-white/10"
+                            }`}
+                          >{code}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Edit Settings (live) */}
+              {["running", "paused"].includes(liveEngageSession?.status) && (
+                <div className="glass-card p-5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-medium text-white/40">Live Settings</h3>
+                    <button
+                      type="button"
+                      onClick={() => setLeEditSettings(!leEditSettings)}
+                      className="text-xs text-white/40 hover:text-white/60"
+                    >{leEditSettings ? "Close" : "Edit Settings"}</button>
+                  </div>
+                  {leEditSettings && (
+                    <div className="mt-3 space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs text-white/30 block mb-1">Aggressive Level</label>
+                          <select id="le-live-aggro" defaultValue={liveEngageSession?.aggressive_level || "medium"}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none">
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-white/30 block mb-1">Quantity Variation</label>
+                          <select id="le-live-qty" defaultValue={liveEngageSession?.quantity_variation !== false ? "true" : "false"}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none">
+                            <option value="true">On</option>
+                            <option value="false">Off</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-white/30 block mb-1">Min Delay (s)</label>
+                          <input id="le-live-min" type="number" min={3} max={120} defaultValue={liveEngageSession?.min_delay_seconds || 15}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
+                        </div>
+                        <div>
+                          <label className="text-xs text-white/30 block mb-1">Max Delay (s)</label>
+                          <input id="le-live-max" type="number" min={5} max={300} defaultValue={liveEngageSession?.max_delay_seconds || 60}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/30 block mb-1">Blacklist Words</label>
+                        <input id="le-live-blacklist" defaultValue={liveEngageSession?.blacklist_words || ""}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white placeholder-white/20 focus:outline-none"
+                          placeholder="comma-separated" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/30 block mb-1">AI Instructions</label>
+                        <textarea id="le-live-ai" defaultValue={liveEngageSession?.ai_instructions || ""} rows={2}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white placeholder-white/20 focus:outline-none" />
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const updates: Record<string, unknown> = {};
+                          const aggro = (document.getElementById("le-live-aggro") as HTMLSelectElement)?.value;
+                          const qty = (document.getElementById("le-live-qty") as HTMLSelectElement)?.value;
+                          const minD = parseInt((document.getElementById("le-live-min") as HTMLInputElement)?.value);
+                          const maxD = parseInt((document.getElementById("le-live-max") as HTMLInputElement)?.value);
+                          const bl = (document.getElementById("le-live-blacklist") as HTMLInputElement)?.value;
+                          const ai = (document.getElementById("le-live-ai") as HTMLTextAreaElement)?.value;
+                          if (aggro) updates.aggressive_level = aggro;
+                          updates.quantity_variation = qty === "true";
+                          if (minD) updates.min_delay_seconds = minD;
+                          if (maxD) updates.max_delay_seconds = maxD;
+                          updates.blacklist_words = bl || "";
+                          updates.ai_instructions = ai || "";
+                          try {
+                            const res = await fbActionApi.liveEngageUpdateSettings(liveEngageSession.id, updates);
+                            showToast("success", `Updated: ${(res.data.updated || []).join(", ")}`);
+                            setLeEditSettings(false);
+                          } catch (err: any) { showToast("error", err.response?.data?.detail || "Update failed"); }
+                        }}
+                        className="w-full py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-lg text-xs font-medium transition"
+                      >Apply Changes</button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Live Metrics */}
               {liveEngageSession?.live_metrics && (

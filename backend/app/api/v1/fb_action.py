@@ -2965,6 +2965,7 @@ async def live_engage_status(
         "max_delay_seconds": session.max_delay_seconds,
         "error_message": session.error_message,
         "live_metrics": session.live_metrics,
+        "pending_actions": session.pending_actions,
         "scheduled_at": session.scheduled_at.isoformat() if session.scheduled_at else None,
         "started_at": session.started_at.isoformat() if session.started_at else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
@@ -3057,6 +3058,108 @@ async def live_engage_resume(
     session.status = "running"
     await db.commit()
     return {"id": str(session.id), "status": "running"}
+
+
+@router.post("/live-engage/{session_id}/trigger-code")
+async def live_engage_trigger_code(
+    session_id: str,
+    data: dict = Body(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger burst place_order with specific code for a short interval."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status not in ("running", "paused"):
+        raise HTTPException(status_code=400, detail="Session is not active")
+
+    code = data.get("code", "").strip()
+    count = min(max(int(data.get("count", 5)), 1), 50)
+    duration_minutes = min(max(int(data.get("duration_minutes", 2)), 1), 10)
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Code is required")
+
+    pending = dict(session.pending_actions or {})
+    pending["trigger_code"] = {
+        "code": code,
+        "count": count,
+        "duration_minutes": duration_minutes,
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
+    }
+    session.pending_actions = pending
+    await db.commit()
+
+    return {"ok": True, "code": code, "count": count, "duration_minutes": duration_minutes}
+
+
+@router.patch("/live-engage/{session_id}/settings")
+async def live_engage_update_settings(
+    session_id: str,
+    data: dict = Body(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update session settings in real-time while running."""
+    result = await db.execute(
+        select(FBLiveEngageSession).where(
+            FBLiveEngageSession.id == session_id,
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status not in ("running", "paused"):
+        raise HTTPException(status_code=400, detail="Session is not active")
+
+    # Allowed fields to update live
+    updatable = {
+        "role_distribution": dict,
+        "aggressive_level": str,
+        "min_delay_seconds": int,
+        "max_delay_seconds": int,
+        "scrape_interval_seconds": int,
+        "target_comments_enabled": bool,
+        "target_comments_count": int,
+        "target_comments_period_minutes": int,
+        "comment_without_new": bool,
+        "comment_without_new_max": int,
+        "blacklist_words": str,
+        "stream_end_threshold": int,
+        "quantity_variation": bool,
+        "languages": str,
+        "ai_instructions": str,
+    }
+
+    updated = {}
+    for field, expected_type in updatable.items():
+        if field in data:
+            val = data[field]
+            if isinstance(val, expected_type) or val is None:
+                setattr(session, field, val)
+                updated[field] = val
+
+    # Validate role_distribution sum if updated
+    if "role_distribution" in updated:
+        total = sum(updated["role_distribution"].values())
+        if total != 100:
+            raise HTTPException(status_code=400, detail=f"Role percentages must sum to 100, got {total}")
+
+    # Signal the task to reload config
+    pending = dict(session.pending_actions or {})
+    pending["reload_config"] = datetime.now(timezone.utc).isoformat()
+    session.pending_actions = pending
+    await db.commit()
+
+    return {"ok": True, "updated": list(updated.keys())}
 
 
 @router.get("/live-engage/{session_id}/export")

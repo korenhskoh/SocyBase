@@ -84,6 +84,16 @@ async def _execute_engagement(session_id: str):
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     meta = MetaAPIService()
 
+    async def _notify_telegram(session_obj, event: str, details: str = ""):
+        """Send Telegram notification if user has linked Telegram."""
+        try:
+            from app.services.telegram_notify import send_live_engage_notification, get_telegram_notification_chat_id
+            chat_id = await get_telegram_notification_chat_id()
+            if chat_id:
+                await send_live_engage_notification(chat_id, session_obj, event, details)
+        except Exception:
+            pass
+
     try:
         # ── Load session ─────────────────────────────────────
         async with SessionLocal() as db:
@@ -215,6 +225,16 @@ async def _execute_engagement(session_id: str):
 
         logger.info(f"[LiveEngage] Session {session_id} starting with {len(account_pool)} accounts on post {config['post_id']}")
 
+        # Notify Telegram on start
+        class _SessionStub:
+            def __init__(self, sid, title, post_id, total=0, errors=0, monitored=0):
+                self.id = sid; self.title = title; self.post_id = post_id
+                self.total_comments_posted = total; self.total_errors = errors; self.comments_monitored = monitored
+        await _notify_telegram(
+            _SessionStub(session_id, config.get("title", ""), config["post_id"]),
+            "started", f"\n<b>Accounts:</b> {len(account_pool)}"
+        )
+
         # ── Shared state ─────────────────────────────────────
         recent_comments: list[dict] = []
         seen_comment_ids: set[str] = set()
@@ -271,6 +291,8 @@ async def _execute_engagement(session_id: str):
             if s:
                 s.ended_at = datetime.now(timezone.utc)
             await db.commit()
+            if s:
+                await _notify_telegram(s, s.status or "completed")
 
     except Exception as exc:
         logger.exception(f"[LiveEngage] Session {session_id} crashed: {exc}")
@@ -509,16 +531,137 @@ async def _engage_loop(
                 stop_event.set()
                 break
 
-            # ── Check if paused ─────────────────────────────────
+            # ── Check status + pending actions ─────────────────
             try:
                 db_status = None
+                pending_actions = None
                 async with SessionLocal() as db:
                     result = await db.execute(
-                        select(FBLiveEngageSession.status).where(
+                        select(FBLiveEngageSession.status, FBLiveEngageSession.pending_actions).where(
                             FBLiveEngageSession.id == uuid.UUID(session_id)
                         )
                     )
-                    db_status = result.scalar_one_or_none()
+                    row = result.one_or_none()
+                    if row:
+                        db_status, pending_actions = row
+
+                # ── Handle priority code trigger ──
+                if pending_actions and pending_actions.get("trigger_code"):
+                    trigger = pending_actions["trigger_code"]
+                    t_code = trigger["code"]
+                    t_count = trigger.get("count", 5)
+                    t_dur = trigger.get("duration_minutes", 2) * 60
+                    logger.info(f"[LiveEngage] Priority trigger: {t_code} x{t_count} for {t_dur}s")
+
+                    # Clear the trigger from DB
+                    async with SessionLocal() as db:
+                        result = await db.execute(
+                            select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
+                        )
+                        s = result.scalar_one()
+                        pa = dict(s.pending_actions or {})
+                        pa.pop("trigger_code", None)
+                        s.pending_actions = pa
+                        await db.commit()
+
+                    # Burst: post the code t_count times within t_dur seconds
+                    burst_delay = max(3, t_dur / max(t_count, 1))
+                    for burst_i in range(t_count):
+                        if stop_event.is_set():
+                            break
+                        # Pick account
+                        if not account_pool:
+                            break
+                        acct = account_pool[account_idx % len(account_pool)]
+                        account_idx += 1
+
+                        # Generate order with the triggered code
+                        qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
+                        roll = random.random()
+                        if roll < 0.4:
+                            burst_content = f"{t_code} +{qty}"
+                        elif roll < 0.6:
+                            burst_content = f"+1 {t_code}"
+                        else:
+                            burst_content = t_code
+
+                        # Post via AKNG + token fallback
+                        try:
+                            resp = await client.execute_action(
+                                cookie=acct["cookie"], user_agent=acct["user_agent"],
+                                action_name="comment_to_post",
+                                params={"post_id": post_id, "content": burst_content, "image": ""},
+                                proxy=acct.get("proxy"),
+                            )
+                            b_success, _ = _parse_response(resp)
+                            if not b_success and acct.get("token"):
+                                resp = await client.comment_direct(acct["token"], post_id, burst_content)
+                                b_success = resp.get("success", False)
+                        except Exception:
+                            b_success = False
+
+                        if b_success:
+                            our_content.add(burst_content)
+                            posted_history.append(burst_content)
+                            logger.info(f"[LiveEngage] Burst {burst_i+1}/{t_count}: {burst_content} via {acct['email'][:20]}")
+
+                        await asyncio.sleep(burst_delay * random.uniform(0.8, 1.2))
+
+                    logger.info(f"[LiveEngage] Priority trigger complete: {t_code}")
+                    continue  # skip normal generation this iteration
+
+                # ── Handle config reload ──
+                if pending_actions and pending_actions.get("reload_config"):
+                    async with SessionLocal() as db:
+                        result = await db.execute(
+                            select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
+                        )
+                        s = result.scalar_one()
+
+                        # Reload mutable config from DB
+                        config["role_distribution"] = s.role_distribution or config["role_distribution"]
+                        config["aggressive_level"] = s.aggressive_level or config["aggressive_level"]
+                        config["min_delay"] = s.min_delay_seconds or config["min_delay"]
+                        config["max_delay"] = s.max_delay_seconds or config["max_delay"]
+                        config["scrape_interval"] = s.scrape_interval_seconds or config["scrape_interval"]
+                        config["target_comments_enabled"] = bool(s.target_comments_enabled)
+                        config["target_comments_count"] = s.target_comments_count or config.get("target_comments_count", 0)
+                        config["target_comments_period_minutes"] = s.target_comments_period_minutes or config.get("target_comments_period_minutes", 60)
+                        config["comment_without_new"] = bool(s.comment_without_new)
+                        config["comment_without_new_max"] = s.comment_without_new_max or 3
+                        config["blacklist_words"] = s.blacklist_words or ""
+                        config["stream_end_threshold"] = s.stream_end_threshold or 10
+                        config["languages"] = s.languages or ""
+                        config["ai_instructions"] = s.ai_instructions or ""
+                        adaptive.quantity_variation = s.quantity_variation if s.quantity_variation is not None else True
+                        adaptive.aggressive_level = s.aggressive_level or "medium"
+
+                        # Rebuild role weights
+                        base_role_dist.clear()
+                        base_role_dist.update(config["role_distribution"])
+                        roles[:] = list(base_role_dist.keys())
+                        weights[:] = [base_role_dist[r] for r in roles]
+
+                        # Update target pacing
+                        target_enabled = config["target_comments_enabled"]
+                        target_count = config["target_comments_count"]
+                        target_period_secs = config["target_comments_period_minutes"] * 60
+                        comment_without_new = config["comment_without_new"]
+                        comment_without_new_max = config["comment_without_new_max"]
+
+                        # Update blacklist
+                        blacklist_raw = config["blacklist_words"]
+                        blacklist_set.clear()
+                        if blacklist_raw:
+                            blacklist_set.update(w.strip().lower() for w in blacklist_raw.split(",") if w.strip())
+
+                        # Clear reload flag
+                        pa = dict(s.pending_actions or {})
+                        pa.pop("reload_config", None)
+                        s.pending_actions = pa
+                        await db.commit()
+
+                    logger.info(f"[LiveEngage] Config reloaded for session {session_id}")
 
                 if db_status == "paused":
                     logger.info(f"[LiveEngage] Session {session_id} paused, waiting...")

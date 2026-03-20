@@ -292,3 +292,57 @@ async def send_tb_order_notification(
             })
     except Exception as e:
         logger.warning(f"Failed to send TB Telegram notification to {chat_id}: {e}")
+
+
+async def send_live_engage_notification(
+    chat_id: str, session, event: str, details: str = "", bot_token: str | None = None
+) -> None:
+    """Send Telegram notification for livestream engagement events."""
+    token = bot_token or await get_telegram_bot_token()
+    if not token:
+        return
+
+    short_id = str(session.id)[:8]
+    title = session.title or session.post_id
+
+    icons = {
+        "started": "\U0001F534",    # red circle
+        "completed": "\u2705",      # check
+        "stopped": "\u23F9",        # stop
+        "paused": "\u23F8",         # pause
+        "resumed": "\u25B6",        # play
+        "error_spike": "\u26A0",    # warning
+        "trigger": "\U0001F3AF",    # target
+    }
+    icon = icons.get(event, "\U0001F4E2")
+
+    stats = ""
+    if hasattr(session, "total_comments_posted"):
+        stats = (
+            f"\n<b>Posted:</b> {session.total_comments_posted or 0}"
+            f" | <b>Errors:</b> {session.total_errors or 0}"
+            f" | <b>Monitored:</b> {session.comments_monitored or 0}"
+        )
+
+    text = (
+        f"{icon} <b>Livestream: {event.upper()}</b>\n\n"
+        f"<b>Session:</b> {title}\n"
+        f"<b>ID:</b> <code>{short_id}...</code>"
+        f"{stats}"
+        f"\n{details}" if details else
+        f"{icon} <b>Livestream: {event.upper()}</b>\n\n"
+        f"<b>Session:</b> {title}\n"
+        f"<b>ID:</b> <code>{short_id}...</code>"
+        f"{stats}"
+    )
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(url, json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+            })
+    except Exception as e:
+        logger.warning(f"Failed to send livestream Telegram notification: {e}")

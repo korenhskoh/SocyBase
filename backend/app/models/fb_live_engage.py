@@ -88,6 +88,9 @@ class FBLiveEngageSession(Base):
     # Live metrics (updated periodically by task)
     live_metrics: Mapped[dict | None] = mapped_column(JSONB)
 
+    # Pending actions — consumed by the task (trigger codes, settings updates)
+    pending_actions: Mapped[dict | None] = mapped_column(JSONB)
+
     # Stats
     total_comments_posted: Mapped[int] = mapped_column(Integer, default=0)
     total_errors: Mapped[int] = mapped_column(Integer, default=0)
