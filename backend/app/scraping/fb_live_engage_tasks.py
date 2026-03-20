@@ -62,7 +62,12 @@ def _recalculate_adaptive(adaptive: AdaptiveState, window_seconds: int = 60):
     adaptive.last_recalc = now
 
 
-@celery_app.task(name="app.scraping.fb_live_engage_tasks.run_live_engagement", bind=True)
+@celery_app.task(
+    name="app.scraping.fb_live_engage_tasks.run_live_engagement",
+    bind=True,
+    max_retries=0,  # never auto-retry — prevents phantom restarts
+    acks_late=False,
+)
 def run_live_engagement(self, session_id: str):
     """Long-running Celery task: monitor + engage on a livestream."""
     loop = asyncio.new_event_loop()
@@ -106,6 +111,14 @@ async def _execute_engagement(session_id: str):
             session = result.scalar_one_or_none()
             if not session:
                 logger.error(f"[LiveEngage] Session {session_id} not found")
+                return
+
+            # Guard: only start if session is in a valid starting state
+            if session.status in ("completed", "stopped", "failed"):
+                logger.warning(
+                    f"[LiveEngage] Session {session_id} already {session.status}, "
+                    f"skipping (possible Celery redelivery)"
+                )
                 return
 
             session.status = "running"
