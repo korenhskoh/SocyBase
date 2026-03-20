@@ -4576,13 +4576,14 @@ export default function FBActionBotPage() {
                           {log.created_at ? new Date(log.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : ""}
                         </span>
                         <span className={`w-24 flex-shrink-0 capitalize font-medium ${
+                          log.role === "triggered" ? "text-red-400/90 font-bold" :
                           log.role === "place_order" ? "text-amber-400/70" :
                           log.role === "ask_question" ? "text-blue-400/70" :
                           log.role === "react_comment" ? "text-purple-400/70" :
                           log.role === "repeat_question" ? "text-cyan-400/70" :
                           log.role === "good_vibe" ? "text-emerald-400/70" :
                           "text-pink-400/70"
-                        }`}>{log.role?.replace(/_/g, " ")}</span>
+                        }`}>{log.role === "triggered" ? "⚡ Triggered" : log.role?.replace(/_/g, " ")}</span>
                         <span className="text-white/25 w-32 flex-shrink-0 truncate">{log.account_email}</span>
                         <span className={`flex-1 truncate ${log.status === "success" ? "text-white/60" : "text-red-400/60"}`}>
                           {log.status === "success" ? log.content : (log.error_message || "Error")}

@@ -604,8 +604,37 @@ async def _engage_loop(
                         if b_success:
                             our_content.add(burst_content)
                             posted_history.append(burst_content)
-                            logger.info(f"[LiveEngage] Burst {burst_i+1}/{t_count}: {burst_content} via {acct['email'][:20]}")
 
+                        # Log burst to activity log
+                        try:
+                            async with SessionLocal() as db:
+                                log = FBLiveEngageLog(
+                                    session_id=uuid.UUID(session_id),
+                                    role="triggered",
+                                    content=burst_content,
+                                    account_email=acct["email"],
+                                    reference_comment=f"Priority trigger: {t_code} ({burst_i+1}/{t_count})",
+                                    status="success" if b_success else "failed",
+                                    error_message=None if b_success else "Burst post failed",
+                                )
+                                db.add(log)
+                                # Update stats
+                                result = await db.execute(
+                                    select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
+                                )
+                                s = result.scalar_one()
+                                if b_success:
+                                    s.total_comments_posted += 1
+                                    by_role = dict(s.comments_by_role or {})
+                                    by_role["triggered"] = by_role.get("triggered", 0) + 1
+                                    s.comments_by_role = by_role
+                                else:
+                                    s.total_errors += 1
+                                await db.commit()
+                        except Exception:
+                            pass
+
+                        logger.info(f"[LiveEngage] Burst {burst_i+1}/{t_count}: {burst_content} via {acct['email'][:20]} ({'OK' if b_success else 'FAIL'})")
                         await asyncio.sleep(burst_delay * random.uniform(0.8, 1.2))
 
                     logger.info(f"[LiveEngage] Priority trigger complete: {t_code}")
