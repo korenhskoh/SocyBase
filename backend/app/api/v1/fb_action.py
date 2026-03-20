@@ -2378,7 +2378,7 @@ class LiveEngageStartRequest(BaseModel):
     comment_without_new: bool = False  # generate comments even without new viewer comments
     comment_without_new_max: int = Field(default=3, ge=1, le=20)  # max attempts before waiting
     blacklist_words: str | None = None  # comma-separated words to avoid
-    stream_end_threshold: int = Field(default=10, ge=3, le=50)
+    stream_end_threshold: int = Field(default=10, ge=0, le=50)  # 0 = disabled
     scheduled_at: str | None = None  # ISO datetime for scheduled start
 
 
@@ -2390,6 +2390,20 @@ async def live_engage_start(
 ):
     """Start a livestream engagement session with bulk accounts."""
     from app.models.fb_login_batch import FBLoginBatch
+
+    # Check for active sessions — warn if one is already running
+    active_result = await db.execute(
+        select(func.count(FBLiveEngageSession.id)).where(
+            FBLiveEngageSession.tenant_id == user.tenant_id,
+            FBLiveEngageSession.status.in_(["running", "paused"]),
+        )
+    )
+    active_count = active_result.scalar() or 0
+    if active_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You already have {active_count} active session(s). Stop or complete them before starting a new one."
+        )
 
     # Validate role distribution
     if not req.role_distribution:

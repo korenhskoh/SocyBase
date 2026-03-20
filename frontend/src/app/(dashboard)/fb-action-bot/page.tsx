@@ -4252,7 +4252,9 @@ export default function FBActionBotPage() {
                         setLiveEngagePhase("setup");
                         setLiveEngageSession(null);
                         setLiveEngageLogs([]);
-                        if (lePollRef.current) clearInterval(lePollRef.current);
+                        if (lePollRef.current) { clearInterval(lePollRef.current); lePollRef.current = null; }
+                        // Reload history
+                        fbActionApi.liveEngageHistory({ page: 1, page_size: 20 }).then((r) => setLeHistory(r.data.sessions || [])).catch(() => {});
                       }}
                       className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/60 rounded-lg text-sm font-medium transition"
                     >
