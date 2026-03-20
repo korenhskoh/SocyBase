@@ -680,30 +680,50 @@ async def _engage_loop(
             if len(posted_history) > 30:
                 posted_history[:] = posted_history[-30:]
 
-            # Execute via AKNG (primary) → direct Graph API token (fallback)
-            try:
-                resp = await client.execute_action(
-                    cookie=account["cookie"],
-                    user_agent=account["user_agent"],
-                    action_name="comment_to_post",
-                    params={"post_id": post_id, "content": content, "image": ""},
-                    proxy=account.get("proxy"),
-                )
-            except Exception as exc:
-                resp = {"success": False, "error": str(exc)}
+            # Execute with retry (up to 3 attempts for transient errors)
+            success = False
+            error_msg = None
+            max_retries = 3
+            for retry in range(max_retries):
+                # Try AKNG first
+                try:
+                    resp = await client.execute_action(
+                        cookie=account["cookie"],
+                        user_agent=account["user_agent"],
+                        action_name="comment_to_post",
+                        params={"post_id": post_id, "content": content, "image": ""},
+                        proxy=account.get("proxy"),
+                    )
+                except Exception as exc:
+                    resp = {"success": False, "error": str(exc)}
 
-            success, error_msg = _parse_response(resp)
+                success, error_msg = _parse_response(resp)
 
-            # Fallback: if AKNG failed and account has a token, try direct Graph API
-            if not success and account.get("token"):
-                logger.info(f"[LiveEngage] AKNG failed, trying direct token for {account['email'][:20]}...")
-                resp = await client.comment_direct(
-                    token=account["token"],
-                    post_id=post_id,
-                    content=content,
-                )
-                success = resp.get("success", False)
-                error_msg = resp.get("error") if not success else None
+                # Fallback: if AKNG failed and account has a token, try direct Graph API
+                if not success and account.get("token"):
+                    logger.info(f"[LiveEngage] AKNG failed, trying direct token for {account['email'][:20]}...")
+                    resp = await client.comment_direct(
+                        token=account["token"],
+                        post_id=post_id,
+                        content=content,
+                    )
+                    success = resp.get("success", False)
+                    error_msg = resp.get("error") if not success else None
+
+                if success:
+                    break
+
+                # Check if error is permanent — no point retrying
+                if error_msg and any(pe in error_msg.lower() for pe in (
+                    "session has been invalidated", "changed their password",
+                    "account has been disabled", "checkpoint required",
+                    "login required", "account is temporarily locked",
+                )):
+                    break  # permanent error, stop retrying
+
+                if retry < max_retries - 1:
+                    logger.info(f"[LiveEngage] Retry {retry + 1}/{max_retries} for {account['email'][:20]}...")
+                    await asyncio.sleep(2 * (retry + 1))  # backoff: 2s, 4s
 
             # Account health tracking
             email = account["email"]
@@ -730,7 +750,7 @@ async def _engage_loop(
                 )
 
                 # Remove account: immediately for permanent errors, after 3 for transient
-                should_remove = is_permanent or account_errors[email] >= 3
+                should_remove = is_permanent or account_errors[email] >= 5
                 if should_remove and len(account_pool) > 1:
                     account_pool[:] = [a for a in account_pool if a["email"] != email]
                     account_idx = account_idx % len(account_pool) if account_pool else 0
