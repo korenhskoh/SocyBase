@@ -18,9 +18,11 @@ settings = get_settings()
 
 # Regex: 1-3 letters followed by 2-5 digits, optionally +N quantity
 # Matches: m763, E769, R2000, G1024, g1024 +1, AB123 +2
+# Product code: 1-3 letters + 1-5 digits (L6, L205, AB12, R2000)
+# Optionally followed by +N quantity (+1, +2, +3)
 PRODUCT_CODE_RE = re.compile(
-    r'\b([a-zA-Z]{1,3}\d{2,5})\b'
-    r'(?:\s*\+\s*(\d{1,2}))?'
+    r'\b([a-zA-Z]{1,3}\d{1,5})\b'
+    r'(?:\s*[+＋]\s*(\d{1,3}))?'
 )
 
 
