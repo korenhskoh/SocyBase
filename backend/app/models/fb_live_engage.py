@@ -62,6 +62,8 @@ class FBLiveEngageSession(Base):
     code_pattern: Mapped[str | None] = mapped_column(String(500))
     quantity_variation: Mapped[bool] = mapped_column(Boolean, default=True)
     blacklist_words: Mapped[str | None] = mapped_column(Text)  # comma-separated words to avoid
+    comment_without_new: Mapped[bool] = mapped_column(Boolean, default=False)
+    comment_without_new_max: Mapped[int] = mapped_column(Integer, default=3)
 
     # Page owner — comments from this ID are ignored (livestream host)
     page_owner_id: Mapped[str | None] = mapped_column(String(100))
@@ -159,6 +161,8 @@ class FBLiveEngagePreset(Base):
     target_comments_count: Mapped[int | None] = mapped_column(Integer)
     target_comments_period_minutes: Mapped[int | None] = mapped_column(Integer)
     blacklist_words: Mapped[str | None] = mapped_column(Text)
+    comment_without_new: Mapped[bool] = mapped_column(Boolean, default=False)
+    comment_without_new_max: Mapped[int] = mapped_column(Integer, default=3)
     stream_end_threshold: Mapped[int] = mapped_column(Integer, default=10)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

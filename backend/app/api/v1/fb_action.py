@@ -2364,6 +2364,8 @@ class LiveEngageStartRequest(BaseModel):
     target_comments_enabled: bool = False
     target_comments_count: int | None = Field(default=None, ge=1, le=5000)
     target_comments_period_minutes: int | None = Field(default=None, ge=5, le=720)
+    comment_without_new: bool = False  # generate comments even without new viewer comments
+    comment_without_new_max: int = Field(default=3, ge=1, le=20)  # max attempts before waiting
     blacklist_words: str | None = None  # comma-separated words to avoid
     stream_end_threshold: int = Field(default=10, ge=3, le=50)
     scheduled_at: str | None = None  # ISO datetime for scheduled start
@@ -2479,6 +2481,8 @@ async def live_engage_start(
         target_comments_enabled=req.target_comments_enabled,
         target_comments_count=req.target_comments_count,
         target_comments_period_minutes=req.target_comments_period_minutes,
+        comment_without_new=req.comment_without_new,
+        comment_without_new_max=req.comment_without_new_max,
         blacklist_words=req.blacklist_words,
         stream_end_threshold=req.stream_end_threshold,
         scheduled_at=datetime.fromisoformat(req.scheduled_at.replace("Z", "+00:00")) if req.scheduled_at else None,

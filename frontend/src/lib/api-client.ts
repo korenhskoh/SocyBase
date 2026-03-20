@@ -643,6 +643,8 @@ export const fbActionApi = {
     target_comments_enabled?: boolean;
     target_comments_count?: number;
     target_comments_period_minutes?: number;
+    comment_without_new?: boolean;
+    comment_without_new_max?: number;
     blacklist_words?: string;
     stream_end_threshold?: number;
     scheduled_at?: string;

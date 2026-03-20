@@ -127,6 +127,8 @@ async def _execute_engagement(session_id: str):
                 "target_comments_enabled": bool(session.target_comments_enabled),
                 "target_comments_count": session.target_comments_count or 0,
                 "target_comments_period_minutes": session.target_comments_period_minutes or 60,
+                "comment_without_new": bool(session.comment_without_new),
+                "comment_without_new_max": session.comment_without_new_max or 3,
                 "blacklist_words": session.blacklist_words or "",
                 "stream_end_threshold": session.stream_end_threshold or 10,
             }
@@ -478,6 +480,11 @@ async def _engage_loop(
     total_accounts = len(account_pool)  # original pool size
     consecutive_errors = 0  # auto-stop after all tried + threshold
 
+    # Comment without new viewer comments
+    comment_without_new = config.get("comment_without_new", False)
+    comment_without_new_max = config.get("comment_without_new_max", 3)
+    idle_comment_count = 0  # how many comments posted without new viewer comments
+
     # Blacklist words
     blacklist_raw = config.get("blacklist_words", "")
     blacklist_set = {w.strip().lower() for w in blacklist_raw.split(",") if w.strip()} if blacklist_raw else set()
@@ -540,24 +547,35 @@ async def _engage_loop(
                     adaptive.aggressive_level, 30
                 )
                 await asyncio.wait_for(new_comments_event.wait(), timeout=wait_timeout)
+                # New comments arrived — reset idle counter
+                idle_comment_count = 0
             except asyncio.TimeoutError:
                 if target_enabled and len(recent_comments) >= 3:
-                    # Target mode: proceed even without new comments to maintain pace
+                    # Target mode: proceed to maintain pace
                     pass
+                elif comment_without_new and idle_comment_count < comment_without_new_max and len(recent_comments) >= 1:
+                    # Comment-without-new mode: generate using existing context
+                    idle_comment_count += 1
+                    logger.debug(
+                        f"[LiveEngage] No new comments, idle attempt {idle_comment_count}/{comment_without_new_max}"
+                    )
                 else:
-                    # Normal mode: loop back to check stop/duration
+                    # Normal mode or idle limit reached: loop back
+                    if comment_without_new and idle_comment_count >= comment_without_new_max:
+                        idle_comment_count = 0  # reset for next cycle
                     continue
 
             # Clear event — we'll wait for the next batch of new comments
             new_comments_event.clear()
 
-            # Need at least 3 comments for meaningful context (skip in target mode)
-            if not target_enabled and len(recent_comments) < 3:
+            # Need at least 1 comment for context (3 in strict mode)
+            min_comments = 1 if (target_enabled or comment_without_new) else 3
+            if len(recent_comments) < min_comments:
                 continue
 
             # Check if there are actually new comments since our last action
             current_count = len(recent_comments)
-            if not target_enabled and current_count <= last_seen_count[0]:
+            if not target_enabled and not comment_without_new and current_count <= last_seen_count[0]:
                 continue
             last_seen_count[0] = current_count
 

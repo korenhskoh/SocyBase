@@ -281,6 +281,8 @@ export default function FBActionBotPage() {
   const [leMinDelay, setLeMinDelay] = useState(15);
   const [leMaxDelay, setLeMaxDelay] = useState(60);
   const [leMaxDuration, setLeMaxDuration] = useState(180);
+  const [leCommentWithoutNew, setLeCommentWithoutNew] = useState(false);
+  const [leCommentWithoutNewMax, setLeCommentWithoutNewMax] = useState(3);
   const [leBlacklistWords, setLeBlacklistWords] = useState("");
   const [leStreamEndThreshold, setLeStreamEndThreshold] = useState(10);
   const [leScheduledAt, setLeScheduledAt] = useState("");
@@ -3624,7 +3626,37 @@ export default function FBActionBotPage() {
                     className="w-full accent-amber-400"
                     onChange={(e) => setLeScrapeInterval(parseInt(e.target.value))}
                   />
-                  <p className="text-xs text-white/30 mt-1">How often to fetch new livestream comments — AI only responds when new comments arrive</p>
+                  <p className="text-xs text-white/30 mt-1">How often to fetch new livestream comments</p>
+                </div>
+
+                {/* Comment without new */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={leCommentWithoutNew}
+                        onChange={(e) => setLeCommentWithoutNew(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-white/10 rounded-full peer peer-checked:bg-amber-500/60 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                    <div>
+                      <span className="text-sm text-white/70">Comment Without New Viewers</span>
+                      <p className="text-xs text-white/30">Generate AI comments even when no new viewer comments arrive</p>
+                    </div>
+                  </div>
+                  {leCommentWithoutNew && (
+                    <div className="pl-12">
+                      <label className="text-xs text-white/40 block mb-1">Max idle attempts before waiting: {leCommentWithoutNewMax}</label>
+                      <input
+                        type="range" min={1} max={20} step={1} value={leCommentWithoutNewMax}
+                        className="w-full accent-amber-400"
+                        onChange={(e) => setLeCommentWithoutNewMax(parseInt(e.target.value))}
+                      />
+                      <p className="text-xs text-white/30 mt-1">After this many comments without new viewers, pause and wait for activity</p>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -3724,6 +3756,8 @@ export default function FBActionBotPage() {
                           target_comments_enabled: leTargetEnabled,
                           target_comments_count: leTargetCount,
                           target_comments_period_minutes: leTargetPeriod,
+                          comment_without_new: leCommentWithoutNew,
+                          comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                           blacklist_words: leBlacklistWords.trim() || undefined,
                           stream_end_threshold: leStreamEndThreshold,
                         });
@@ -3757,6 +3791,8 @@ export default function FBActionBotPage() {
                             setLeTargetEnabled(p.target_comments_enabled || false);
                             setLeTargetCount(p.target_comments_count || 100);
                             setLeTargetPeriod(p.target_comments_period_minutes || 60);
+                            setLeCommentWithoutNew(p.comment_without_new || false);
+                            setLeCommentWithoutNewMax(p.comment_without_new_max || 3);
                             setLeBlacklistWords(p.blacklist_words || "");
                             setLeStreamEndThreshold(p.stream_end_threshold || 10);
                             showToast("success", `Loaded preset: ${p.name}`);
@@ -3849,6 +3885,8 @@ export default function FBActionBotPage() {
                       target_comments_enabled: leTargetEnabled,
                       target_comments_count: leTargetEnabled ? leTargetCount : undefined,
                       target_comments_period_minutes: leTargetEnabled ? leTargetPeriod : undefined,
+                      comment_without_new: leCommentWithoutNew,
+                      comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                       blacklist_words: leBlacklistWords.trim() || undefined,
                       stream_end_threshold: leStreamEndThreshold,
                       scheduled_at: leScheduledAt ? new Date(leScheduledAt).toISOString() : undefined,
