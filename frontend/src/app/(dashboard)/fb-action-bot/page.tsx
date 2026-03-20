@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { fbActionApi, jobsApi, competitorsApi, creditsApi } from "@/lib/api-client";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 // All 13 AKNG fb_action actions
 const ACTIONS = [
@@ -3408,7 +3407,7 @@ export default function FBActionBotPage() {
                               if (res.data.errors?.length) parts.push(`${res.data.errors.length} rows skipped`);
                               showToast("success", parts.join(", "));
                             } catch (err: any) {
-                              showToast("error", err.response?.data?.detail || "Failed to parse CSV");
+                              showToast("error", typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Failed to parse CSV");
                             }
                             e.target.value = "";
                           }}
@@ -4208,7 +4207,7 @@ export default function FBActionBotPage() {
                             showToast("success", "Engagement stopped");
                             setLiveEngageSession((prev: any) => prev ? { ...prev, status: "stopped" } : prev);
                             if (lePollRef.current) clearInterval(lePollRef.current);
-                          } catch (err: any) { showToast("error", err.response?.data?.detail || "Failed to stop"); }
+                          } catch (err: any) { showToast("error", typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Failed to stop"); }
                         }}
                         className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition"
                       >
@@ -4238,7 +4237,7 @@ export default function FBActionBotPage() {
                             showToast("success", "Engagement stopped");
                             setLiveEngageSession((prev: any) => prev ? { ...prev, status: "stopped" } : prev);
                             if (lePollRef.current) clearInterval(lePollRef.current);
-                          } catch (err: any) { showToast("error", err.response?.data?.detail || "Failed to stop"); }
+                          } catch (err: any) { showToast("error", typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Failed to stop"); }
                         }}
                         className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition"
                       >
@@ -4300,7 +4299,7 @@ export default function FBActionBotPage() {
                           });
                           showToast("success", `Triggered: ${leTriggerCode} x${leTriggerCount} for ${leTriggerDuration}min`);
                           setLeTriggerCode("");
-                        } catch (err: any) { showToast("error", err.response?.data?.detail || "Trigger failed"); }
+                        } catch (err: any) { showToast("error", typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Trigger failed"); }
                         setLeTriggerLoading(false);
                       }}
                       className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-sm font-medium transition disabled:opacity-40"
@@ -4403,7 +4402,7 @@ export default function FBActionBotPage() {
                             const res = await fbActionApi.liveEngageUpdateSettings(liveEngageSession.id, updates);
                             showToast("success", `Updated: ${(res.data.updated || []).join(", ")}`);
                             setLeEditSettings(false);
-                          } catch (err: any) { showToast("error", err.response?.data?.detail || "Update failed"); }
+                          } catch (err: any) { showToast("error", typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Update failed"); }
                         }}
                         className="w-full py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-lg text-xs font-medium transition"
                       >Apply Changes</button>
@@ -4447,59 +4446,63 @@ export default function FBActionBotPage() {
                 </div>
               )}
 
-              {/* Charts */}
+              {/* Activity + Role Distribution */}
               {liveEngageLogs.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Activity Timeline */}
+                  {/* Activity Timeline (CSS bars) */}
                   <div className="glass-card p-5">
                     <h3 className="text-xs font-medium text-white/40 mb-3">Activity Timeline</h3>
-                    <ResponsiveContainer width="100%" height={180}>
-                      <AreaChart data={(() => {
-                        const buckets: Record<string, { time: string; success: number; error: number }> = {};
+                    <div className="flex items-end gap-0.5 h-32">
+                      {(() => {
+                        const buckets: Record<string, { success: number; error: number }> = {};
                         liveEngageLogs.slice().reverse().forEach((log: any) => {
                           if (!log.created_at) return;
-                          const t = new Date(log.created_at);
-                          const key = t.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-                          if (!buckets[key]) buckets[key] = { time: key, success: 0, error: 0 };
+                          const key = new Date(log.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                          if (!buckets[key]) buckets[key] = { success: 0, error: 0 };
                           if (log.status === "success") buckets[key].success++;
                           else buckets[key].error++;
                         });
-                        return Object.values(buckets);
-                      })()}>
-                        <XAxis dataKey="time" tick={{ fontSize: 10, fill: "#ffffff40" }} />
-                        <YAxis tick={{ fontSize: 10, fill: "#ffffff40" }} width={30} />
-                        <Tooltip contentStyle={{ backgroundColor: "#1a1a2e", border: "1px solid #ffffff20", borderRadius: 8, fontSize: 12 }} />
-                        <Area type="monotone" dataKey="success" stroke="#34d399" fill="#34d39920" stackId="1" />
-                        <Area type="monotone" dataKey="error" stroke="#f87171" fill="#f8717120" stackId="1" />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                        const entries = Object.entries(buckets).slice(-20);
+                        const maxVal = Math.max(...entries.map(([, v]) => v.success + v.error), 1);
+                        return entries.map(([time, v]) => (
+                          <div key={time} className="flex-1 flex flex-col justify-end items-center group relative">
+                            <div className="absolute -top-5 hidden group-hover:block text-[9px] text-white/50 whitespace-nowrap">{time} ({v.success}✓ {v.error}✗)</div>
+                            <div className="w-full bg-emerald-500/40 rounded-t" style={{ height: `${(v.success / maxVal) * 100}%`, minHeight: v.success ? 2 : 0 }} />
+                            <div className="w-full bg-red-500/40 rounded-b" style={{ height: `${(v.error / maxVal) * 100}%`, minHeight: v.error ? 2 : 0 }} />
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                    <div className="flex justify-between mt-1 text-[9px] text-white/20">
+                      <span>Older</span>
+                      <span className="flex gap-3"><span className="text-emerald-400">■ Success</span><span className="text-red-400">■ Error</span></span>
+                      <span>Recent</span>
+                    </div>
                   </div>
 
-                  {/* Role Distribution Pie */}
+                  {/* Role Distribution (CSS bars) */}
                   <div className="glass-card p-5">
                     <h3 className="text-xs font-medium text-white/40 mb-3">Role Distribution</h3>
-                    {Object.keys(liveEngageSession?.comments_by_role || {}).length > 0 ? (
-                      <ResponsiveContainer width="100%" height={180}>
-                        <PieChart>
-                          <Pie
-                            data={Object.entries(liveEngageSession?.comments_by_role || {}).map(([role, count]) => ({
-                              name: role.replace(/_/g, " "),
-                              value: count as number,
-                            }))}
-                            cx="50%" cy="50%" innerRadius={40} outerRadius={70}
-                            paddingAngle={2} dataKey="value"
-                            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                          >
-                            {Object.keys(liveEngageSession?.comments_by_role || {}).map((_: string, i: number) => (
-                              <Cell key={i} fill={["#f59e0b", "#3b82f6", "#8b5cf6", "#10b981", "#ec4899", "#06b6d4"][i % 6]} />
-                            ))}
-                          </Pie>
-                          <Tooltip contentStyle={{ backgroundColor: "#1a1a2e", border: "1px solid #ffffff20", borderRadius: 8, fontSize: 12 }} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <p className="text-white/30 text-xs text-center py-8">Waiting for data...</p>
-                    )}
+                    {(() => {
+                      const roles = Object.entries(liveEngageSession?.comments_by_role || {});
+                      const total = roles.reduce((sum, [, c]) => sum + (c as number), 0) || 1;
+                      const colors = ["bg-amber-500", "bg-blue-500", "bg-purple-500", "bg-emerald-500", "bg-pink-500", "bg-cyan-500"];
+                      return roles.length > 0 ? (
+                        <div className="space-y-2">
+                          {roles.map(([role, count], i) => (
+                            <div key={role}>
+                              <div className="flex justify-between text-xs mb-0.5">
+                                <span className="text-white/50 capitalize">{role.replace(/_/g, " ")}</span>
+                                <span className="text-white/40">{count as number} ({((count as number) / total * 100).toFixed(0)}%)</span>
+                              </div>
+                              <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                                <div className={`h-full ${colors[i % 6]} rounded-full transition-all`} style={{ width: `${((count as number) / total) * 100}%` }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : <p className="text-white/30 text-xs text-center py-4">Waiting for data...</p>;
+                    })()}
                   </div>
                 </div>
               )}
