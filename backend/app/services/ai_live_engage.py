@@ -14,12 +14,30 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 # Order patterns — no AI call needed, just pick randomly
-ORDER_PATTERNS = [
-    "+1", "nak", "order", "want", "beli", "+1 pls",
-    "nak satu", "order please", "want this!", "beli satu",
-    "interested!", "pm", "nak beli", "i want this",
-    "+1 please", "how to order?", "nak order",
-]
+ORDER_PATTERNS_BY_LANG = {
+    "malay": [
+        "+1", "nak", "beli", "nak satu", "nak beli", "pm",
+        "interested", "order", "nak order", "beli satu",
+        "berapa harga?", "nak satu ni", "cantik nak",
+    ],
+    "english": [
+        "+1", "want", "order", "want this!", "order please",
+        "+1 please", "interested!", "pm", "i want this",
+        "how to order?", "how much?", "take one",
+    ],
+    "chinese": [
+        "+1", "要", "想要", "下单", "买", "我要",
+        "拿一个", "怎么买", "多少钱", "要一个",
+        "来一个", "买买买", "想买", "订一个",
+        "有货吗", "还有吗", "要这个", "pm",
+    ],
+}
+# Combined fallback (all languages)
+ORDER_PATTERNS = (
+    ORDER_PATTERNS_BY_LANG["malay"]
+    + ORDER_PATTERNS_BY_LANG["english"]
+    + ORDER_PATTERNS_BY_LANG["chinese"]
+)
 
 ROLE_DESCRIPTIONS = {
     "ask_question": (
@@ -94,7 +112,7 @@ class AILiveEngageService:
         if role == "place_order":
             return self._generate_order_comment(
                 recent_comments, posted_history, detected_codes, quantity_variation,
-                training_comments,
+                training_comments, languages,
             )
 
         return await self._generate_ai_comment(
@@ -142,13 +160,14 @@ class AILiveEngageService:
         detected_codes: list[str] | None = None,
         quantity_variation: bool = True,
         training_comments: str | None = None,
+        languages: str = "",
     ) -> str:
         """Generate a place-order comment.
 
         Priority 1: Copy real viewer order patterns exactly (L6 +1, m763 nak)
         Priority 2: Use detected codes with variations
         Priority 3: Extract codes from training comments
-        Priority 4: Static templates
+        Priority 4: Language-specific static templates
         """
         recent_posted = {p.lower().strip() for p in (posted_history or [])[-15:]}
 
@@ -207,8 +226,18 @@ class AILiveEngageService:
                 qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
                 return f"{code} +{qty}"
             elif roll < 0.50:
-                # Use order phrases seen in live chat, or defaults
-                phrases = ["nak", "要", "+1", "order", "买"]
+                # Language-aware order phrases
+                phrase_map = {
+                    "malay": ["nak", "beli", "order", "pm"],
+                    "english": ["want", "order", "+1", "pm"],
+                    "chinese": ["要", "买", "下单", "拿"],
+                }
+                phrases = []
+                if languages:
+                    for lang in [l.strip().lower() for l in languages.split(",") if l.strip()]:
+                        phrases.extend(phrase_map.get(lang, []))
+                if not phrases:
+                    phrases = ["nak", "要", "+1", "order", "买"]
                 return f"{code} {random.choice(phrases)}"
             return code
 
@@ -233,9 +262,18 @@ class AILiveEngageService:
             if unique_live:
                 return random.choice(unique_live)
 
-        # ── Priority 4: Static templates ──
-        templates = [p for p in ORDER_PATTERNS if p.lower() not in recent_posted]
-        return random.choice(templates) if templates else random.choice(ORDER_PATTERNS)
+        # ── Priority 4: Language-specific static templates ──
+        # Build template pool based on selected languages
+        lang_pool: list[str] = []
+        if languages:
+            lang_list = [l.strip().lower() for l in languages.split(",") if l.strip()]
+            for lang in lang_list:
+                if lang in ORDER_PATTERNS_BY_LANG:
+                    lang_pool.extend(ORDER_PATTERNS_BY_LANG[lang])
+        if not lang_pool:
+            lang_pool = list(ORDER_PATTERNS)  # fallback: all languages
+        templates = [p for p in lang_pool if p.lower() not in recent_posted]
+        return random.choice(templates) if templates else random.choice(lang_pool)
 
     async def _generate_ai_comment(
         self,
