@@ -3008,8 +3008,24 @@ async def live_engage_status(
         "comments_by_role": session.comments_by_role,
         "comments_monitored": session.comments_monitored,
         "active_accounts": session.active_accounts,
+        "aggressive_level": session.aggressive_level,
+        "scrape_interval_seconds": session.scrape_interval_seconds,
         "min_delay_seconds": session.min_delay_seconds,
         "max_delay_seconds": session.max_delay_seconds,
+        "max_duration_minutes": session.max_duration_minutes,
+        "blacklist_words": session.blacklist_words,
+        "ai_instructions": session.ai_instructions,
+        "quantity_variation": session.quantity_variation,
+        "languages": session.languages.split(",") if session.languages else [],
+        "stream_end_threshold": session.stream_end_threshold,
+        "comment_without_new": session.comment_without_new,
+        "comment_without_new_max": session.comment_without_new_max,
+        "auto_order_trending": session.auto_order_trending,
+        "auto_order_trending_threshold": session.auto_order_trending_threshold,
+        "auto_order_trending_cooldown": session.auto_order_trending_cooldown,
+        "target_comments_enabled": session.target_comments_enabled,
+        "target_comments_count": session.target_comments_count,
+        "target_comments_period_minutes": session.target_comments_period_minutes,
         "error_message": session.error_message,
         "live_metrics": session.live_metrics,
         "pending_actions": session.pending_actions,
@@ -3128,8 +3144,11 @@ async def live_engage_trigger_code(
         raise HTTPException(status_code=400, detail="Session is not active")
 
     code = data.get("code", "").strip()
-    count = min(max(int(data.get("count", 5)), 1), 50)
-    duration_minutes = min(max(int(data.get("duration_minutes", 2)), 1), 10)
+    try:
+        count = min(max(int(data.get("count") or 5), 1), 50)
+        duration_minutes = min(max(int(data.get("duration_minutes") or 2), 1), 10)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="count and duration_minutes must be numbers")
 
     if not code:
         raise HTTPException(status_code=400, detail="Code is required")
@@ -3258,9 +3277,11 @@ async def live_engage_update_settings(
             raise HTTPException(status_code=400, detail=f"Role percentages must sum to 100, got {total}")
 
     # Signal the task to reload config
+    from sqlalchemy.orm.attributes import flag_modified
     pending = dict(session.pending_actions or {})
     pending["reload_config"] = datetime.now(timezone.utc).isoformat()
     session.pending_actions = pending
+    flag_modified(session, "pending_actions")
     await db.commit()
 
     return {"ok": True, "updated": list(updated.keys())}

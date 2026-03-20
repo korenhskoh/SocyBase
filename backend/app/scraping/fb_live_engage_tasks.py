@@ -357,7 +357,6 @@ async def _monitor_loop(
     from app.models.fb_live_engage import FBLiveEngageSession
 
     post_id = config["post_id"]
-    scrape_interval = config["scrape_interval"]
     page_owner_id = config.get("page_owner_id", "")
     # NOTE: stream_end_threshold is read from config dict each iteration
     # so config reload from engage loop takes effect immediately
@@ -369,7 +368,7 @@ async def _monitor_loop(
         try:
             # Check session status periodically (~30s)
             iteration += 1
-            status_check_every = max(2, int(30 / scrape_interval))
+            status_check_every = max(2, int(30 / config["scrape_interval"]))
             if iteration % status_check_every == 0:
                 try:
                     async with SessionLocal() as db:
@@ -394,7 +393,7 @@ async def _monitor_loop(
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] Monitor: fetch failed: {exc}")
-                await asyncio.sleep(scrape_interval)
+                await asyncio.sleep(config["scrape_interval"])
                 continue
 
             # Parse AKNG response — unwrap wrapper
@@ -540,7 +539,7 @@ async def _monitor_loop(
         except Exception as exc:
             logger.warning(f"[LiveEngage] Monitor: unexpected error: {exc}")
 
-        await asyncio.sleep(scrape_interval)
+        await asyncio.sleep(config["scrape_interval"])
 
 
 async def _engage_loop(
@@ -775,6 +774,9 @@ async def _engage_loop(
                         config["stream_end_threshold"] = s.stream_end_threshold if s.stream_end_threshold is not None else 10
                         config["languages"] = s.languages or ""
                         config["ai_instructions"] = s.ai_instructions or ""
+                        config["auto_order_trending"] = bool(s.auto_order_trending)
+                        config["auto_order_trending_threshold"] = s.auto_order_trending_threshold or 3
+                        config["auto_order_trending_cooldown"] = s.auto_order_trending_cooldown or 60
                         adaptive.quantity_variation = s.quantity_variation if s.quantity_variation is not None else True
                         adaptive.aggressive_level = s.aggressive_level or "medium"
 
