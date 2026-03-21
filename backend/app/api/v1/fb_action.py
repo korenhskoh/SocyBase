@@ -2762,7 +2762,8 @@ async def live_engage_smart_setup(
 
     # ── Stage 2: Scrape comments ──
     all_comments: list[str] = []
-    commenter_counts: dict[str, int] = {}  # from_id → count (to detect host)
+    comment_authors: list[tuple[str, str]] = []  # (from_id, message) to separate host later
+    commenter_counts: dict[str, int] = {}
     detected_host_id = ""
     post_id = None
     url_to_scrape = req.video_url or req.page_url
@@ -2796,6 +2797,7 @@ async def live_engage_smart_setup(
                         from_id = from_data.get("id", "")
                         if msg:
                             all_comments.append(msg)
+                            comment_authors.append((from_id, msg))
                             if from_id:
                                 commenter_counts[from_id] = commenter_counts.get(from_id, 0) + 1
                     if not ncursor or not cdata:
@@ -2822,6 +2824,20 @@ async def live_engage_smart_setup(
     avg_len = round(sum(len(c) for c in all_comments) / max(len(all_comments), 1)) if all_comments else 0
     unique = list(dict.fromkeys(all_comments))[:100]
 
+    # Separate host comments (product info, prices, instructions)
+    host_messages: list[str] = []
+    viewer_messages: list[str] = []
+    if detected_host_id:
+        for fid, msg in comment_authors:
+            if fid == detected_host_id:
+                host_messages.append(msg)
+            else:
+                viewer_messages.append(msg)
+    else:
+        viewer_messages = list(all_comments)
+
+    host_sample = "\n".join(f"- {m}" for m in dict.fromkeys(host_messages).keys())[:2000] if host_messages else ""
+
     page_sum = ""
     if page_info:
         page_sum = f"Name: {page_info.get('name', '?')}\nCategory: {page_info.get('category', '?')}\nAbout: {page_info.get('about', '')}\nDescription: {page_info.get('description', '')}"
@@ -2834,6 +2850,16 @@ async def live_engage_smart_setup(
 
 === PAGE ===
 {page_sum or "N/A"}
+
+=== HOST/LIVESTREAMER COMMENTS ({len(host_messages)} messages) ===
+{host_sample or "No host comments detected"}
+
+These are comments from the livestream HOST. They contain:
+- Product codes and names (e.g. "B1号", "款号520")
+- Prices (e.g. "特价388元", "only RM99")
+- Order instructions (e.g. "要的扣1", "comment +1 to order")
+- Product descriptions
+Use this info for business_context and product_codes detection.
 
 === COMMENTS ({len(all_comments)} total, {len(unique)} unique) ===
 {comments_sample or "N/A"}
