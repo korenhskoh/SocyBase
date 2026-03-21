@@ -128,7 +128,7 @@ class AILiveEngageService:
 
         return await self._generate_ai_comment(
             role, recent_comments, business_context, training_comments, ai_instructions,
-            reference_comment, posted_history, languages,
+            reference_comment, posted_history, languages, detected_codes,
         )
 
     # Regex patterns for extracting codes/numbers from any text
@@ -296,6 +296,7 @@ class AILiveEngageService:
         reference_comment: str | None = None,
         posted_history: list[str] | None = None,
         languages: str = "",
+        detected_codes: list[str] | None = None,
     ) -> str:
         """Call GPT-4o to generate a single comment."""
         role_desc = ROLE_DESCRIPTIONS.get(role, "Post a natural comment.")
@@ -332,6 +333,19 @@ class AILiveEngageService:
         if ai_instructions:
             system_prompt += f"Additional instructions:\n{ai_instructions}\n\n"
 
+        # ── DETECTED PRODUCT CODES (from real live comments) ──
+        if detected_codes:
+            codes_str = ", ".join(detected_codes[:20])
+            system_prompt += (
+                f"=== ACTIVE PRODUCT CODES (detected from viewer comments) ===\n"
+                f"{codes_str}\n\n"
+                "These are real product codes viewers are ordering right now. "
+                "When asking questions, you can reference these codes specifically "
+                "(e.g. 'how much is code 480?' or '480号还有吗？'). "
+                "When reacting to comments, acknowledge orders with these codes. "
+                "This makes your comment relevant to the current ordering activity.\n\n"
+            )
+
         # ── CURRENT LIVESTREAM (primary content reference) ──
         if recent_text:
             system_prompt += (
@@ -366,7 +380,6 @@ class AILiveEngageService:
                 f"{training_sample}\n\n"
                 "These are real past comments that show the RIGHT way to reply. "
                 "Study them carefully and learn:\n"
-                "- The LANGUAGE to use (Malay, English, mixed, slang)\n"
                 "- The TONE (casual, formal, playful, direct)\n"
                 "- The LENGTH and STRUCTURE (short phrases vs full sentences)\n"
                 "- The STYLE of engagement (how they ask questions, react, express interest)\n"
@@ -383,9 +396,10 @@ class AILiveEngageService:
             if lang_list:
                 lang_str = ", ".join(lang_list)
                 system_prompt += (
-                    f"=== LANGUAGE REQUIREMENT ===\n"
-                    f"You MUST write your comment in one of these languages: {lang_str}.\n"
-                    f"Pick the most natural one for the current conversation context.\n\n"
+                    f"=== LANGUAGE REQUIREMENT (MANDATORY) ===\n"
+                    f"You MUST write your comment ONLY in: {lang_str}.\n"
+                    f"Do NOT use any other language. Even if comments are in other languages, "
+                    f"you MUST respond in {lang_str} ONLY. This is non-negotiable.\n\n"
                 )
         elif recent_comments:
             # Auto-detect dominant language from recent comments
@@ -408,7 +422,7 @@ class AILiveEngageService:
         system_prompt += (
             "=== STRICT RULES ===\n"
             "- " + (
-                f"Write in {lang_str}" if lang_str else
+                f"STRICTLY write in {lang_str} ONLY — do NOT use any other language" if lang_str else
                 "Auto-detect and match the language most viewers are using (Chinese/Malay/English/mixed)"
             ) + "\n"
             "- MAX 1-2 short sentences. Most livestream comments are 3-15 words\n"
