@@ -3488,6 +3488,7 @@ export default function FBActionBotPage() {
                         if (cfg.quantity_variation !== undefined) setLeQuantityVariation(cfg.quantity_variation);
                         if (cfg.auto_order_trending !== undefined) setLeAutoOrderTrending(cfg.auto_order_trending);
                         if (cfg.auto_order_trending_threshold) setLeAutoOrderThreshold(cfg.auto_order_trending_threshold);
+                        if (cfg.auto_order_trending_cooldown) setLeAutoOrderCooldown(cfg.auto_order_trending_cooldown);
                         setSmartSetupResult(null);
                         showToast("success", "Config applied! Review and adjust before starting.");
                       }} className="flex-1 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-lg text-sm font-medium transition">
@@ -4209,6 +4210,9 @@ export default function FBActionBotPage() {
                             setLeBlacklistWords(p.blacklist_words || "");
                             setLeStreamEndEnabled((p.stream_end_threshold || 0) > 0);
                             setLeStreamEndThreshold(p.stream_end_threshold || 10);
+                            setLeAutoOrderTrending(p.auto_order_trending || false);
+                            setLeAutoOrderThreshold(p.auto_order_trending_threshold || 3);
+                            setLeAutoOrderCooldown(p.auto_order_trending_cooldown || 60);
                             showToast("success", `Loaded preset: ${p.name}`);
                           }}
                           className="text-xs text-white/70 hover:text-white"
