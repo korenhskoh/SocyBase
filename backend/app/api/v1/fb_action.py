@@ -2818,7 +2818,7 @@ Codes (2+ occurrences): {', '.join(detected_codes) or 'None'}
 Avg comment length: {avg_len} chars
 
 Generate JSON:
-{{"business_context":"2-4 sentences specific to THIS business in {dominant}","ai_instructions":"1-2 sentence rules for AI tone/language","training_comments":"50-80 REAL comments from above (one per line, do NOT invent)","languages":{json.dumps(lang_list)},"product_codes":"{', '.join(detected_codes[:15])}","code_pattern":"examples or preset (numbers/letters_numbers/any_alphanumeric)","role_distribution":{{"ask_question":N,"place_order":N,"repeat_question":N,"good_vibe":N,"react_comment":N,"share_experience":N}},"aggressive_level":"low/medium/high","quantity_variation":true,"auto_order_trending":{str(bool(detected_codes)).lower()},"auto_order_trending_threshold":3,"suggested_title":"short name"}}
+{{"business_context":"2-4 sentences specific to THIS business in {dominant}","ai_instructions":"1-2 sentence rules for AI tone/language","training_comments":"50-80 REAL comments from above (one per line, do NOT invent)","languages":{json.dumps(lang_list)},"product_codes":"{', '.join(detected_codes[:15])}","code_pattern":"MUST be one of these exact presets: numbers, letters_numbers, any_alphanumeric","role_distribution":{{"ask_question":N,"place_order":N,"repeat_question":N,"good_vibe":N,"react_comment":N,"share_experience":N}},"aggressive_level":"low/medium/high","quantity_variation":true,"auto_order_trending":{str(bool(detected_codes)).lower()},"auto_order_trending_threshold":3,"suggested_title":"short name"}}
 
 Rules: role_distribution sums to 100. If heavy ordering→place_order 50-60%. training_comments MUST be real from sample."""
 
