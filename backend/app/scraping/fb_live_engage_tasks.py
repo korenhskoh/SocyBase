@@ -600,14 +600,20 @@ async def _monitor_loop(
             else:
                 consecutive_empty_polls += 1
 
-                # BUG FIX: Reset cursor after 5 consecutive empty polls to
-                # re-fetch from scratch — the cursor may have advanced past
-                # the live edge, causing the API to return nothing forever.
+                # Reset cursor after 5 empty polls, but only once per 2 minutes.
+                # After reset, the API returns old comments (already in seen_ids)
+                # which still count as "empty" — without cooldown this loops forever.
+                if not hasattr(_monitor_loop, '_last_cursor_reset'):
+                    _monitor_loop._last_cursor_reset = 0.0
                 if consecutive_empty_polls >= 5 and after_cursor:
-                    logger.info(
-                        "[LiveEngage] Monitor: 5 empty polls, resetting cursor to re-fetch"
-                    )
-                    after_cursor = None
+                    now_mono = monotonic()
+                    if now_mono - _monitor_loop._last_cursor_reset > 120:
+                        logger.info(
+                            "[LiveEngage] Monitor: 5 empty polls, resetting cursor (cooldown 2min)"
+                        )
+                        after_cursor = None
+                        _monitor_loop._last_cursor_reset = now_mono
+                        consecutive_empty_polls = 0  # Reset counter after cursor reset
 
                 # Check DB for paused status — freeze empty poll counter
                 try:
