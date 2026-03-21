@@ -3802,7 +3802,7 @@ export default function FBActionBotPage() {
                           className="w-full text-left px-2 py-1.5 rounded text-xs text-white/60 hover:bg-white/10 transition flex justify-between"
                         >
                           <span className="truncate">{j.input_value}</span>
-                          <span className="text-white/25 flex-shrink-0 ml-2">{j.scraped_count || 0} profiles</span>
+                          <span className="text-white/25 flex-shrink-0 ml-2">{j.total_items || j.processed_items || 0} items</span>
                         </button>
                       ))}
                     </div>
