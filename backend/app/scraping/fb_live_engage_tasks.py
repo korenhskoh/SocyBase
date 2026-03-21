@@ -51,6 +51,10 @@ class AdaptiveState:
     # Auto-order trending: track recent code mentions for auto place_order
     recent_code_mentions: dict = field(default_factory=dict)  # code → [timestamps]
     last_auto_order_time: float = 0.0  # monotonic timestamp of last auto-order
+    # Live product tracking: which code is currently being sold
+    current_product: str = ""  # most active code right now
+    product_history: list = field(default_factory=list)  # [{code, started_at, ended_at, mentions}]
+    last_product_check: float = 0.0
 
 
 def _extract_product_codes(message: str, code_re: re.Pattern | None = None) -> list[str]:
@@ -675,6 +679,81 @@ async def _monitor_loop(
                     if len(adaptive.detected_codes) > 50:
                         adaptive.detected_codes = adaptive.detected_codes[-50:]
 
+            # ── Live product tracking: detect current active product ──
+            # Priority: host mentions a code → immediate product change
+            # Fallback: most mentioned code by viewers in last 60s
+            now_track = monotonic()
+            if now_track - adaptive.last_product_check > 15:  # check every 15s
+                adaptive.last_product_check = now_track
+
+                # Check if host mentioned any code recently (strongest signal)
+                host_code = ""
+                if hasattr(adaptive, 'host_comments') and adaptive.host_comments:
+                    last_host = adaptive.host_comments[-1].get("message", "")
+                    host_codes = _extract_product_codes(last_host, adaptive.code_re)
+                    # Also check whitelist match on host message
+                    if not host_codes and adaptive.code_whitelist:
+                        tokens = set(re.split(r'[\s,+＋]+', last_host.upper().strip()))
+                        for wl in adaptive.code_whitelist:
+                            if wl in tokens:
+                                host_codes.append(wl)
+                    if host_codes:
+                        host_code = host_codes[0]
+
+                # Fallback: most mentioned code by anyone in last 60s
+                best_code = host_code
+                best_count = 0
+                if not best_code:
+                    cutoff_60 = now_track - 60
+                    for code_key, timestamps in adaptive.recent_code_mentions.items():
+                        recent_ts = [t for t in timestamps if t > cutoff_60]
+                        if len(recent_ts) > best_count:
+                            best_count = len(recent_ts)
+                            best_code = code_key
+
+                if best_code and (host_code or best_count >= 2):
+                    # Find original case
+                    display_code = best_code
+                    for dc in adaptive.detected_codes:
+                        if dc.upper() == best_code:
+                            display_code = dc
+                            break
+
+                    if display_code.upper() != adaptive.current_product.upper() if adaptive.current_product else True:
+                        # Product changed!
+                        old = adaptive.current_product
+                        adaptive.current_product = display_code
+
+                        # Close previous product in history
+                        if adaptive.product_history and not adaptive.product_history[-1].get("ended_at"):
+                            adaptive.product_history[-1]["ended_at"] = datetime.now(timezone.utc).isoformat()
+
+                        # Add new product to history
+                        adaptive.product_history.append({
+                            "code": display_code,
+                            "started_at": datetime.now(timezone.utc).isoformat(),
+                            "ended_at": None,
+                            "mentions": best_count,
+                            "source": "host" if host_code else "viewers",
+                        })
+                        # Keep last 20 products
+                        if len(adaptive.product_history) > 20:
+                            adaptive.product_history = adaptive.product_history[-20:]
+
+                        if old:
+                            logger.info(f"[LiveEngage] Product changed: {old} → {display_code} ({best_count} mentions)")
+                        else:
+                            logger.info(f"[LiveEngage] Current product: {display_code} ({best_count} mentions)")
+                    else:
+                        # Same product, update mention count
+                        if adaptive.product_history:
+                            adaptive.product_history[-1]["mentions"] = best_count
+                elif not best_code and adaptive.current_product:
+                    # No active code — product ended
+                    if adaptive.product_history and not adaptive.product_history[-1].get("ended_at"):
+                        adaptive.product_history[-1]["ended_at"] = datetime.now(timezone.utc).isoformat()
+                    adaptive.current_product = ""
+
             # Advance cursor only when we got results
             if next_cursor and comments_data:
                 after_cursor = next_cursor
@@ -1217,6 +1296,14 @@ async def _engage_loop(
                             ref = random.choice(candidates)
                         reference_comment = f"{ref.get('from_name', '')}: {ref.get('message', '')}"
 
+                    # Prioritize current product code at front of detected_codes
+                    prioritized_codes = list(adaptive.detected_codes)
+                    if adaptive.current_product:
+                        cp_upper = adaptive.current_product.upper()
+                        prioritized_codes = [adaptive.current_product] + [
+                            c for c in prioritized_codes if c.upper() != cp_upper
+                        ]
+
                     content = await ai_service.generate_comment(
                         role=role,
                         recent_comments=recent_comments,
@@ -1225,7 +1312,7 @@ async def _engage_loop(
                     ai_instructions=config["ai_instructions"],
                     reference_comment=reference_comment,
                     posted_history=posted_history,
-                    detected_codes=adaptive.detected_codes,
+                    detected_codes=prioritized_codes,
                     quantity_variation=adaptive.quantity_variation,
                     languages=config.get("languages", ""),
                     ai_context_count=config.get("ai_context_count", 15),
@@ -1441,6 +1528,8 @@ async def _engage_loop(
                             "active_accounts": len(account_pool),
                             "consecutive_errors": consecutive_errors,
                             "host_comments": getattr(adaptive, 'host_comments', []),
+                            "current_product": adaptive.current_product,
+                            "product_history": adaptive.product_history[-10:],
                         }
                     s.active_accounts = len(account_pool)
                     await db.commit()

@@ -4824,12 +4824,46 @@ export default function FBActionBotPage() {
                       <div className="text-xs text-white/30">Consec. Errors</div>
                     </div>
                   </div>
+                  {/* Current Product */}
+                  {liveEngageSession.live_metrics.current_product && (
+                    <div className="mt-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                        <span className="text-xs text-white/40">Current Product:</span>
+                        <span className="text-sm font-bold text-emerald-300">{liveEngageSession.live_metrics.current_product}</span>
+                        <span className="text-[10px] text-white/20">— place_order uses this code</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Product History */}
+                  {(liveEngageSession.live_metrics.product_history || []).length > 0 && (
+                    <div className="mt-2">
+                      <div className="text-xs text-white/30 mb-1">Product Timeline:</div>
+                      <div className="flex flex-wrap gap-1">
+                        {(liveEngageSession.live_metrics.product_history || []).map((p: any, i: number) => (
+                          <span key={i} className={`px-2 py-0.5 rounded text-xs ${
+                            !p.ended_at ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" :
+                            "bg-white/5 text-white/30"
+                          }`}>
+                            {p.code} {!p.ended_at ? "(now)" : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Detected Codes */}
                   {(liveEngageSession.live_metrics.detected_codes || []).length > 0 && (
-                    <div className="mt-3">
-                      <div className="text-xs text-white/30 mb-1">Detected Codes:</div>
+                    <div className="mt-2">
+                      <div className="text-xs text-white/30 mb-1">All Detected Codes:</div>
                       <div className="flex flex-wrap gap-1">
                         {liveEngageSession.live_metrics.detected_codes.map((code: string, i: number) => (
-                          <span key={i} className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-xs text-amber-300">{code}</span>
+                          <span key={i} className={`px-2 py-0.5 rounded text-xs ${
+                            code === liveEngageSession.live_metrics.current_product
+                              ? "bg-emerald-500/20 border border-emerald-500/30 text-emerald-300"
+                              : "bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                          }`}>{code}</span>
                         ))}
                       </div>
                     </div>
