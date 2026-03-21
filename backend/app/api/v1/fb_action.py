@@ -2683,11 +2683,21 @@ async def live_engage_parse_accounts_csv(
 def _detect_languages_from_comments(comments: list[str]) -> dict[str, int]:
     stats = {"chinese": 0, "english": 0}
     chinese_re = re.compile(r'[\u4e00-\u9fff]')
+    # Skip pure numbers, codes, and very short non-text messages
+    non_text_re = re.compile(r'^[\s\d+＋.,!?@#$%^&*()_\-=\[\]{}|\\/:;<>~`]+$')
     for msg in comments:
-        if chinese_re.search(msg):
+        stripped = msg.strip()
+        if not stripped or len(stripped) < 2:
+            continue
+        # Skip pure numbers/codes/symbols — they're not text
+        if non_text_re.match(stripped):
+            continue
+        if chinese_re.search(stripped):
             stats["chinese"] += 1
-        else:
+        elif re.search(r'[a-zA-Z]{2,}', stripped):
+            # Must have at least 2 consecutive letters to count as English
             stats["english"] += 1
+        # else: skip (single letter + numbers like "L6", "+1 nak" etc.)
     return {k: v for k, v in stats.items() if v > 0}
 
 
