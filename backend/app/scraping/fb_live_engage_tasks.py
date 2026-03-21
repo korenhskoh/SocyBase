@@ -467,6 +467,23 @@ async def _monitor_loop(
     total_skipped = len(seen_comment_ids)
     logger.info(f"[LiveEngage] Monitor: skipped {total_skipped} old comments ({skip_pages} pages), at live edge now")
 
+    # Update monitored count so UI shows the skipped comments
+    try:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(FBLiveEngageSession).where(FBLiveEngageSession.id == uuid.UUID(session_id))
+            )
+            s = result.scalar_one()
+            s.comments_monitored = total_skipped
+            await db.commit()
+    except Exception:
+        pass
+
+    # If we have context from old comments, signal engage loop once
+    # so it can start generating even before new comments arrive
+    if recent_comments:
+        new_comments_event.set()
+
     while not stop_event.is_set():
         try:
             # Check session status periodically (~30s)
