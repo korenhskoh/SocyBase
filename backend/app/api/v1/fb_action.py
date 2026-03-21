@@ -2852,14 +2852,9 @@ async def live_engage_smart_setup(
 {page_sum or "N/A"}
 
 === HOST/LIVESTREAMER COMMENTS ({len(host_messages)} messages) ===
-{host_sample or "No host comments detected"}
+{host_sample or "No host comments detected — use viewer comments to infer products"}
 
-These are comments from the livestream HOST. They contain:
-- Product codes and names (e.g. "B1号", "款号520")
-- Prices (e.g. "特价388元", "only RM99")
-- Order instructions (e.g. "要的扣1", "comment +1 to order")
-- Product descriptions
-Use this info for business_context and product_codes detection.
+{f"The host comments above MAY contain product codes, prices, and ordering instructions. Use them to enrich business_context and detect product codes. However, host comments vary — some hosts post detailed product info, others barely comment. Do NOT assume all info is in host comments — also analyze viewer comments for clues about products and codes." if host_messages else "No host detected. Analyze viewer comments to understand what products are being sold."}
 
 === COMMENTS ({len(all_comments)} total, {len(unique)} unique) ===
 {comments_sample or "N/A"}

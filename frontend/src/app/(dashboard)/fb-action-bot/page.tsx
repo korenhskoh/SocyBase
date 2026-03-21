@@ -3781,9 +3781,49 @@ export default function FBActionBotPage() {
                       {leImportLoading ? "Loading..." : "Import from Scrape Job"}
                     </button>
                     {leTrainingComments && (
-                      <span className="text-xs text-white/30">
-                        {leTrainingComments.split("\n").filter((l: string) => l.trim()).length} lines loaded
-                      </span>
+                      <>
+                        <span className="text-white/15">|</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const lines = leTrainingComments.split("\n").map((l: string) => l.trim()).filter(Boolean);
+                            // Deduplicate: exact match + fuzzy similarity
+                            const unique: string[] = [];
+                            const seen = new Set<string>();
+                            for (const line of lines) {
+                              const key = line.toLowerCase().replace(/\s+/g, " ");
+                              // Skip exact duplicates
+                              if (seen.has(key)) continue;
+                              // Skip very similar (same first 10 chars + same length ±3)
+                              let tooSimilar = false;
+                              for (const u of unique) {
+                                const uKey = u.toLowerCase().replace(/\s+/g, " ");
+                                if (key.length > 5 && uKey.length > 5 &&
+                                    key.substring(0, 10) === uKey.substring(0, 10) &&
+                                    Math.abs(key.length - uKey.length) <= 3) {
+                                  tooSimilar = true;
+                                  break;
+                                }
+                              }
+                              if (!tooSimilar) {
+                                unique.push(line);
+                                seen.add(key);
+                              }
+                            }
+                            // Remove very short lines (≤2 chars) and pure numbers
+                            const cleaned = unique.filter(l => l.length > 2 && !/^\d+$/.test(l.trim()));
+                            const removed = lines.length - cleaned.length;
+                            setLeTrainingComments(cleaned.join("\n"));
+                            showToast("success", `Optimized: ${removed} duplicates/noise removed, ${cleaned.length} unique lines kept`);
+                          }}
+                          className="text-xs text-emerald-400/80 cursor-pointer hover:text-emerald-300"
+                        >
+                          Optimize
+                        </button>
+                        <span className="text-xs text-white/30">
+                          {leTrainingComments.split("\n").filter((l: string) => l.trim()).length} lines loaded
+                        </span>
+                      </>
                     )}
                   </div>
                   {leImportJobs.length > 0 && (
