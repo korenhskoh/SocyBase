@@ -2382,7 +2382,7 @@ class LiveEngageStartRequest(BaseModel):
     auto_order_trending_threshold: int = Field(default=3, ge=2, le=20)  # mentions in 60s to trigger
     auto_order_trending_cooldown: int = Field(default=60, ge=10, le=600)  # seconds between auto-orders
     blacklist_words: str | None = None  # comma-separated words to avoid
-    stream_end_threshold: int = Field(default=10, ge=0, le=50)  # 0 = disabled
+    stream_end_threshold: int = Field(default=0, ge=0, le=50)  # 0 = disabled
     scheduled_at: str | None = None  # ISO datetime for scheduled start
 
 

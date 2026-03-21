@@ -168,11 +168,12 @@ async def _execute_engagement(session_id: str):
                 "languages": session.languages or "",
                 "comment_without_new": bool(session.comment_without_new),
                 "comment_without_new_max": session.comment_without_new_max or 3,
-                "auto_order_trending": bool(getattr(session, "auto_order_trending", False)),
-                "auto_order_trending_threshold": getattr(session, "auto_order_trending_threshold", None) or 3,
-                "auto_order_trending_cooldown": getattr(session, "auto_order_trending_cooldown", None) or 60,
+                "auto_order_trending": bool(session.auto_order_trending),
+                "auto_order_trending_threshold": session.auto_order_trending_threshold or 3,
+                "auto_order_trending_cooldown": session.auto_order_trending_cooldown or 60,
                 "blacklist_words": session.blacklist_words or "",
-                "stream_end_threshold": session.stream_end_threshold if session.stream_end_threshold is not None else 10,
+                "stream_end_threshold": session.stream_end_threshold if session.stream_end_threshold is not None else 0,
+                "title": session.title or "",
             }
 
         # ── Load accounts ─────────────────────────────────────
