@@ -3478,6 +3478,7 @@ export default function FBActionBotPage() {
                         const cfg = smartSetupResult.config;
                         if (!cfg) return;
                         if (smartSetupResult.post_id) { setLePostId(smartSetupResult.post_id); if (smartSetupUrl.includes("facebook.com")) setLePostUrl(smartSetupUrl); }
+                        if (smartSetupResult.page_owner_id) setLePageOwnerId(smartSetupResult.page_owner_id);
                         if (cfg.suggested_title) setLeTitle(cfg.suggested_title);
                         if (cfg.business_context) setLeContext(cfg.business_context);
                         if (cfg.ai_instructions) setLeInstructions(cfg.ai_instructions);

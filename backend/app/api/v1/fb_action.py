@@ -2762,6 +2762,8 @@ async def live_engage_smart_setup(
 
     # ── Stage 2: Scrape comments ──
     all_comments: list[str] = []
+    commenter_counts: dict[str, int] = {}  # from_id → count (to detect host)
+    detected_host_id = ""
     post_id = None
     url_to_scrape = req.video_url or req.page_url
     if url_to_scrape:
@@ -2790,14 +2792,26 @@ async def live_engage_smart_setup(
                                 cdata = co
                     for c in cdata:
                         msg = c.get("message", "").strip()
+                        from_data = c.get("from", {})
+                        from_id = from_data.get("id", "")
                         if msg:
                             all_comments.append(msg)
+                            if from_id:
+                                commenter_counts[from_id] = commenter_counts.get(from_id, 0) + 1
                     if not ncursor or not cdata:
                         break
                     cursor = ncursor
                 except Exception as exc:
                     logger.warning(f"[SmartSetup] Comment fetch failed: {exc}")
                     break
+
+            # Detect host: most frequent commenter (hosts comment a LOT in their own stream)
+            if commenter_counts:
+                top_commenter = max(commenter_counts, key=commenter_counts.get)
+                top_count = commenter_counts[top_commenter]
+                # Host typically has 10%+ of all comments
+                if top_count >= max(5, len(all_comments) * 0.08):
+                    detected_host_id = top_commenter
 
     if not page_info and not all_comments:
         raise HTTPException(status_code=400, detail="Could not fetch data. Check URLs are valid and public.")
@@ -2881,6 +2895,7 @@ Rules: role_distribution sums to 100. If heavy ordering→place_order 50-60%. tr
             "avg_comment_length": avg_len,
         },
         "post_id": post_id,
+        "page_owner_id": detected_host_id,
     }
     # Clean up HTTP client
     try:
