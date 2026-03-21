@@ -2365,6 +2365,7 @@ class LiveEngageStartRequest(BaseModel):
     ai_instructions: str = ""
     page_owner_id: str | None = None
     scrape_interval_seconds: int = Field(default=8, ge=3, le=30)
+    context_window: int = Field(default=50, ge=10, le=200)
     product_codes: str | None = None  # comma-separated seed codes e.g. "m763, E769"
     code_pattern: str | None = None  # custom regex for product code detection
     quantity_variation: bool = True  # add +N quantity to order comments
@@ -2523,6 +2524,7 @@ async def live_engage_start(
         ai_instructions=req.ai_instructions,
         page_owner_id=req.page_owner_id,
         scrape_interval_seconds=req.scrape_interval_seconds,
+        context_window=req.context_window,
         product_codes=req.product_codes,
         code_pattern=req.code_pattern,
         quantity_variation=req.quantity_variation,

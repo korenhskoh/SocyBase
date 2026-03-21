@@ -274,6 +274,7 @@ export default function FBActionBotPage() {
   const [leTrainingComments, setLeTrainingComments] = useState("");
   const [leInstructions, setLeInstructions] = useState("");
   const [leScrapeInterval, setLeScrapeInterval] = useState(8);
+  const [leContextWindow, setLeContextWindow] = useState(50);
   const [lePageOwnerId, setLePageOwnerId] = useState("");
   const [leProductCodes, setLeProductCodes] = useState("");
   const [leCodePattern, setLeCodePattern] = useState("");
@@ -4019,6 +4020,16 @@ export default function FBActionBotPage() {
                   <p className="text-xs text-white/30 mt-1">How often to fetch new livestream comments</p>
                 </div>
 
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Context Window: {leContextWindow} comments</label>
+                  <input
+                    type="range" min={10} max={200} step={10} value={leContextWindow}
+                    className="w-full accent-amber-400"
+                    onChange={(e) => setLeContextWindow(parseInt(e.target.value))}
+                  />
+                  <p className="text-xs text-white/30 mt-1">How many recent comments to keep as AI context (higher = more context but slower)</p>
+                </div>
+
                 {/* Comment without new */}
                 <div className="space-y-2">
                   <div className="flex items-center gap-3">
@@ -4159,6 +4170,7 @@ export default function FBActionBotPage() {
                           quantity_variation: leQuantityVariation,
                           aggressive_level: leAggressiveLevel,
                           scrape_interval_seconds: leScrapeInterval,
+                      context_window: leContextWindow,
                           min_delay_seconds: leMinDelay,
                           max_delay_seconds: leMaxDelay,
                           max_duration_minutes: leMaxDuration,
@@ -4297,6 +4309,7 @@ export default function FBActionBotPage() {
                       ai_instructions: leInstructions || undefined,
                       languages: leLanguages.length > 0 ? leLanguages : undefined,
                       scrape_interval_seconds: leScrapeInterval,
+                      context_window: leContextWindow,
                       product_codes: leProductCodes.trim() || undefined,
                       code_pattern: leCodePattern.trim() || undefined,
                       quantity_variation: leQuantityVariation,

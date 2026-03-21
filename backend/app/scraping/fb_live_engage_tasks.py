@@ -150,6 +150,7 @@ async def _execute_engagement(session_id: str):
                 "training_comments": session.training_comments,
                 "ai_instructions": session.ai_instructions or "",
                 "scrape_interval": session.scrape_interval_seconds or 8,
+                "context_window": session.context_window or 50,
                 "min_delay": session.min_delay_seconds or 15,
                 "max_delay": session.max_delay_seconds or 60,
                 "max_duration_minutes": session.max_duration_minutes or 180,
@@ -458,9 +459,11 @@ async def _monitor_loop(
             logger.warning(f"[LiveEngage] Monitor: skip-to-edge failed: {exc}")
             break
 
-    # Trim to last 15 comments as initial context for AI
-    if len(recent_comments) > 15:
-        recent_comments[:] = recent_comments[-15:]
+    # Trim to context_window size as initial context for AI
+    ctx_window = config.get("context_window", 50)
+    initial_ctx = min(15, ctx_window)  # start with fewer, rolling window fills up
+    if len(recent_comments) > initial_ctx:
+        recent_comments[:] = recent_comments[-initial_ctx:]
 
     total_skipped = len(seen_comment_ids)
     logger.info(f"[LiveEngage] Monitor: skipped {total_skipped} old comments ({skip_pages} pages), at live edge now")
@@ -628,9 +631,10 @@ async def _monitor_loop(
             if next_cursor and comments_data:
                 after_cursor = next_cursor
 
-            # Trim to last 50
-            if len(recent_comments) > 50:
-                recent_comments[:] = recent_comments[-50:]
+            # Trim to context window
+            ctx_win = config.get("context_window", 50)
+            if len(recent_comments) > ctx_win:
+                recent_comments[:] = recent_comments[-ctx_win:]
 
             # Signal engage loop that new viewer comments arrived
             if new_count > 0:
