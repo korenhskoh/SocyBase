@@ -552,9 +552,19 @@ async def _monitor_loop(
                 from_data = c.get("from", {})
                 from_id = from_data.get("id", "")
 
-                # Skip page owner (livestream host) comments
+                # Track page owner (livestream host) comments separately
                 if page_owner_id and from_id == page_owner_id:
                     seen_comment_ids.add(cid)
+                    # Store host messages for live_metrics display
+                    if not hasattr(adaptive, 'host_comments'):
+                        adaptive.host_comments = []
+                    adaptive.host_comments.append({
+                        "message": message.strip(),
+                        "time": c.get("created_time", ""),
+                    })
+                    # Keep only last 10 host comments
+                    if len(adaptive.host_comments) > 10:
+                        adaptive.host_comments = adaptive.host_comments[-10:]
                     continue
 
                 # Skip our own comments (normalize for Facebook text changes)
@@ -848,11 +858,8 @@ async def _engage_loop(
                             account_idx += 1
 
                             qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
-                            roll = random.random()
-                            if roll < 0.4:
-                                burst_content = f"{t_code}+{qty}"
-                            elif roll < 0.65:
-                                burst_content = f"{t_code} +{qty}"
+                            if adaptive.quantity_variation:
+                                burst_content = f"{t_code}+{qty}" if random.random() < 0.5 else f"{t_code} +{qty}"
                             else:
                                 burst_content = t_code
 
@@ -1166,11 +1173,9 @@ async def _engage_loop(
                 # If trending code triggered place_order, generate directly
                 if trending_code and role == "place_order":
                     qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
-                    roll = random.random()
-                    if adaptive.quantity_variation and roll < 0.4:
-                        content = f"{trending_code}+{qty}"
-                    elif adaptive.quantity_variation and roll < 0.65:
-                        content = f"{trending_code} +{qty}"
+                    if adaptive.quantity_variation:
+                        # Always add +N when variation is ON
+                        content = f"{trending_code}+{qty}" if random.random() < 0.5 else f"{trending_code} +{qty}"
                     else:
                         content = trending_code
                     reference_comment = f"Auto-order trending: {trending_code}"
@@ -1416,6 +1421,7 @@ async def _engage_loop(
                             "detected_codes": adaptive.detected_codes[:20],
                             "active_accounts": len(account_pool),
                             "consecutive_errors": consecutive_errors,
+                            "host_comments": getattr(adaptive, 'host_comments', []),
                         }
                     s.active_accounts = len(account_pool)
                     await db.commit()

@@ -231,25 +231,44 @@ class AILiveEngageService:
             available = [c for c in unique_codes if c.lower() not in recent_posted]
             code = random.choice(available) if available else random.choice(unique_codes)
 
-            # Generate variation — weighted to match common livestream patterns
-            roll = random.random()
-            if quantity_variation and roll < 0.35:
+            if quantity_variation:
+                # Quantity variation ON → always add +N to code
                 qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
-                return f"{code} +{qty}"
-            elif roll < 0.50:
-                # Language-aware order phrases
-                phrase_map = {
-                    "english": ["want", "order", "+1", "pm"],
-                    "chinese": ["要", "买", "下单", "拿"],
-                }
-                phrases = []
-                if languages:
-                    for lang in [l.strip().lower() for l in languages.split(",") if l.strip()]:
-                        phrases.extend(phrase_map.get(lang, []))
-                if not phrases:
-                    phrases = ["want", "要", "+1", "order", "买"]
-                return f"{code} {random.choice(phrases)}"
-            return code
+                roll = random.random()
+                if roll < 0.5:
+                    return f"{code}+{qty}"      # B1+1
+                elif roll < 0.8:
+                    return f"{code} +{qty}"     # B1 +1
+                else:
+                    # Occasionally add order phrase too
+                    phrase_map = {
+                        "english": ["want", "order"],
+                        "chinese": ["要", "买"],
+                    }
+                    phrases = []
+                    if languages:
+                        for lang in [l.strip().lower() for l in languages.split(",") if l.strip()]:
+                            phrases.extend(phrase_map.get(lang, []))
+                    if not phrases:
+                        phrases = ["要", "want"]
+                    return f"{code}+{qty} {random.choice(phrases)}"  # B1+1 要
+            else:
+                # Quantity variation OFF → just code, maybe with phrase
+                roll = random.random()
+                if roll < 0.6:
+                    return code                 # B1
+                else:
+                    phrase_map = {
+                        "english": ["want", "order", "pm"],
+                        "chinese": ["要", "买", "下单"],
+                    }
+                    phrases = []
+                    if languages:
+                        for lang in [l.strip().lower() for l in languages.split(",") if l.strip()]:
+                            phrases.extend(phrase_map.get(lang, []))
+                    if not phrases:
+                        phrases = ["要", "want"]
+                    return f"{code} {random.choice(phrases)}"  # B1 要
 
         # ── Priority 3: Short order-like patterns from live chat ──
         order_signals = {
