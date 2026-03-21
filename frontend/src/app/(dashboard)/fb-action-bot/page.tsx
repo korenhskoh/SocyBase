@@ -3479,12 +3479,12 @@ export default function FBActionBotPage() {
                         if (cfg.suggested_title) setLeTitle(cfg.suggested_title);
                         if (cfg.business_context) setLeContext(cfg.business_context);
                         if (cfg.ai_instructions) setLeInstructions(cfg.ai_instructions);
-                        if (cfg.training_comments) setLeTrainingComments(cfg.training_comments);
-                        if (cfg.product_codes) setLeProductCodes(cfg.product_codes);
+                        if (cfg.training_comments) setLeTrainingComments(Array.isArray(cfg.training_comments) ? cfg.training_comments.join("\n") : cfg.training_comments);
+                        if (cfg.product_codes) setLeProductCodes(Array.isArray(cfg.product_codes) ? cfg.product_codes.join(", ") : cfg.product_codes);
                         if (cfg.code_pattern) setLeCodePattern(cfg.code_pattern);
                         if (cfg.role_distribution) setLeRoles(cfg.role_distribution);
                         if (cfg.aggressive_level) setLeAggressiveLevel(cfg.aggressive_level);
-                        if (cfg.languages) setLeLanguages(cfg.languages);
+                        if (cfg.languages) setLeLanguages(Array.isArray(cfg.languages) ? cfg.languages : typeof cfg.languages === "string" ? cfg.languages.split(",").map((s: string) => s.trim()).filter(Boolean) : []);
                         if (cfg.quantity_variation !== undefined) setLeQuantityVariation(cfg.quantity_variation);
                         if (cfg.auto_order_trending !== undefined) setLeAutoOrderTrending(cfg.auto_order_trending);
                         if (cfg.auto_order_trending_threshold) setLeAutoOrderThreshold(cfg.auto_order_trending_threshold);
@@ -4203,7 +4203,7 @@ export default function FBActionBotPage() {
                             setLeTargetEnabled(p.target_comments_enabled || false);
                             setLeTargetCount(p.target_comments_count || 100);
                             setLeTargetPeriod(p.target_comments_period_minutes || 60);
-                            setLeLanguages(p.languages || []);
+                            setLeLanguages(Array.isArray(p.languages) ? p.languages : typeof p.languages === "string" ? p.languages.split(",").map((s: string) => s.trim()).filter(Boolean) : []);
                             setLeCommentWithoutNew(p.comment_without_new || false);
                             setLeCommentWithoutNewMax(p.comment_without_new_max || 3);
                             setLeBlacklistWords(p.blacklist_words || "");
