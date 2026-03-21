@@ -3762,7 +3762,8 @@ export default function FBActionBotPage() {
                         setLeImportLoading(true);
                         try {
                           const res = await jobsApi.list({ page: 1, page_size: 50, status: "completed" });
-                          setLeImportJobs(res.data.items || []);
+                          const jobs = Array.isArray(res.data) ? res.data : (res.data.items || res.data.jobs || []);
+                          setLeImportJobs(jobs);
                         } catch { showToast("error", "Failed to load jobs"); }
                         setLeImportLoading(false);
                       }}
