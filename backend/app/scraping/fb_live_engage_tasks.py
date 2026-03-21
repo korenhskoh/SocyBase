@@ -414,12 +414,13 @@ async def _monitor_loop(
     after_cursor: str | None = None
 
     # ── Skip to live edge: paginate through old comments quickly ──
-    # This avoids flooding the engage loop with hundreds of old comments
-    # when joining an active livestream. We mark them as seen and keep
-    # only the last 15 as context for AI generation.
-    logger.info(f"[LiveEngage] Monitor: skipping to live edge for post {post_id}")
+    # Max 20 pages (1000 comments) to avoid getting stuck on huge posts.
+    # After that, start polling from wherever we are — new comments will
+    # still be detected since they won't be in seen_comment_ids.
+    max_skip_pages = 20
+    logger.info(f"[LiveEngage] Monitor: skipping to live edge for post {post_id} (max {max_skip_pages} pages)")
     skip_pages = 0
-    while not stop_event.is_set():
+    while not stop_event.is_set() and skip_pages < max_skip_pages:
         try:
             resp = await client.get_post_comments(
                 post_id, limit=50, comment_filter="stream", after=after_cursor,
@@ -435,7 +436,6 @@ async def _monitor_loop(
                     elif isinstance(co, list):
                         cdata = co
 
-            # Mark all as seen, keep last 15 for context
             for c in cdata:
                 cid = c.get("id", "")
                 if cid:
@@ -459,9 +459,8 @@ async def _monitor_loop(
             logger.warning(f"[LiveEngage] Monitor: skip-to-edge failed: {exc}")
             break
 
-    # Trim to context_window size as initial context for AI
     ctx_window = config.get("context_window", 50)
-    initial_ctx = min(15, ctx_window)  # start with fewer, rolling window fills up
+    initial_ctx = min(15, ctx_window)
     if len(recent_comments) > initial_ctx:
         recent_comments[:] = recent_comments[-initial_ctx:]
 
