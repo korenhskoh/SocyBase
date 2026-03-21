@@ -4857,20 +4857,54 @@ export default function FBActionBotPage() {
                 </div>
               )}
 
-              {/* Role Stats */}
+              {/* Role Stats + Distribution Chart */}
               <div className="glass-card p-5">
                 <h3 className="text-xs font-medium text-white/40 mb-3">Role Stats</h3>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                  {Object.entries(liveEngageSession?.comments_by_role || {}).map(([role, count]) => (
-                    <div key={role} className="bg-white/5 rounded-lg p-2 text-center">
-                      <div className="text-lg font-semibold text-white">{count as number}</div>
-                      <div className="text-[10px] text-white/40 capitalize">{role.replace(/_/g, " ")}</div>
+                {(() => {
+                  const roleData = liveEngageSession?.comments_by_role || {};
+                  const totalPosted = Object.values(roleData).reduce((a: number, b: any) => a + (b as number), 0);
+                  const roleColors: Record<string, string> = {
+                    place_order: "bg-amber-500", ask_question: "bg-blue-500",
+                    repeat_question: "bg-purple-500", good_vibe: "bg-emerald-500",
+                    react_comment: "bg-cyan-500", share_experience: "bg-pink-500",
+                    auto_order: "bg-red-500", triggered: "bg-orange-500",
+                  };
+                  return Object.keys(roleData).length > 0 ? (
+                    <div className="space-y-3">
+                      {/* Number grid */}
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                        {Object.entries(roleData).map(([role, count]) => (
+                          <div key={role} className="bg-white/5 rounded-lg p-2 text-center">
+                            <div className="text-lg font-semibold text-white">{count as number}</div>
+                            <div className="text-[10px] text-white/40 capitalize">{role.replace(/_/g, " ")}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Progress bar chart */}
+                      {totalPosted > 0 && (
+                        <div className="space-y-1.5 pt-2 border-t border-white/5">
+                          {Object.entries(roleData)
+                            .sort(([,a]: any, [,b]: any) => b - a)
+                            .map(([role, count]) => {
+                              const pct = Math.round(((count as number) / totalPosted) * 100);
+                              return (
+                                <div key={role} className="flex items-center gap-2 text-xs">
+                                  <span className="w-28 text-white/40 capitalize truncate">{role.replace(/_/g, " ")}</span>
+                                  <div className="flex-1 bg-white/5 rounded-full h-3 overflow-hidden">
+                                    <div className={`h-full rounded-full ${roleColors[role] || "bg-white/30"} transition-all duration-500`}
+                                      style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <span className="w-14 text-right text-white/30">{count as number} ({pct}%)</span>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
                     </div>
-                  ))}
-                  {Object.keys(liveEngageSession?.comments_by_role || {}).length === 0 && (
-                    <p className="text-white/30 text-xs col-span-full">Waiting for first comment...</p>
-                  )}
-                </div>
+                  ) : (
+                    <p className="text-white/30 text-xs">Waiting for first comment...</p>
+                  );
+                })()}
               </div>
 
               {/* Activity Log */}

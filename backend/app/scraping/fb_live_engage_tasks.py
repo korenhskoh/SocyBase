@@ -552,41 +552,54 @@ async def _monitor_loop(
                 from_data = c.get("from", {})
                 from_id = from_data.get("id", "")
 
-                # Track page owner (livestream host) comments separately
-                if page_owner_id and from_id == page_owner_id:
+                # Track page owner (livestream host) comments — include in context
+                # but don't count as viewer comment for engage loop triggering.
+                # Host comments contain product codes, prices, and order instructions.
+                is_host = page_owner_id and from_id == page_owner_id
+                if is_host:
                     seen_comment_ids.add(cid)
-                    # Store host messages for live_metrics display
+                    # Store for live_metrics display
                     if not hasattr(adaptive, 'host_comments'):
                         adaptive.host_comments = []
                     adaptive.host_comments.append({
                         "message": message.strip(),
                         "time": c.get("created_time", ""),
                     })
-                    # Keep only last 10 host comments
                     if len(adaptive.host_comments) > 10:
                         adaptive.host_comments = adaptive.host_comments[-10:]
-                    continue
-
-                # Skip our own comments (normalize for Facebook text changes)
-                msg_normalized = message.strip().lower()
-                is_ours = any(
-                    msg_normalized == oc.strip().lower() or
-                    (len(msg_normalized) > 5 and SequenceMatcher(None, msg_normalized, oc.strip().lower()).ratio() > 0.85)
-                    for oc in our_content
-                )
-                if is_ours:
+                    # Add to recent_comments WITH host flag — AI can reference it
+                    recent_comments.append({
+                        "id": cid,
+                        "from_name": f"[HOST] {from_data.get('name', '')}",
+                        "from_id": from_id,
+                        "message": message,
+                        "created_time": c.get("created_time", ""),
+                        "is_host": True,
+                    })
+                    new_count += 1
                     seen_comment_ids.add(cid)
-                    continue
+                    # Fall through to code detection below
+                else:
+                    # Skip our own comments (normalize for Facebook text changes)
+                    msg_normalized = message.strip().lower()
+                    is_ours = any(
+                        msg_normalized == oc.strip().lower() or
+                        (len(msg_normalized) > 5 and SequenceMatcher(None, msg_normalized, oc.strip().lower()).ratio() > 0.85)
+                        for oc in our_content
+                    )
+                    if is_ours:
+                        seen_comment_ids.add(cid)
+                        continue
 
-                seen_comment_ids.add(cid)
-                recent_comments.append({
-                    "id": cid,
-                    "from_name": from_data.get("name", ""),
-                    "from_id": from_id,
-                    "message": message,
-                    "created_time": c.get("created_time", ""),
-                })
-                new_count += 1
+                    seen_comment_ids.add(cid)
+                    recent_comments.append({
+                        "id": cid,
+                        "from_name": from_data.get("name", ""),
+                        "from_id": from_id,
+                        "message": message,
+                        "created_time": c.get("created_time", ""),
+                    })
+                    new_count += 1
 
                 # ── Product code detection (3 methods) ──
                 now_ts = monotonic()
@@ -1183,8 +1196,12 @@ async def _engage_loop(
 
                 if not content:
                     if role in ("react_comment", "repeat_question") and recent_comments:
-                        # Smart reference selection based on role
-                        candidates = recent_comments[-config.get("ai_context_count", 15):]
+                        # Smart reference selection — exclude host comments for react/repeat
+                        # (bot shouldn't reply directly to host, but host context is in prompt)
+                        all_candidates = recent_comments[-config.get("ai_context_count", 15):]
+                        candidates = [c for c in all_candidates if not c.get("is_host")]
+                        if not candidates:
+                            candidates = all_candidates  # fallback if all are host
                         if role == "repeat_question":
                             # Prefer comments that look like questions (? or question words)
                             question_markers = {"?", "？", "吗", "嗎", "多少", "几", "幾", "怎么", "怎麼", "哪", "什么", "什麼", "ada", "berapa", "how", "what", "where", "when", "can"}
