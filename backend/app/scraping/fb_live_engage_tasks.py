@@ -580,7 +580,6 @@ async def _monitor_loop(
                         "is_host": True,
                     })
                     new_count += 1
-                    seen_comment_ids.add(cid)
                     # Fall through to code detection below
                 else:
                     # Skip our own comments (normalize for Facebook text changes)
@@ -981,7 +980,7 @@ async def _engage_loop(
                         config["comment_without_new"] = bool(s.comment_without_new)
                         config["comment_without_new_max"] = s.comment_without_new_max or 3
                         config["blacklist_words"] = s.blacklist_words or ""
-                        config["stream_end_threshold"] = s.stream_end_threshold if s.stream_end_threshold is not None else 10
+                        config["stream_end_threshold"] = s.stream_end_threshold if s.stream_end_threshold is not None else 0
                         config["languages"] = s.languages or ""
                         config["ai_instructions"] = s.ai_instructions or ""
                         config["auto_order_trending"] = bool(s.auto_order_trending)
