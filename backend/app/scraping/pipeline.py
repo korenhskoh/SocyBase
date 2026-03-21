@@ -888,10 +888,12 @@ async def _execute_pipeline(job_id: str, celery_task):
                 logger.info(f"[Job {job_id}] Stage 3: Deduplicating user IDs")
                 await _append_log(db, job, "info", "deduplicate", "Deduplicating user IDs")
                 unique_users = {}
+                user_comments = {}  # uid → first comment message
                 for c in all_comments:
                     uid = c["user_id"]
                     if uid and uid not in unique_users:
                         unique_users[uid] = c["user_name"]
+                        user_comments[uid] = c.get("message", "")
 
                 # Cross-job deduplication: skip users already scraped for this post
                 # Check system-level feature flag first
@@ -1015,6 +1017,7 @@ async def _execute_pipeline(job_id: str, celery_task):
                         tenant_id=job.tenant_id,
                         platform_user_id=uid,
                         name=uname,
+                        comment_message=user_comments.get(uid, ""),
                         scrape_status="pending",
                     )
                     db.add(profile)

@@ -110,6 +110,7 @@ class ScrapedProfile(Base):
     about: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(String(100))
     picture_url: Mapped[str | None] = mapped_column(Text)
+    comment_message: Mapped[str | None] = mapped_column(Text)  # Original comment text from the post
 
     scrape_status: Mapped[str] = mapped_column(String(20), default="pending")
     error_message: Mapped[str | None] = mapped_column(Text)
