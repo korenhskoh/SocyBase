@@ -448,13 +448,16 @@ async def _monitor_loop(
                     seen_comment_ids.add(cid)
                 msg = c.get("message", "").strip()
                 from_data = c.get("from", {})
+                from_id = from_data.get("id", "")
+                is_host_comment = page_owner_id and from_id == page_owner_id
                 if msg and cid:
                     recent_comments.append({
                         "id": cid,
-                        "from_name": from_data.get("name", ""),
-                        "from_id": from_data.get("id", ""),
+                        "from_name": f"[HOST] {from_data.get('name', '')}" if is_host_comment else from_data.get("name", ""),
+                        "from_id": from_id,
                         "message": msg,
                         "created_time": c.get("created_time", ""),
+                        "is_host": is_host_comment,
                     })
 
             skip_pages += 1

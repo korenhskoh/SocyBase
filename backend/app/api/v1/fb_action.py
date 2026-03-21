@@ -2882,6 +2882,11 @@ Rules: role_distribution sums to 100. If heavy ordering→place_order 50-60%. tr
         },
         "post_id": post_id,
     }
+    # Clean up HTTP client
+    try:
+        await client.close()
+    except Exception:
+        pass
 
 
 @router.get("/live-engage/recent-accounts")
@@ -3485,6 +3490,8 @@ async def live_engage_update_settings(
         "min_delay_seconds": int,
         "max_delay_seconds": int,
         "scrape_interval_seconds": int,
+        "context_window": int,
+        "ai_context_count": int,
         "target_comments_enabled": bool,
         "target_comments_count": int,
         "target_comments_period_minutes": int,
@@ -3495,6 +3502,11 @@ async def live_engage_update_settings(
         "quantity_variation": bool,
         "languages": str,
         "ai_instructions": str,
+        "product_codes": str,
+        "code_pattern": str,
+        "auto_order_trending": bool,
+        "auto_order_trending_threshold": int,
+        "auto_order_trending_cooldown": int,
     }
 
     updated = {}
