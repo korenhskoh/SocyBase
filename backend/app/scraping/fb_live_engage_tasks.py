@@ -408,11 +408,62 @@ async def _monitor_loop(
 
     post_id = config["post_id"]
     page_owner_id = config.get("page_owner_id", "")
-    # NOTE: stream_end_threshold is read from config dict each iteration
-    # so config reload from engage loop takes effect immediately
     consecutive_empty_polls = 0
     iteration = 0
     after_cursor: str | None = None
+
+    # ── Skip to live edge: paginate through old comments quickly ──
+    # This avoids flooding the engage loop with hundreds of old comments
+    # when joining an active livestream. We mark them as seen and keep
+    # only the last 15 as context for AI generation.
+    logger.info(f"[LiveEngage] Monitor: skipping to live edge for post {post_id}")
+    skip_pages = 0
+    while not stop_event.is_set():
+        try:
+            resp = await client.get_post_comments(
+                post_id, limit=50, comment_filter="stream", after=after_cursor,
+            )
+            cdata, ncursor = [], None
+            if isinstance(resp, dict):
+                d = resp.get("data", resp)
+                if isinstance(d, dict):
+                    co = d.get("comments", d)
+                    if isinstance(co, dict):
+                        cdata = co.get("data", [])
+                        ncursor = co.get("paging", {}).get("cursors", {}).get("after")
+                    elif isinstance(co, list):
+                        cdata = co
+
+            # Mark all as seen, keep last 15 for context
+            for c in cdata:
+                cid = c.get("id", "")
+                if cid:
+                    seen_comment_ids.add(cid)
+                msg = c.get("message", "").strip()
+                from_data = c.get("from", {})
+                if msg and cid:
+                    recent_comments.append({
+                        "id": cid,
+                        "from_name": from_data.get("name", ""),
+                        "from_id": from_data.get("id", ""),
+                        "message": msg,
+                        "created_time": c.get("created_time", ""),
+                    })
+
+            skip_pages += 1
+            if not ncursor or not cdata:
+                break
+            after_cursor = ncursor
+        except Exception as exc:
+            logger.warning(f"[LiveEngage] Monitor: skip-to-edge failed: {exc}")
+            break
+
+    # Trim to last 15 comments as initial context for AI
+    if len(recent_comments) > 15:
+        recent_comments[:] = recent_comments[-15:]
+
+    total_skipped = len(seen_comment_ids)
+    logger.info(f"[LiveEngage] Monitor: skipped {total_skipped} old comments ({skip_pages} pages), at live edge now")
 
     while not stop_event.is_set():
         try:
