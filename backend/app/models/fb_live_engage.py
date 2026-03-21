@@ -162,6 +162,7 @@ class FBLiveEngagePreset(Base):
     quantity_variation: Mapped[bool] = mapped_column(Boolean, default=True)
     aggressive_level: Mapped[str] = mapped_column(String(10), default="medium")
     scrape_interval_seconds: Mapped[int] = mapped_column(Integer, default=8)
+    context_window: Mapped[int] = mapped_column(Integer, default=50)
     min_delay_seconds: Mapped[int] = mapped_column(Integer, default=15)
     max_delay_seconds: Mapped[int] = mapped_column(Integer, default=60)
     max_duration_minutes: Mapped[int] = mapped_column(Integer, default=180)

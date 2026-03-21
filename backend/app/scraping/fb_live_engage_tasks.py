@@ -937,6 +937,7 @@ async def _engage_loop(
                         config["min_delay"] = s.min_delay_seconds or config["min_delay"]
                         config["max_delay"] = s.max_delay_seconds or config["max_delay"]
                         config["scrape_interval"] = s.scrape_interval_seconds or config["scrape_interval"]
+                        config["context_window"] = s.context_window or 50
                         config["target_comments_enabled"] = bool(s.target_comments_enabled)
                         config["target_comments_count"] = s.target_comments_count or config.get("target_comments_count", 0)
                         config["target_comments_period_minutes"] = s.target_comments_period_minutes or config.get("target_comments_period_minutes", 60)

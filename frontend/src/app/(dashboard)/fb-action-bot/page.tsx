@@ -4209,6 +4209,7 @@ export default function FBActionBotPage() {
                             setLeQuantityVariation(p.quantity_variation ?? true);
                             setLeAggressiveLevel(p.aggressive_level || "medium");
                             setLeScrapeInterval(p.scrape_interval_seconds || 8);
+                            setLeContextWindow(p.context_window || 50);
                             setLeMinDelay(p.min_delay_seconds || 15);
                             setLeMaxDelay(p.max_delay_seconds || 60);
                             setLeMaxDuration(p.max_duration_minutes || 180);
