@@ -3483,7 +3483,12 @@ export default function FBActionBotPage() {
                         if (cfg.ai_instructions) setLeInstructions(cfg.ai_instructions);
                         if (cfg.training_comments) setLeTrainingComments(Array.isArray(cfg.training_comments) ? cfg.training_comments.join("\n") : cfg.training_comments);
                         if (cfg.product_codes) setLeProductCodes(Array.isArray(cfg.product_codes) ? cfg.product_codes.join(", ") : cfg.product_codes);
-                        if (cfg.code_pattern) setLeCodePattern(cfg.code_pattern);
+                        if (cfg.code_pattern) {
+                          // Normalize GPT variations to valid presets
+                          const normalized = cfg.code_pattern.toLowerCase().trim();
+                          const presetMap: Record<string, string> = { "numeric": "numbers", "number": "numbers", "alphanumeric": "any_alphanumeric", "letter_number": "letters_numbers", "letter+number": "letters_numbers" };
+                          setLeCodePattern(presetMap[normalized] || cfg.code_pattern);
+                        }
                         if (cfg.role_distribution) setLeRoles(cfg.role_distribution);
                         if (cfg.aggressive_level) setLeAggressiveLevel(cfg.aggressive_level);
                         if (cfg.languages) setLeLanguages(Array.isArray(cfg.languages) ? cfg.languages : typeof cfg.languages === "string" ? cfg.languages.split(",").map((s: string) => s.trim()).filter(Boolean) : []);
