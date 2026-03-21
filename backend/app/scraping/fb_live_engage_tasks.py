@@ -315,10 +315,15 @@ async def _execute_engagement(session_id: str):
         if custom_pattern and custom_pattern.strip().lower() not in CODE_FORMAT_PATTERNS:
             if not bool(re.search(r'[\\()\[\]{}|^$*+?.!]', custom_pattern)):
                 all_seed_codes.extend(c.strip() for c in custom_pattern.split(",") if c.strip())
+        # Strip +N quantity suffixes from codes (B1+1 → B1, 520+2 → 520)
+        cleaned_codes: list[str] = []
+        for c in all_seed_codes:
+            core = re.sub(r'\s*[+＋]\s*\d{1,3}$', '', c).strip()
+            cleaned_codes.append(core if core else c)
         # Deduplicate
         seen_codes: set[str] = set()
         unique_codes: list[str] = []
-        for c in all_seed_codes:
+        for c in cleaned_codes:
             if c.upper() not in seen_codes:
                 seen_codes.add(c.upper())
                 unique_codes.append(c)
@@ -845,9 +850,9 @@ async def _engage_loop(
                             qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
                             roll = random.random()
                             if roll < 0.4:
+                                burst_content = f"{t_code}+{qty}"
+                            elif roll < 0.65:
                                 burst_content = f"{t_code} +{qty}"
-                            elif roll < 0.6:
-                                burst_content = f"+1 {t_code}"
                             else:
                                 burst_content = t_code
 
@@ -1163,9 +1168,9 @@ async def _engage_loop(
                     qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
                     roll = random.random()
                     if adaptive.quantity_variation and roll < 0.4:
+                        content = f"{trending_code}+{qty}"
+                    elif adaptive.quantity_variation and roll < 0.65:
                         content = f"{trending_code} +{qty}"
-                    elif roll < 0.6:
-                        content = f"+1 {trending_code}"
                     else:
                         content = trending_code
                     reference_comment = f"Auto-order trending: {trending_code}"
