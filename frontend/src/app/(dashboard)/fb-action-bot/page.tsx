@@ -3814,7 +3814,7 @@ export default function FBActionBotPage() {
                   <textarea
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/20"
                     rows={2}
-                    placeholder="Use Malay language, be excited about products, mention free shipping..."
+                    placeholder="Use Chinese language, keep comments short, reference product codes..."
                     value={leInstructions}
                     onChange={(e) => setLeInstructions(e.target.value)}
                   />
@@ -3824,7 +3824,6 @@ export default function FBActionBotPage() {
                   <div className="flex gap-3">
                     {[
                       { key: "chinese", label: "Chinese" },
-                      { key: "malay", label: "Malay" },
                       { key: "english", label: "English" },
                     ].map(({ key, label }) => (
                       <label key={key} className="flex items-center gap-2 cursor-pointer">

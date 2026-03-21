@@ -32,10 +32,9 @@ ORDER_PATTERNS_BY_LANG = {
         "有货吗", "还有吗", "要这个", "pm",
     ],
 }
-# Combined fallback (all languages)
+# Combined fallback (English + Chinese, default)
 ORDER_PATTERNS = (
-    ORDER_PATTERNS_BY_LANG["malay"]
-    + ORDER_PATTERNS_BY_LANG["english"]
+    ORDER_PATTERNS_BY_LANG["english"]
     + ORDER_PATTERNS_BY_LANG["chinese"]
 )
 
@@ -239,7 +238,6 @@ class AILiveEngageService:
             elif roll < 0.50:
                 # Language-aware order phrases
                 phrase_map = {
-                    "malay": ["nak", "beli", "order", "pm"],
                     "english": ["want", "order", "+1", "pm"],
                     "chinese": ["要", "买", "下单", "拿"],
                 }
@@ -248,7 +246,7 @@ class AILiveEngageService:
                     for lang in [l.strip().lower() for l in languages.split(",") if l.strip()]:
                         phrases.extend(phrase_map.get(lang, []))
                 if not phrases:
-                    phrases = ["nak", "要", "+1", "order", "买"]
+                    phrases = ["want", "要", "+1", "order", "买"]
                 return f"{code} {random.choice(phrases)}"
             return code
 
@@ -402,15 +400,12 @@ class AILiveEngageService:
                     f"you MUST respond in {lang_str} ONLY. This is non-negotiable.\n\n"
                 )
         elif recent_comments:
-            # Auto-detect dominant language from recent comments
+            # Auto-detect dominant language from recent comments (default: English)
             all_msgs = " ".join(c.get("message", "") for c in recent_comments[-10:])
             has_chinese = bool(re.search(r'[\u4e00-\u9fff]', all_msgs))
-            has_malay = bool(re.search(r'\b(nak|beli|berapa|cantik|ada|tak|saya|awak|boleh)\b', all_msgs, re.IGNORECASE))
             detected_langs = []
             if has_chinese:
                 detected_langs.append("Chinese")
-            if has_malay:
-                detected_langs.append("Malay")
             if not detected_langs:
                 detected_langs.append("English")
             lang_str = ", ".join(detected_langs)
@@ -496,13 +491,6 @@ class AILiveEngageService:
                 "repeat_question": ["也想知道", "对呀多少钱", "怎么买"],
                 "share_experience": ["之前买过不错", "朋友推荐的", "用了很久了"],
             },
-            "malay": {
-                "ask_question": ["berapa ni?", "ada size lain?", "boleh pos?", "still available?"],
-                "good_vibe": ["cantik", "nice", "ok la", "not bad"],
-                "react_comment": ["betul", "sama la", "agreed", "ya kan"],
-                "repeat_question": ["berapa eh?", "nak tau jugak", "how much ah"],
-                "share_experience": ["beli dulu ok je", "kawan recommend", "pakai lama dah"],
-            },
             "english": {
                 "ask_question": ["how much?", "any other colors?", "can ship?", "still available?"],
                 "good_vibe": ["looks nice", "not bad", "good quality", "nice one"],
@@ -511,7 +499,7 @@ class AILiveEngageService:
                 "share_experience": ["bought before quite good", "friend recommended", "have one already"],
             },
         }
-        # Pick language from setting or auto-detect
+        # Pick language from setting or auto-detect (default: English)
         lang_key = "english"
         if languages:
             first_lang = languages.split(",")[0].strip().lower()
@@ -521,8 +509,6 @@ class AILiveEngageService:
             all_msgs = " ".join(c.get("message", "") for c in recent_comments[-5:])
             if re.search(r'[\u4e00-\u9fff]', all_msgs):
                 lang_key = "chinese"
-            elif re.search(r'\b(nak|beli|cantik|berapa)\b', all_msgs, re.IGNORECASE):
-                lang_key = "malay"
         pool = fallbacks_by_lang.get(lang_key, fallbacks_by_lang["english"])
         options = pool.get(role, pool.get("good_vibe", ["nice"]))
         return random.choice(options)

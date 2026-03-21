@@ -2677,14 +2677,11 @@ async def live_engage_parse_accounts_csv(
 
 
 def _detect_languages_from_comments(comments: list[str]) -> dict[str, int]:
-    stats = {"chinese": 0, "malay": 0, "english": 0}
+    stats = {"chinese": 0, "english": 0}
     chinese_re = re.compile(r'[\u4e00-\u9fff]')
-    malay_kw = {"nak", "beli", "berapa", "cantik", "ada", "tak", "boleh", "saya", "mau", "harga"}
     for msg in comments:
         if chinese_re.search(msg):
             stats["chinese"] += 1
-        elif any(kw in msg.lower().split() for kw in malay_kw):
-            stats["malay"] += 1
         else:
             stats["english"] += 1
     return {k: v for k, v in stats.items() if v > 0}
