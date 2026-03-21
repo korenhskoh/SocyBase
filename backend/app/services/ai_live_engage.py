@@ -113,6 +113,7 @@ class AILiveEngageService:
         detected_codes: list[str] | None = None,
         quantity_variation: bool = True,
         languages: str = "",
+        ai_context_count: int = 15,
     ) -> str:
         """Generate a single livestream comment for the given role.
 
@@ -127,7 +128,7 @@ class AILiveEngageService:
 
         return await self._generate_ai_comment(
             role, recent_comments, business_context, training_comments, ai_instructions,
-            reference_comment, posted_history, languages, detected_codes,
+            reference_comment, posted_history, languages, detected_codes, ai_context_count,
         )
 
     # Regex patterns for extracting codes/numbers from any text
@@ -295,6 +296,7 @@ class AILiveEngageService:
         posted_history: list[str] | None = None,
         languages: str = "",
         detected_codes: list[str] | None = None,
+        ai_context_count: int = 15,
     ) -> str:
         """Call GPT-4o to generate a single comment."""
         role_desc = ROLE_DESCRIPTIONS.get(role, "Post a natural comment.")
@@ -310,7 +312,7 @@ class AILiveEngageService:
         # Build recent comments context
         recent_text = ""
         if recent_comments:
-            last_15 = recent_comments[-15:]
+            last_15 = recent_comments[-ai_context_count:]
             recent_text = "\n".join(
                 f"- {c.get('from_name', 'Someone')}: {c.get('message', '')}"
                 for c in last_15

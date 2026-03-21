@@ -275,6 +275,7 @@ export default function FBActionBotPage() {
   const [leInstructions, setLeInstructions] = useState("");
   const [leScrapeInterval, setLeScrapeInterval] = useState(8);
   const [leContextWindow, setLeContextWindow] = useState(50);
+  const [leAiContextCount, setLeAiContextCount] = useState(15);
   const [lePageOwnerId, setLePageOwnerId] = useState("");
   const [leProductCodes, setLeProductCodes] = useState("");
   const [leCodePattern, setLeCodePattern] = useState("");
@@ -4027,7 +4028,17 @@ export default function FBActionBotPage() {
                     className="w-full accent-amber-400"
                     onChange={(e) => setLeContextWindow(parseInt(e.target.value))}
                   />
-                  <p className="text-xs text-white/30 mt-1">How many recent comments to keep as AI context (higher = more context but slower)</p>
+                  <p className="text-xs text-white/30 mt-1">How many recent comments to keep for code detection and analysis</p>
+                </div>
+
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">AI Context: {leAiContextCount} comments sent to AI</label>
+                  <input
+                    type="range" min={5} max={50} step={5} value={leAiContextCount}
+                    className="w-full accent-amber-400"
+                    onChange={(e) => setLeAiContextCount(parseInt(e.target.value))}
+                  />
+                  <p className="text-xs text-white/30 mt-1">How many recent comments AI reads for generating replies (higher = better context but more tokens)</p>
                 </div>
 
                 {/* Comment without new */}
@@ -4171,6 +4182,7 @@ export default function FBActionBotPage() {
                           aggressive_level: leAggressiveLevel,
                           scrape_interval_seconds: leScrapeInterval,
                       context_window: leContextWindow,
+                      ai_context_count: leAiContextCount,
                           min_delay_seconds: leMinDelay,
                           max_delay_seconds: leMaxDelay,
                           max_duration_minutes: leMaxDuration,
@@ -4210,6 +4222,7 @@ export default function FBActionBotPage() {
                             setLeAggressiveLevel(p.aggressive_level || "medium");
                             setLeScrapeInterval(p.scrape_interval_seconds || 8);
                             setLeContextWindow(p.context_window || 50);
+                            setLeAiContextCount(p.ai_context_count || 15);
                             setLeMinDelay(p.min_delay_seconds || 15);
                             setLeMaxDelay(p.max_delay_seconds || 60);
                             setLeMaxDuration(p.max_duration_minutes || 180);
@@ -4311,6 +4324,7 @@ export default function FBActionBotPage() {
                       languages: leLanguages.length > 0 ? leLanguages : undefined,
                       scrape_interval_seconds: leScrapeInterval,
                       context_window: leContextWindow,
+                      ai_context_count: leAiContextCount,
                       product_codes: leProductCodes.trim() || undefined,
                       code_pattern: leCodePattern.trim() || undefined,
                       quantity_variation: leQuantityVariation,

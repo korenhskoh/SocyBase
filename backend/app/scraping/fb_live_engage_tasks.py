@@ -151,6 +151,7 @@ async def _execute_engagement(session_id: str):
                 "ai_instructions": session.ai_instructions or "",
                 "scrape_interval": session.scrape_interval_seconds or 8,
                 "context_window": session.context_window or 50,
+                "ai_context_count": session.ai_context_count or 15,
                 "min_delay": session.min_delay_seconds or 15,
                 "max_delay": session.max_delay_seconds or 60,
                 "max_duration_minutes": session.max_duration_minutes or 180,
@@ -954,6 +955,7 @@ async def _engage_loop(
                         config["max_delay"] = s.max_delay_seconds or config["max_delay"]
                         config["scrape_interval"] = s.scrape_interval_seconds or config["scrape_interval"]
                         config["context_window"] = s.context_window or 50
+                        config["ai_context_count"] = s.ai_context_count or 15
                         config["target_comments_enabled"] = bool(s.target_comments_enabled)
                         config["target_comments_count"] = s.target_comments_count or config.get("target_comments_count", 0)
                         config["target_comments_period_minutes"] = s.target_comments_period_minutes or config.get("target_comments_period_minutes", 60)
@@ -1181,7 +1183,7 @@ async def _engage_loop(
                 if not content:
                     if role in ("react_comment", "repeat_question") and recent_comments:
                         # Smart reference selection based on role
-                        candidates = recent_comments[-15:]
+                        candidates = recent_comments[-config.get("ai_context_count", 15):]
                         if role == "repeat_question":
                             # Prefer comments that look like questions (? or question words)
                             question_markers = {"?", "？", "吗", "嗎", "多少", "几", "幾", "怎么", "怎麼", "哪", "什么", "什麼", "ada", "berapa", "how", "what", "where", "when", "can"}
@@ -1206,6 +1208,7 @@ async def _engage_loop(
                     detected_codes=adaptive.detected_codes,
                     quantity_variation=adaptive.quantity_variation,
                     languages=config.get("languages", ""),
+                    ai_context_count=config.get("ai_context_count", 15),
                 )
             except Exception as exc:
                 logger.warning(f"[LiveEngage] AI generation error: {exc}")

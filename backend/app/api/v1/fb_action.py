@@ -2366,6 +2366,7 @@ class LiveEngageStartRequest(BaseModel):
     page_owner_id: str | None = None
     scrape_interval_seconds: int = Field(default=8, ge=3, le=30)
     context_window: int = Field(default=50, ge=10, le=200)
+    ai_context_count: int = Field(default=15, ge=5, le=50)
     product_codes: str | None = None  # comma-separated seed codes e.g. "m763, E769"
     code_pattern: str | None = None  # custom regex for product code detection
     quantity_variation: bool = True  # add +N quantity to order comments
@@ -2525,6 +2526,7 @@ async def live_engage_start(
         page_owner_id=req.page_owner_id,
         scrape_interval_seconds=req.scrape_interval_seconds,
         context_window=req.context_window,
+        ai_context_count=req.ai_context_count,
         product_codes=req.product_codes,
         code_pattern=req.code_pattern,
         quantity_variation=req.quantity_variation,
@@ -3086,6 +3088,7 @@ async def live_engage_list_presets(
                 "aggressive_level": p.aggressive_level,
                 "scrape_interval_seconds": p.scrape_interval_seconds,
                 "context_window": getattr(p, "context_window", 50),
+                "ai_context_count": getattr(p, "ai_context_count", 15),
                 "min_delay_seconds": p.min_delay_seconds,
                 "max_delay_seconds": p.max_delay_seconds,
                 "max_duration_minutes": p.max_duration_minutes,
@@ -3134,6 +3137,7 @@ async def live_engage_save_preset(
         aggressive_level=data.get("aggressive_level", "medium"),
         scrape_interval_seconds=data.get("scrape_interval_seconds", 8),
         context_window=data.get("context_window", 50),
+        ai_context_count=data.get("ai_context_count", 15),
         min_delay_seconds=data.get("min_delay_seconds", 15),
         max_delay_seconds=data.get("max_delay_seconds", 60),
         max_duration_minutes=data.get("max_duration_minutes", 180),
@@ -3218,6 +3222,7 @@ async def live_engage_status(
         "aggressive_level": session.aggressive_level,
         "scrape_interval_seconds": session.scrape_interval_seconds,
         "context_window": session.context_window,
+        "ai_context_count": session.ai_context_count,
         "min_delay_seconds": session.min_delay_seconds,
         "max_delay_seconds": session.max_delay_seconds,
         "max_duration_minutes": session.max_duration_minutes,
