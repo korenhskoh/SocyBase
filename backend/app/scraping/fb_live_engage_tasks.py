@@ -1062,11 +1062,16 @@ async def _engage_loop(
                         config["stream_end_threshold"] = s.stream_end_threshold if s.stream_end_threshold is not None else 0
                         config["languages"] = s.languages or ""
                         config["ai_instructions"] = s.ai_instructions or ""
+                        config["business_context"] = s.business_context or ""
+                        config["training_comments"] = s.training_comments
+                        config["code_pattern"] = s.code_pattern or ""
+                        config["max_duration_minutes"] = s.max_duration_minutes or 180
                         config["auto_order_trending"] = bool(s.auto_order_trending)
                         config["auto_order_trending_threshold"] = s.auto_order_trending_threshold or 3
                         config["auto_order_trending_cooldown"] = s.auto_order_trending_cooldown or 60
                         config["track_host_product"] = bool(s.track_host_product) if s.track_host_product is not None else True
                         adaptive.quantity_variation = s.quantity_variation if s.quantity_variation is not None else True
+                        config["quantity_variation"] = adaptive.quantity_variation
                         adaptive.aggressive_level = s.aggressive_level or "medium"
 
                         # Refresh code whitelist from seed codes

@@ -3292,6 +3292,10 @@ async def live_engage_status(
         "auto_order_trending_threshold": session.auto_order_trending_threshold,
         "auto_order_trending_cooldown": session.auto_order_trending_cooldown,
         "track_host_product": session.track_host_product,
+        "product_codes": session.product_codes,
+        "code_pattern": session.code_pattern,
+        "business_context": session.business_context,
+        "training_comments": session.training_comments,
         "target_comments_enabled": session.target_comments_enabled,
         "target_comments_count": session.target_comments_count,
         "target_comments_period_minutes": session.target_comments_period_minutes,
@@ -3549,6 +3553,9 @@ async def live_engage_update_settings(
         "auto_order_trending_threshold": int,
         "auto_order_trending_cooldown": int,
         "track_host_product": bool,
+        "business_context": str,
+        "training_comments": str,
+        "max_duration_minutes": int,
     }
 
     updated = {}

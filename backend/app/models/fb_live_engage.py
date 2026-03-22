@@ -180,6 +180,7 @@ class FBLiveEngagePreset(Base):
     auto_order_trending: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_order_trending_threshold: Mapped[int] = mapped_column(Integer, default=3)
     auto_order_trending_cooldown: Mapped[int] = mapped_column(Integer, default=60)
+    track_host_product: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
