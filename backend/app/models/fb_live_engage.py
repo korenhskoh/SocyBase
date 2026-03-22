@@ -81,7 +81,7 @@ class FBLiveEngageSession(Base):
     min_delay_seconds: Mapped[int] = mapped_column(Integer, default=15)
     max_delay_seconds: Mapped[int] = mapped_column(Integer, default=60)
     max_duration_minutes: Mapped[int] = mapped_column(Integer, default=180)
-    stream_end_threshold: Mapped[int] = mapped_column(Integer, default=10)  # consecutive empty polls to auto-stop
+    stream_end_threshold: Mapped[int] = mapped_column(Integer, default=0)  # 0 = disabled  # consecutive empty polls to auto-stop
 
     # Target comments — optional pacing mode
     target_comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -176,7 +176,7 @@ class FBLiveEngagePreset(Base):
     blacklist_words: Mapped[str | None] = mapped_column(Text)
     comment_without_new: Mapped[bool] = mapped_column(Boolean, default=False)
     comment_without_new_max: Mapped[int] = mapped_column(Integer, default=3)
-    stream_end_threshold: Mapped[int] = mapped_column(Integer, default=10)
+    stream_end_threshold: Mapped[int] = mapped_column(Integer, default=0)  # 0 = disabled
     auto_order_trending: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_order_trending_threshold: Mapped[int] = mapped_column(Integer, default=3)
     auto_order_trending_cooldown: Mapped[int] = mapped_column(Integer, default=60)

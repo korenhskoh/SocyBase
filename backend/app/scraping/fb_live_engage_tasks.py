@@ -1483,6 +1483,8 @@ async def _engage_loop(
                     "account has been disabled",
                     "account is temporarily locked",
                     "checkpoint required",
+                    "account_checkpointed",
+                    "checkpointed",
                 )
                 is_permanent = error_msg and any(
                     pe in error_msg.lower() for pe in permanent_errors
