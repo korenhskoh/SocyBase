@@ -3758,11 +3758,36 @@ export default function FBActionBotPage() {
                     {leDirectAccounts.length > 0 && (
                       <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
                         <span className="text-xs text-emerald-300">{leDirectAccounts.length} accounts ready</span>
-                        <button
-                          type="button"
-                          onClick={() => setLeDirectAccounts([])}
-                          className="text-xs text-white/30 hover:text-red-300"
-                        >Clear</button>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const headers = "cookies,email,token,twofa,proxy_host,proxy_port,proxy_username,proxy_password,user_agent";
+                              const rows = leDirectAccounts.map((a: any) => {
+                                const escape = (v: string) => v && v.includes(",") ? `"${v.replace(/"/g, '""')}"` : (v || "");
+                                return [
+                                  escape(a.cookies || ""), escape(a.email || ""), escape(a.token || ""),
+                                  escape(a.twofa || ""), escape(a.proxy_host || ""), escape(a.proxy_port || ""),
+                                  escape(a.proxy_username || ""), escape(a.proxy_password || ""), escape(a.user_agent || ""),
+                                ].join(",");
+                              });
+                              const csv = [headers, ...rows].join("\n");
+                              const blob = new Blob([csv], { type: "text/csv" });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = `live_engage_accounts_${leDirectAccounts.length}.csv`;
+                              a.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                            className="text-xs text-blue-300/80 hover:text-blue-300"
+                          >Export CSV</button>
+                          <button
+                            type="button"
+                            onClick={() => setLeDirectAccounts([])}
+                            className="text-xs text-white/30 hover:text-red-300"
+                          >Clear</button>
+                        </div>
                       </div>
                     )}
                     <p className="text-xs text-white/30">CSV columns: cookies (required), email (required), token, twofa, proxy_host, proxy_port, proxy_username, proxy_password, user_agent</p>
