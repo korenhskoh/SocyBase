@@ -3700,26 +3700,29 @@ export default function FBActionBotPage() {
                               const accounts: any[] = [];
                               let errors = 0;
                               for (const line of lines) {
+                                // Skip non-data lines (Chinese headers, empty, no pipe separator)
+                                if (!line.includes("|") || !line.match(/\d{10,}/)) continue;
                                 const parts = line.split("|").map(p => p.trim());
-                                // Auto-detect format by finding the cookies field (contains c_user=)
+                                // Auto-detect format by finding fields
                                 let cookies = "", email = "", token = "", twofa = "";
                                 for (const part of parts) {
-                                  if (part.includes("c_user=") || part.includes("xs=")) {
+                                  if (part.includes("c_user=") || (part.includes("xs=") && part.includes(";"))) {
                                     cookies = part;
-                                  } else if (part.includes("@")) {
+                                  } else if (part.includes("@") && part.includes(".")) {
                                     email = part;
                                   } else if (part.startsWith("EAAAA") || part.startsWith("eaaaa")) {
                                     token = part;
                                   } else if (part.length >= 20 && part.length <= 40 && /^[A-Z0-9]+$/.test(part)) {
                                     twofa = part;
                                   }
+                                  // Skip: passwords, M.C tokens, UUIDs, user IDs (handled below)
                                 }
                                 if (cookies && email) {
                                   accounts.push({ cookies, email, token: token || undefined, twofa: twofa || undefined });
                                 } else if (cookies) {
                                   // Try to use user_id as email fallback
                                   const uid = parts[0];
-                                  if (uid && /^\d+$/.test(uid)) {
+                                  if (uid && /^\d{10,}$/.test(uid)) {
                                     accounts.push({ cookies, email: uid, token: token || undefined, twofa: twofa || undefined });
                                   } else {
                                     errors++;
