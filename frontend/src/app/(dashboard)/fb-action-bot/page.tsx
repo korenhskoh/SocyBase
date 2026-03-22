@@ -284,6 +284,8 @@ export default function FBActionBotPage() {
   const [leAutoOrderThreshold, setLeAutoOrderThreshold] = useState(3);
   const [leAutoOrderCooldown, setLeAutoOrderCooldown] = useState(60);
   const [leTrackHostProduct, setLeTrackHostProduct] = useState(true);
+  const [lePasteAccountsOpen, setLePasteAccountsOpen] = useState(false);
+  const [lePasteAccountsText, setLePasteAccountsText] = useState("");
   const [leLanguages, setLeLanguages] = useState<string[]>([]);
   const [leAggressiveLevel, setLeAggressiveLevel] = useState<"low" | "medium" | "high">("medium");
   const [leTargetEnabled, setLeTargetEnabled] = useState(false);
@@ -3668,7 +3670,88 @@ export default function FBActionBotPage() {
                       >
                         Template
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setLePasteAccountsOpen(!lePasteAccountsOpen)}
+                        className="px-3 py-3 bg-white/5 border border-white/10 rounded-lg text-xs text-white/40 hover:bg-white/10 transition-all whitespace-nowrap"
+                      >
+                        Paste
+                      </button>
                     </div>
+
+                    {/* Paste accounts area */}
+                    {lePasteAccountsOpen && (
+                      <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2">
+                        <p className="text-xs text-white/30">Paste account data (pipe-separated, one per line):</p>
+                        <p className="text-[10px] text-white/20">Format: user_id|password|2fa|email|password2|cookies|token</p>
+                        <textarea
+                          className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-white/15 focus:outline-none focus:border-white/20"
+                          rows={5}
+                          placeholder={"61577888580674|pass123|2FA_CODE|email@example.com|pass2|c_user=61577888580674;xs=...|EAAAAUaZA8jl...\n61577918009760|pass456|2FA_CODE|email2@example.com|pass2|c_user=61577918009760;xs=...|EAAAAUaZA8jl..."}
+                          value={lePasteAccountsText}
+                          onChange={(e) => setLePasteAccountsText(e.target.value)}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={!lePasteAccountsText.trim()}
+                            onClick={() => {
+                              const lines = lePasteAccountsText.trim().split("\n").filter(l => l.trim());
+                              const accounts: any[] = [];
+                              let errors = 0;
+                              for (const line of lines) {
+                                const parts = line.split("|").map(p => p.trim());
+                                // Auto-detect format by finding the cookies field (contains c_user=)
+                                let cookies = "", email = "", token = "", twofa = "";
+                                for (const part of parts) {
+                                  if (part.includes("c_user=") || part.includes("xs=")) {
+                                    cookies = part;
+                                  } else if (part.includes("@")) {
+                                    email = part;
+                                  } else if (part.startsWith("EAAAA") || part.startsWith("eaaaa")) {
+                                    token = part;
+                                  } else if (part.length >= 20 && part.length <= 40 && /^[A-Z0-9]+$/.test(part)) {
+                                    twofa = part;
+                                  }
+                                }
+                                if (cookies && email) {
+                                  accounts.push({ cookies, email, token: token || undefined, twofa: twofa || undefined });
+                                } else if (cookies) {
+                                  // Try to use user_id as email fallback
+                                  const uid = parts[0];
+                                  if (uid && /^\d+$/.test(uid)) {
+                                    accounts.push({ cookies, email: uid, token: token || undefined, twofa: twofa || undefined });
+                                  } else {
+                                    errors++;
+                                  }
+                                } else {
+                                  errors++;
+                                }
+                              }
+                              if (accounts.length > 0) {
+                                setLeDirectAccounts(accounts);
+                                setLePasteAccountsOpen(false);
+                                setLePasteAccountsText("");
+                                showToast("success", `Converted ${accounts.length} accounts${errors > 0 ? ` (${errors} rows skipped)` : ""}`);
+                              } else {
+                                showToast("error", "No valid accounts found. Ensure each line has cookies (c_user=...) and email.");
+                              }
+                            }}
+                            className="flex-1 px-3 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-lg text-xs font-medium transition disabled:opacity-40"
+                          >
+                            Convert & Load
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setLePasteAccountsOpen(false); setLePasteAccountsText(""); }}
+                            className="px-3 py-2 bg-white/5 hover:bg-white/10 text-white/40 rounded-lg text-xs transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {leDirectAccounts.length > 0 && (
                       <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
                         <span className="text-xs text-emerald-300">{leDirectAccounts.length} accounts ready</span>
