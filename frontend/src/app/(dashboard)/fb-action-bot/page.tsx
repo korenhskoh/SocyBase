@@ -283,6 +283,7 @@ export default function FBActionBotPage() {
   const [leAutoOrderTrending, setLeAutoOrderTrending] = useState(false);
   const [leAutoOrderThreshold, setLeAutoOrderThreshold] = useState(3);
   const [leAutoOrderCooldown, setLeAutoOrderCooldown] = useState(60);
+  const [leTrackHostProduct, setLeTrackHostProduct] = useState(true);
   const [leLanguages, setLeLanguages] = useState<string[]>([]);
   const [leAggressiveLevel, setLeAggressiveLevel] = useState<"low" | "medium" | "high">("medium");
   const [leTargetEnabled, setLeTargetEnabled] = useState(false);
@@ -3962,6 +3963,23 @@ export default function FBActionBotPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Track Host Product */}
+                <div className="flex items-center gap-3 pt-2 border-t border-white/5">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={leTrackHostProduct}
+                      onChange={(e) => setLeTrackHostProduct(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-white/10 rounded-full peer peer-checked:bg-emerald-500/60 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  </label>
+                  <div>
+                    <span className="text-sm text-white/70">Track Host Product Code</span>
+                    <p className="text-xs text-white/30">Auto-detect current product from host comments and prioritize it for place_order</p>
+                  </div>
+                </div>
               </div>
 
               {/* Aggressive Level & Timing */}
@@ -4239,6 +4257,7 @@ export default function FBActionBotPage() {
                       auto_order_trending: leAutoOrderTrending,
                       auto_order_trending_threshold: leAutoOrderTrending ? leAutoOrderThreshold : undefined,
                       auto_order_trending_cooldown: leAutoOrderTrending ? leAutoOrderCooldown : undefined,
+                      track_host_product: leTrackHostProduct,
                           comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                           blacklist_words: leBlacklistWords.trim() || undefined,
                           stream_end_threshold: leStreamEndEnabled ? leStreamEndThreshold : 0,
@@ -4284,6 +4303,7 @@ export default function FBActionBotPage() {
                             setLeAutoOrderTrending(p.auto_order_trending || false);
                             setLeAutoOrderThreshold(p.auto_order_trending_threshold || 3);
                             setLeAutoOrderCooldown(p.auto_order_trending_cooldown || 60);
+                            setLeTrackHostProduct(p.track_host_product !== undefined ? p.track_host_product : true);
                             showToast("success", `Loaded preset: ${p.name}`);
                           }}
                           className="text-xs text-white/70 hover:text-white"
@@ -4382,6 +4402,7 @@ export default function FBActionBotPage() {
                       auto_order_trending: leAutoOrderTrending,
                       auto_order_trending_threshold: leAutoOrderTrending ? leAutoOrderThreshold : undefined,
                       auto_order_trending_cooldown: leAutoOrderTrending ? leAutoOrderCooldown : undefined,
+                      track_host_product: leTrackHostProduct,
                       comment_without_new_max: leCommentWithoutNew ? leCommentWithoutNewMax : undefined,
                       blacklist_words: leBlacklistWords.trim() || undefined,
                       stream_end_threshold: leStreamEndEnabled ? leStreamEndThreshold : 0,

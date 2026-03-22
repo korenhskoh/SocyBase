@@ -68,6 +68,7 @@ class FBLiveEngageSession(Base):
     auto_order_trending: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_order_trending_threshold: Mapped[int] = mapped_column(Integer, default=3)
     auto_order_trending_cooldown: Mapped[int] = mapped_column(Integer, default=60)  # seconds between auto-orders
+    track_host_product: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Page owner — comments from this ID are ignored (livestream host)
     page_owner_id: Mapped[str | None] = mapped_column(String(100))

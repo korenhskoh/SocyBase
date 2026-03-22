@@ -177,6 +177,7 @@ async def _execute_engagement(session_id: str):
                 "auto_order_trending": bool(session.auto_order_trending),
                 "auto_order_trending_threshold": session.auto_order_trending_threshold or 3,
                 "auto_order_trending_cooldown": session.auto_order_trending_cooldown or 60,
+                "track_host_product": bool(session.track_host_product) if session.track_host_product is not None else True,
                 "blacklist_words": session.blacklist_words or "",
                 "stream_end_threshold": session.stream_end_threshold if session.stream_end_threshold is not None else 0,
                 "title": session.title or "",
@@ -680,10 +681,9 @@ async def _monitor_loop(
                         adaptive.detected_codes = adaptive.detected_codes[-50:]
 
             # ── Live product tracking: detect current active product ──
-            # Priority: host mentions a code → immediate product change
-            # Fallback: most mentioned code by viewers in last 60s
+            # Only runs if track_host_product is enabled
             now_track = monotonic()
-            if now_track - adaptive.last_product_check > 15:  # check every 15s
+            if config.get("track_host_product", True) and now_track - adaptive.last_product_check > 15:
                 adaptive.last_product_check = now_track
 
                 # Check if host mentioned any code recently (strongest signal)
@@ -1065,6 +1065,7 @@ async def _engage_loop(
                         config["auto_order_trending"] = bool(s.auto_order_trending)
                         config["auto_order_trending_threshold"] = s.auto_order_trending_threshold or 3
                         config["auto_order_trending_cooldown"] = s.auto_order_trending_cooldown or 60
+                        config["track_host_product"] = bool(s.track_host_product) if s.track_host_product is not None else True
                         adaptive.quantity_variation = s.quantity_variation if s.quantity_variation is not None else True
                         adaptive.aggressive_level = s.aggressive_level or "medium"
 

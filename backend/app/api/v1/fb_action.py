@@ -2383,6 +2383,7 @@ class LiveEngageStartRequest(BaseModel):
     auto_order_trending: bool = False  # auto place_order when code trends in comments
     auto_order_trending_threshold: int = Field(default=3, ge=2, le=20)  # mentions in 60s to trigger
     auto_order_trending_cooldown: int = Field(default=60, ge=10, le=600)  # seconds between auto-orders
+    track_host_product: bool = True  # auto-detect current product from host comments
     blacklist_words: str | None = None  # comma-separated words to avoid
     stream_end_threshold: int = Field(default=0, ge=0, le=50)  # 0 = disabled
     scheduled_at: str | None = None  # ISO datetime for scheduled start
@@ -2543,6 +2544,7 @@ async def live_engage_start(
         auto_order_trending=req.auto_order_trending,
         auto_order_trending_threshold=req.auto_order_trending_threshold,
         auto_order_trending_cooldown=req.auto_order_trending_cooldown,
+        track_host_product=req.track_host_product,
         blacklist_words=req.blacklist_words,
         stream_end_threshold=req.stream_end_threshold,
         scheduled_at=_parse_scheduled_at(req.scheduled_at),
@@ -3154,6 +3156,7 @@ async def live_engage_list_presets(
                 "auto_order_trending": p.auto_order_trending,
                 "auto_order_trending_threshold": p.auto_order_trending_threshold,
                 "auto_order_trending_cooldown": p.auto_order_trending_cooldown,
+                "track_host_product": getattr(p, "track_host_product", True),
                 "created_at": p.created_at.isoformat() if p.created_at else None,
             }
             for p in presets
@@ -3203,6 +3206,7 @@ async def live_engage_save_preset(
         auto_order_trending=data.get("auto_order_trending", False),
         auto_order_trending_threshold=data.get("auto_order_trending_threshold", 3),
         auto_order_trending_cooldown=data.get("auto_order_trending_cooldown", 60),
+        track_host_product=data.get("track_host_product", True),
     )
     db.add(preset)
     await db.commit()
@@ -3287,6 +3291,7 @@ async def live_engage_status(
         "auto_order_trending": session.auto_order_trending,
         "auto_order_trending_threshold": session.auto_order_trending_threshold,
         "auto_order_trending_cooldown": session.auto_order_trending_cooldown,
+        "track_host_product": session.track_host_product,
         "target_comments_enabled": session.target_comments_enabled,
         "target_comments_count": session.target_comments_count,
         "target_comments_period_minutes": session.target_comments_period_minutes,
@@ -3543,6 +3548,7 @@ async def live_engage_update_settings(
         "auto_order_trending": bool,
         "auto_order_trending_threshold": int,
         "auto_order_trending_cooldown": int,
+        "track_host_product": bool,
     }
 
     updated = {}

@@ -652,6 +652,7 @@ export const fbActionApi = {
     auto_order_trending?: boolean;
     auto_order_trending_threshold?: number;
     auto_order_trending_cooldown?: number;
+    track_host_product?: boolean;
     comment_without_new_max?: number;
     blacklist_words?: string;
     stream_end_threshold?: number;
