@@ -26,6 +26,14 @@ PRODUCT_CODE_RE = re.compile(
     r'(?:\s*[+＋]\s*(\d{1,3}))?'
 )
 
+# Currency/price prefixes to EXCLUDE from code detection
+# These look like codes (RM68, USD50) but are actually prices
+PRICE_PREFIXES = {
+    "RM", "USD", "SGD", "IDR", "PHP", "THB", "VND", "MYR", "CNY", "RMB",
+    "HKD", "TWD", "AUD", "EUR", "GBP", "JPY", "KRW", "INR", "BND",
+    "QS",  # common size prefix
+}
+
 # Code format presets for frequency-based detection
 CODE_FORMAT_PATTERNS = {
     "numbers": re.compile(r'^\d{1,5}$'),            # 1, 8, 480, 12345
@@ -57,14 +65,26 @@ class AdaptiveState:
     last_product_check: float = 0.0
 
 
+def _is_price_pattern(code: str) -> bool:
+    """Check if a code is actually a price (RM68, USD50, etc.)."""
+    upper = code.upper()
+    for prefix in PRICE_PREFIXES:
+        if upper.startswith(prefix) and upper[len(prefix):].isdigit():
+            return True
+    return False
+
+
 def _extract_product_codes(message: str, code_re: re.Pattern | None = None) -> list[str]:
-    """Extract product code patterns from a comment message."""
+    """Extract product code patterns from a comment message, excluding prices."""
     pattern = code_re or PRODUCT_CODE_RE
     matches = pattern.findall(message)
     # findall returns tuples when there are groups; grab the first group (the code itself)
     if matches and isinstance(matches[0], tuple):
-        return [m[0] for m in matches]
-    return list(matches)
+        codes = [m[0] for m in matches]
+    else:
+        codes = list(matches)
+    # Filter out price patterns (RM68, USD50, etc.)
+    return [c for c in codes if not _is_price_pattern(c)]
 
 
 def _recalculate_adaptive(adaptive: AdaptiveState, window_seconds: int = 60):

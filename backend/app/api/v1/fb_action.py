@@ -2706,10 +2706,17 @@ def _detect_languages_from_comments(comments: list[str]) -> dict[str, int]:
 def _extract_codes_from_comments(comments: list[str]) -> list[str]:
     code_re = re.compile(r'\b([a-zA-Z]{1,3}\d{1,5})\b')
     number_re = re.compile(r'^\s*(\d{1,5})\s*(?:[+＋]\s*\d{1,3})?\s*$')
+    # Currency/price prefixes to exclude
+    price_prefixes = {"RM", "USD", "SGD", "IDR", "PHP", "THB", "VND", "MYR", "CNY", "RMB",
+                      "HKD", "TWD", "AUD", "EUR", "GBP", "JPY", "KRW", "INR", "BND", "QS"}
     counts: dict[str, int] = {}
     for msg in comments:
         for m in code_re.findall(msg):
-            counts[m.upper()] = counts.get(m.upper(), 0) + 1
+            upper = m.upper()
+            # Skip price patterns (RM68, USD50, etc.)
+            is_price = any(upper.startswith(p) and upper[len(p):].isdigit() for p in price_prefixes)
+            if not is_price:
+                counts[upper] = counts.get(upper, 0) + 1
         if len(msg.strip()) <= 10:
             nm = number_re.match(msg.strip())
             if nm:

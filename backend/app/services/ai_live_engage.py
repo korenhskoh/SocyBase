@@ -160,9 +160,17 @@ class AILiveEngageService:
                 patterns.append(msg.strip())
         return patterns
 
+    # Currency/price prefixes to exclude from code detection
+    _PRICE_PREFIXES = {"RM", "USD", "SGD", "IDR", "PHP", "THB", "VND", "MYR", "CNY", "RMB",
+                       "HKD", "TWD", "AUD", "EUR", "GBP", "JPY", "KRW", "INR", "BND", "QS"}
+
     def _extract_codes(self, text: str) -> list[str]:
-        """Extract just the code/number part from text."""
-        return self._CODE_RE.findall(text)
+        """Extract just the code/number part from text, excluding prices."""
+        codes = self._CODE_RE.findall(text)
+        return [c for c in codes if not any(
+            c.upper().startswith(p) and c[len(p):].isdigit()
+            for p in self._PRICE_PREFIXES
+        )]
 
     def _generate_order_comment(
         self,
