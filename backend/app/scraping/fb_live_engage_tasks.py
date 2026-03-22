@@ -800,11 +800,11 @@ async def _monitor_loop(
                 except Exception:
                     pass
             else:
-                # No NEW comments in this poll — API returned data but all already seen,
-                # OR truly empty response. Either way, just keep polling at current cursor.
-                # The cursor position is correct — new live comments will appear here.
-                # No need to reset cursor (going back to page 1 causes re-pagination).
-                consecutive_empty_polls += 1
+                # Only count as empty if API returned ZERO data.
+                # If API returned comments but all were filtered (our own, already seen),
+                # the stream is still active — don't count as empty.
+                if not comments_data:
+                    consecutive_empty_polls += 1
 
                 # Check DB for paused status — freeze empty poll counter
                 try:
@@ -1155,32 +1155,42 @@ async def _engage_loop(
             except Exception:
                 pass
 
+            # ── Check if auto-order trending should skip the wait ──
+            # If a code is trending RIGHT NOW, don't wait for new comments — act immediately
+            _trending_skip = False
+            if config.get("auto_order_trending", False):
+                _t_threshold = config.get("auto_order_trending_threshold", 3)
+                _t_cooldown = config.get("auto_order_trending_cooldown", 60)
+                _t_now = monotonic()
+                if _t_now - adaptive.last_auto_order_time >= _t_cooldown:
+                    for _ck, _ts in adaptive.recent_code_mentions.items():
+                        _recent = [t for t in _ts if _t_now - t < 60]
+                        if len(_recent) >= _t_threshold:
+                            _trending_skip = True
+                            break
+
             # ── Wait for new comments from monitor loop ──────
-            # We wait until the monitor signals fresh viewer comments,
-            # then clear the event so we wait again next round.
-            try:
-                # Aggressive level affects wait timeout: high=10s, medium=30s, low=60s
-                wait_timeout = {"low": 60, "medium": 30, "high": 10}.get(
-                    adaptive.aggressive_level, 30
-                )
-                await asyncio.wait_for(new_comments_event.wait(), timeout=wait_timeout)
-                # New comments arrived — reset idle counter
+            if _trending_skip:
+                # Trending code detected — skip wait, proceed immediately
+                new_comments_event.clear()
                 idle_comment_count = 0
-            except asyncio.TimeoutError:
-                if target_enabled and len(recent_comments) >= 3:
-                    # Target mode: proceed to maintain pace
-                    pass
-                elif comment_without_new and idle_comment_count < comment_without_new_max and len(recent_comments) >= 1:
-                    # Comment-without-new mode: generate using existing context
-                    idle_comment_count += 1
-                    logger.debug(
-                        f"[LiveEngage] No new comments, idle attempt {idle_comment_count}/{comment_without_new_max}"
+            else:
+                try:
+                    wait_timeout = {"low": 60, "medium": 30, "high": 10}.get(
+                        adaptive.aggressive_level, 30
                     )
-                else:
-                    # Normal mode or idle limit reached: loop back
-                    if comment_without_new and idle_comment_count >= comment_without_new_max:
-                        idle_comment_count = 0  # reset for next cycle
-                    continue
+                    await asyncio.wait_for(new_comments_event.wait(), timeout=wait_timeout)
+                    # New comments arrived — reset idle counter
+                    idle_comment_count = 0
+                except asyncio.TimeoutError:
+                    if target_enabled and len(recent_comments) >= 3:
+                        pass
+                    elif comment_without_new and idle_comment_count < comment_without_new_max and len(recent_comments) >= 1:
+                        idle_comment_count += 1
+                    else:
+                        if comment_without_new and idle_comment_count >= comment_without_new_max:
+                            idle_comment_count = 0
+                        continue
 
             # Clear event — we'll wait for the next batch of new comments
             new_comments_event.clear()
@@ -1237,22 +1247,28 @@ async def _engage_loop(
                 # Check cooldown — skip if last auto-order was too recent
                 since_last = now_check - adaptive.last_auto_order_time
                 if since_last >= cooldown_secs:
+                    # Find ALL trending codes, pick the most active one
+                    trending_candidates: list[tuple[str, int]] = []
                     for code_key, timestamps in list(adaptive.recent_code_mentions.items()):
-                        # Clean old timestamps (60s window)
                         recent = [t for t in timestamps if now_check - t < 60]
                         adaptive.recent_code_mentions[code_key] = recent
                         if len(recent) >= threshold:
-                            # Alternate: ~50% auto-order, ~50% normal
-                            recent_auto = [p for p in posted_history[-3:] if code_key.lower() in p.lower()]
-                            if len(recent_auto) < 2 and random.random() < 0.5:
-                                trending_code = code_key
-                                for dc in adaptive.detected_codes:
-                                    if dc.upper() == code_key:
-                                        trending_code = dc
-                                        break
-                                adaptive.last_auto_order_time = now_check
-                                logger.info(f"[LiveEngage] Trending auto-order: {trending_code} ({len(recent)} mentions, cooldown={cooldown_secs}s)")
-                                break
+                            trending_candidates.append((code_key, len(recent)))
+
+                    if trending_candidates:
+                        # Sort by most mentions, pick the hottest code
+                        trending_candidates.sort(key=lambda x: -x[1])
+                        best_key, best_mentions = trending_candidates[0]
+                        # 70% chance to auto-order (alternate with normal)
+                        recent_auto = [p for p in posted_history[-3:] if best_key.lower() in p.lower()]
+                        if len(recent_auto) < 2 and random.random() < 0.7:
+                            trending_code = best_key
+                            for dc in adaptive.detected_codes:
+                                if dc.upper() == best_key:
+                                    trending_code = dc
+                                    break
+                            adaptive.last_auto_order_time = now_check
+                            logger.info(f"[LiveEngage] Trending auto-order: {trending_code} ({best_mentions} mentions, cooldown={cooldown_secs}s)")
 
             # Pick role — alternate between auto-order and normal
             if trending_code:
