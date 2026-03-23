@@ -1262,7 +1262,12 @@ async def _engage_loop(
                         trending_candidates.sort(key=lambda x: -x[1])
                         best_key, best_mentions = trending_candidates[0]
                         # 70% chance to auto-order (alternate with normal)
-                        recent_auto = [p for p in posted_history[-3:] if best_key.lower() in p.lower()]
+                        # Use exact match for short codes to avoid false positives
+                        # (e.g. "1" matching "1588+1" or "account1")
+                        if len(best_key) <= 2:
+                            recent_auto = [p for p in posted_history[-5:] if p.strip().upper() == best_key or p.strip().upper().startswith(best_key + "+")]
+                        else:
+                            recent_auto = [p for p in posted_history[-3:] if best_key.lower() in p.lower()]
                         if len(recent_auto) < 2 and random.random() < 0.7:
                             trending_code = best_key
                             for dc in adaptive.detected_codes:
