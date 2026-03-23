@@ -1347,7 +1347,7 @@ export default function FBActionBotPage() {
                       onClick={async () => {
                         setSbAiLoading(true);
                         try {
-                          const res = await api.post("/fb-action/batch/ai-generate-params", {
+                          const res = await fbActionApi.batchAiGenerateParams({
                             actions: activeActionDefs.map(a => a.key),
                             account_count: sbAccounts.length,
                             prompt: sbAiPrompt || "Generate natural, varied parameters",

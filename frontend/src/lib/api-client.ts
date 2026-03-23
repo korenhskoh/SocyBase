@@ -614,6 +614,8 @@ export const fbActionApi = {
   aiPlanMyPosts: (data: { job_ids: string[] }) =>
     api.post("/fb-action/ai-plan/my-posts", data),
   // Livestream Engagement
+  batchAiGenerateParams: (data: { actions: string[]; account_count: number; prompt: string }) =>
+    api.post("/fb-action/batch/ai-generate-params", data),
   liveEngageSmartSetup: (data: { page_url?: string; video_url?: string; max_comments?: number }) =>
     api.post("/fb-action/live-engage/smart-setup", data),
   liveEngageStart: (data: {
