@@ -3871,6 +3871,32 @@ export default function FBActionBotPage() {
                       }} className="flex-1 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-lg text-sm font-medium transition">
                         Apply Config
                       </button>
+                      <button
+                        disabled={smartSetupLoading}
+                        onClick={async () => {
+                          setSmartSetupLoading(true);
+                          setSmartSetupStep("Scraping more comments...");
+                          try {
+                            const url = smartSetupUrl.trim();
+                            const prevCount = smartSetupResult?.stats?.comments_analyzed || 0;
+                            const res = await fbActionApi.liveEngageSmartSetup({
+                              page_url: url,
+                              video_url: url.includes("/videos/") || url.includes("/posts/") || /^\d{10,}$/.test(url) ? url : undefined,
+                              max_comments: prevCount + 200,
+                            });
+                            setSmartSetupResult(res.data);
+                            setSmartSetupStep("");
+                            const newCount = res.data.stats?.comments_analyzed || 0;
+                            showToast("success", `Analyzed ${newCount} comments (+${newCount - prevCount} more)`);
+                          } catch (err: any) {
+                            showToast("error", err.response?.data?.detail || "Failed to scrape more");
+                            setSmartSetupStep("");
+                          }
+                          setSmartSetupLoading(false);
+                        }}
+                        className="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg text-sm transition disabled:opacity-40">
+                        {smartSetupLoading ? "Scraping..." : `Scrape More (+200)`}
+                      </button>
                       <button onClick={() => setSmartSetupResult(null)}
                         className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/40 rounded-lg text-sm transition">
                         Dismiss
