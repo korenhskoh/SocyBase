@@ -469,10 +469,15 @@ async def batch_ai_generate_params(
     balance = balance_result.scalar() or 0
     if balance < 2:
         raise HTTPException(status_code=402, detail="Insufficient credits (need 2)")
+    new_balance = balance - 2
     db.add(CreditTransaction(
-        tenant_id=user.tenant_id, amount=-2,
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        type="usage",
+        amount=-2,
+        balance_after=new_balance,
         description=f"AI batch param generation ({len(actions)} actions)",
-        transaction_type="ai_batch_params",
+        reference_type="ai_batch_params",
     ))
     await db.commit()
 
