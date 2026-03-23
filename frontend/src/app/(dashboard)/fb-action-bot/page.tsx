@@ -146,6 +146,7 @@ interface BatchInfo {
   max_parallel: number;
   error_message?: string;
   results?: Array<{ email: string; status: string; fb_user_id?: string; error_message?: string; has_token?: boolean }>;
+  logs?: Array<{ action_name: string; status: string; error_message?: string; params?: Record<string, any>; created_at?: string }>;
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -1643,7 +1644,7 @@ export default function FBActionBotPage() {
               {/* Action Logs */}
               {(activeBatch.logs?.length ?? 0) > 0 && (
                 <div className="mb-3">
-                  <p className="text-xs text-white/30 mb-1">Action Log ({activeBatch.logs.length} entries)</p>
+                  <p className="text-xs text-white/30 mb-1">Action Log ({activeBatch.logs?.length || 0} entries)</p>
                   <div className="max-h-48 overflow-y-auto space-y-1">
                     {(activeBatch.logs || []).map((log: any, i: number) => (
                       <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs ${
