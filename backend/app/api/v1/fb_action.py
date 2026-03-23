@@ -448,39 +448,65 @@ async def download_csv_template():
 async def batch_ai_generate_params(
     data: dict = Body(...),
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """AI-generate parameters for batch actions."""
+    """AI-generate parameters for batch actions. Charges 2 credits."""
     from openai import AsyncOpenAI
     from app.config import get_settings
     import asyncio as aio
 
+    actions = data.get("actions", [])
+    if not actions:
+        raise HTTPException(status_code=400, detail="Select at least one action")
+
+    # Charge 2 credits for AI generation
+    from app.models.credit import CreditTransaction
+    balance_result = await db.execute(
+        select(func.coalesce(func.sum(CreditTransaction.amount), 0)).where(
+            CreditTransaction.tenant_id == user.tenant_id
+        )
+    )
+    balance = balance_result.scalar() or 0
+    if balance < 2:
+        raise HTTPException(status_code=402, detail="Insufficient credits (need 2)")
+    db.add(CreditTransaction(
+        tenant_id=user.tenant_id, amount=-2,
+        description=f"AI batch param generation ({len(actions)} actions)",
+        transaction_type="ai_batch_params",
+    ))
+    await db.commit()
+
     settings = get_settings()
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-    actions = data.get("actions", [])
-    account_count = data.get("account_count", 1)
+    account_count = min(data.get("account_count", 1), 50)
     prompt = data.get("prompt", "Generate natural, varied parameters")
 
     action_schema = {
         "change_name": {"fields": ["first", "last"], "desc": "Generate realistic full names"},
-        "change_bio": {"fields": ["bio"], "desc": "Generate short, natural bios (1-2 sentences)"},
+        "change_bio": {"fields": ["bio"], "desc": "Generate short, natural bios (max 101 chars)"},
+        "change_avatar": {"fields": ["image"], "desc": "NOT generated — user must provide image URLs"},
         "post_to_my_feed": {"fields": ["content"], "desc": "Generate varied social media posts"},
         "comment_to_post": {"fields": ["content"], "desc": "Generate natural comments"},
         "post_to_group": {"fields": ["content"], "desc": "Generate group post content"},
         "page_post_to_feed": {"fields": ["content"], "desc": "Generate page post content"},
+        "add_friend": {"fields": ["uid"], "desc": "NOT generated — user must provide user IDs"},
+        "join_group": {"fields": ["group_id"], "desc": "NOT generated — user must provide group IDs"},
     }
 
+    n = min(account_count, 30)
     system_prompt = f"""Generate parameters for Facebook batch actions.
 User instruction: {prompt}
-Number of accounts: {account_count}
+Number of accounts: {n}
 
-For each action, generate the required fields. If the action needs unique values per account, generate {min(account_count, 20)} variations.
+IMPORTANT: For EACH field, return an ARRAY of {n} values (one per account).
+Each value must be unique and varied.
 
 Return JSON:
 {{
   "params": {{
     "action_name": {{
-      "field_name": "value or array of values for multiple accounts"
+      "field_name": ["value1", "value2", "value3", ...]
     }}
   }}
 }}
@@ -491,8 +517,6 @@ Actions to generate for:
         schema = action_schema.get(action, {})
         if schema:
             system_prompt += f"\n- {action}: fields={schema['fields']}, {schema['desc']}"
-        else:
-            system_prompt += f"\n- {action}: generate appropriate default parameters"
 
     try:
         resp = await aio.wait_for(
@@ -500,19 +524,28 @@ Actions to generate for:
                 model="gpt-4o",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Generate parameters for {len(actions)} actions across {account_count} accounts."},
+                    {"role": "user", "content": f"Generate {n} unique variations for each field."},
                 ],
-                temperature=0.7, max_tokens=3000,
+                temperature=0.7, max_tokens=4000,
                 response_format={"type": "json_object"},
             ),
-            timeout=30,
+            timeout=45,
         )
         content = resp.choices[0].message.content or "{}"
         try:
             result = json.loads(content)
         except json.JSONDecodeError:
             result = {}
-        return result
+
+        # Ensure all values are arrays
+        params = result.get("params", {})
+        for action_key, fields in params.items():
+            if isinstance(fields, dict):
+                for field_key, val in fields.items():
+                    if not isinstance(val, list):
+                        fields[field_key] = [val] * n
+
+        return {"params": params, "count": n}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"AI generation failed: {str(exc)[:200]}")
 
