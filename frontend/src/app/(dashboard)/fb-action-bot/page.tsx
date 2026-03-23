@@ -186,7 +186,7 @@ export default function FBActionBotPage() {
   const [sbPasteText, setSbPasteText] = useState("");
   const [sbAccounts, setSbAccounts] = useState<any[]>([]);
   const [sbActions, setSbActions] = useState<Record<string, boolean>>({});
-  const [sbParams, setSbParams] = useState<Record<string, Record<string, string>>>({});
+  const [sbParams, setSbParams] = useState<Record<string, Record<string, any>>>({});
   const [sbAiLoading, setSbAiLoading] = useState(false);
   const [sbAiPrompt, setSbAiPrompt] = useState("");
   const [batchMode, setBatchMode] = useState<"sequential" | "concurrent">("sequential");
