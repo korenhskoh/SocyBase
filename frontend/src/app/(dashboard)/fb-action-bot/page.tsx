@@ -1313,21 +1313,42 @@ export default function FBActionBotPage() {
             )}
 
             {/* Step 3: Action Parameters */}
-            {sbAccounts.length > 0 && Object.entries(sbActions).filter(([, v]) => v).length > 0 && (
+            {sbAccounts.length > 0 && Object.entries(sbActions).filter(([, v]) => v).length > 0 && (() => {
+              const actionDefs = [
+                { key: "change_name", label: "Change Name", fields: [{ name: "first", placeholder: "First name", hint: "e.g. John" }, { name: "last", placeholder: "Last name", hint: "e.g. Smith" }], aiHint: "Generate realistic names" },
+                { key: "change_bio", label: "Change Bio", fields: [{ name: "bio", placeholder: "Bio text (max 101 chars)", hint: "Short bio about yourself" }], aiHint: "Generate short natural bios" },
+                { key: "change_avatar", label: "Change Avatar", fields: [{ name: "image", placeholder: "Image URL (https://...)", hint: "Direct URL to profile picture" }], aiHint: "Not AI-generated (provide URLs)" },
+                { key: "post_to_my_feed", label: "Post to Feed", fields: [{ name: "content", placeholder: "What's on your mind?", hint: "Post text content" }], aiHint: "Generate varied social posts" },
+                { key: "comment_to_post", label: "Comment Post", fields: [{ name: "post_id", placeholder: "Post ID (required)", hint: "Target post to comment on" }, { name: "content", placeholder: "Comment text", hint: "Natural comment" }], aiHint: "Generate natural comments" },
+                { key: "add_friend", label: "Add Friend", fields: [{ name: "uid", placeholder: "Facebook User ID", hint: "Numeric user ID to add" }], aiHint: "Not AI-generated (provide UIDs)" },
+                { key: "join_group", label: "Join Group", fields: [{ name: "group_id", placeholder: "Group ID", hint: "Numeric group ID" }], aiHint: "Not AI-generated (provide group IDs)" },
+                { key: "post_to_group", label: "Post to Group", fields: [{ name: "group_id", placeholder: "Group ID (required)", hint: "Target group" }, { name: "content", placeholder: "Post content", hint: "Group post text" }], aiHint: "Generate group post content" },
+                { key: "page_post_to_feed", label: "Page Post", fields: [{ name: "page_id", placeholder: "Page ID (required)", hint: "Your page ID" }, { name: "content", placeholder: "Post content", hint: "Page post text" }], aiHint: "Generate page post content" },
+              ];
+              const activeActionDefs = actionDefs.filter(a => sbActions[a.key]);
+              const aiHints = activeActionDefs.map(a => `${a.label}: ${a.aiHint}`).join(", ");
+              const totalTasks = sbAccounts.length * activeActionDefs.length;
+
+              return (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-white/40">Step 3: Set Parameters</p>
-                  <div className="flex items-center gap-2">
-                    <input placeholder="AI prompt: e.g. generate Chinese names, positive comments about jade..."
+                  <span className="text-[10px] text-white/20">{totalTasks} tasks × 3 credits = {totalTasks * 3} credits</span>
+                </div>
+
+                {/* AI Generate section */}
+                <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-blue-300/70">AI Generate — {aiHints}</p>
+                  <div className="flex gap-2">
+                    <input placeholder={`e.g. ${activeActionDefs[0]?.key === "change_name" ? "generate Chinese names for jade business accounts" : activeActionDefs[0]?.key === "change_bio" ? "bios about jade jewelry, Chinese style" : "natural comments about products"}`}
                       value={sbAiPrompt} onChange={(e) => setSbAiPrompt(e.target.value)}
-                      className="w-64 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white placeholder-white/20 focus:outline-none" />
+                      className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/20 focus:outline-none" />
                     <button type="button" disabled={sbAiLoading}
                       onClick={async () => {
                         setSbAiLoading(true);
                         try {
-                          const activeActions = Object.entries(sbActions).filter(([, v]) => v).map(([k]) => k);
                           const res = await api.post("/fb-action/batch/ai-generate-params", {
-                            actions: activeActions,
+                            actions: activeActionDefs.map(a => a.key),
                             account_count: sbAccounts.length,
                             prompt: sbAiPrompt || "Generate natural, varied parameters",
                           });
@@ -1336,75 +1357,80 @@ export default function FBActionBotPage() {
                         } catch { showToast("error", "AI generation failed"); }
                         setSbAiLoading(false);
                       }}
-                      className="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg text-xs font-medium transition disabled:opacity-40 whitespace-nowrap">
+                      className="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg text-xs font-medium transition disabled:opacity-40 whitespace-nowrap">
                       {sbAiLoading ? "Generating..." : "AI Generate"}
                     </button>
                   </div>
                 </div>
 
                 {/* Per-action param inputs */}
-                {[
-                  { key: "change_name", label: "Change Name", fields: [{ name: "first", placeholder: "First name" }, { name: "last", placeholder: "Last name" }] },
-                  { key: "change_bio", label: "Change Bio", fields: [{ name: "bio", placeholder: "Bio text" }] },
-                  { key: "change_avatar", label: "Change Avatar", fields: [{ name: "image", placeholder: "Image URL" }] },
-                  { key: "post_to_my_feed", label: "Post to Feed", fields: [{ name: "content", placeholder: "Post content" }] },
-                  { key: "comment_to_post", label: "Comment Post", fields: [{ name: "post_id", placeholder: "Post ID" }, { name: "content", placeholder: "Comment text" }] },
-                  { key: "add_friend", label: "Add Friend", fields: [{ name: "uid", placeholder: "User ID to add" }] },
-                  { key: "join_group", label: "Join Group", fields: [{ name: "group_id", placeholder: "Group ID" }] },
-                  { key: "post_to_group", label: "Post to Group", fields: [{ name: "group_id", placeholder: "Group ID" }, { name: "content", placeholder: "Post content" }] },
-                  { key: "page_post_to_feed", label: "Page Post", fields: [{ name: "page_id", placeholder: "Page ID" }, { name: "content", placeholder: "Post content" }] },
-                ].filter(a => sbActions[a.key]).map(action => (
+                {activeActionDefs.map(action => (
                   <div key={action.key} className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2">
                     <p className="text-xs text-white/50 font-medium">{action.label}</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {action.fields.map(field => (
-                        <input key={field.name} placeholder={field.placeholder}
-                          value={sbParams[action.key]?.[field.name] || ""}
-                          onChange={(e) => setSbParams(prev => ({
-                            ...prev,
-                            [action.key]: { ...(prev[action.key] || {}), [field.name]: e.target.value }
-                          }))}
-                          className="bg-black/20 border border-white/10 rounded px-2 py-1.5 text-xs text-white placeholder-white/20 focus:outline-none" />
+                        <div key={field.name}>
+                          <input placeholder={field.placeholder}
+                            value={sbParams[action.key]?.[field.name] || ""}
+                            onChange={(e) => setSbParams(prev => ({
+                              ...prev,
+                              [action.key]: { ...(prev[action.key] || {}), [field.name]: e.target.value }
+                            }))}
+                            className="w-full bg-black/20 border border-white/10 rounded px-2 py-1.5 text-xs text-white placeholder-white/20 focus:outline-none" />
+                          <p className="text-[10px] text-white/15 mt-0.5">{field.hint}</p>
+                        </div>
                       ))}
                     </div>
-                    <p className="text-[10px] text-white/20">Same value for all accounts. Use AI Generate for unique per-account values.</p>
                   </div>
                 ))}
               </div>
-            )}
+              );
+            })()}
 
             {/* Step 4: Generate & Run */}
-            {sbAccounts.length > 0 && Object.entries(sbActions).filter(([, v]) => v).length > 0 && (
-              <button type="button"
-                onClick={() => {
-                  // Build CSV rows
-                  const activeActions = Object.entries(sbActions).filter(([, v]) => v).map(([k]) => k);
-                  const headers = "cookie,user_agent,action_name,repeat_count,input,content,images,image,video_url,preset_id,page_id,group_id,post_id,comment_id,parent_post_id,first,last,middle,bio,uid,proxy_host,proxy_port,proxy_username,proxy_password";
-                  const rows: string[] = [];
-                  const escape = (v: string) => v && (v.includes(",") || v.includes('"')) ? `"${v.replace(/"/g, '""')}"` : (v || "");
-
-                  for (const acct of sbAccounts) {
-                    for (const actionKey of activeActions) {
-                      const p = sbParams[actionKey] || {};
-                      rows.push([
-                        escape(acct.cookies), escape(acct.user_agent || ""), actionKey, "1",
-                        "", escape(p.content || ""), "", escape(p.image || ""), "", "",
-                        escape(p.page_id || ""), escape(p.group_id || ""), escape(p.post_id || ""),
-                        "", "", escape(p.first || ""), escape(p.last || ""), escape(p.middle || ""),
-                        escape(p.bio || ""), escape(p.uid || ""), "", "", "", "",
-                      ].join(","));
-                    }
+            {sbAccounts.length > 0 && Object.entries(sbActions).filter(([, v]) => v).length > 0 && (() => {
+              const buildCsv = () => {
+                const activeActions = Object.entries(sbActions).filter(([, v]) => v).map(([k]) => k);
+                const headers = "cookie,user_agent,action_name,repeat_count,input,content,images,image,video_url,preset_id,page_id,group_id,post_id,comment_id,parent_post_id,first,last,middle,bio,uid,proxy_host,proxy_port,proxy_username,proxy_password";
+                const rows: string[] = [];
+                const escape = (v: string) => v && (v.includes(",") || v.includes('"')) ? `"${v.replace(/"/g, '""')}"` : (v || "");
+                for (const acct of sbAccounts) {
+                  for (const actionKey of activeActions) {
+                    const p = sbParams[actionKey] || {};
+                    rows.push([
+                      escape(acct.cookies), escape(acct.user_agent || ""), actionKey, "1",
+                      "", escape(p.content || ""), "", escape(p.image || ""), "", "",
+                      escape(p.page_id || ""), escape(p.group_id || ""), escape(p.post_id || ""),
+                      "", "", escape(p.first || ""), escape(p.last || ""), escape(p.middle || ""),
+                      escape(p.bio || ""), escape(p.uid || ""), "", "", "", "",
+                    ].join(","));
                   }
-
-                  const csv = [headers, ...rows].join("\n");
-                  const file = new File([csv], "smart_batch.csv", { type: "text/csv" });
-                  setBatchFile(file);
-                  showToast("success", `Generated ${rows.length} actions for ${sbAccounts.length} accounts`);
-                }}
-                className="w-full py-3 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 rounded-xl text-sm font-medium transition">
-                Generate CSV ({sbAccounts.length} accounts × {Object.entries(sbActions).filter(([, v]) => v).length} actions = {sbAccounts.length * Object.entries(sbActions).filter(([, v]) => v).length} tasks)
-              </button>
-            )}
+                }
+                return { csv: [headers, ...rows].join("\n"), count: rows.length };
+              };
+              const taskCount = sbAccounts.length * Object.entries(sbActions).filter(([, v]) => v).length;
+              return (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => {
+                    const { csv, count } = buildCsv();
+                    setBatchFile(new File([csv], "smart_batch.csv", { type: "text/csv" }));
+                    showToast("success", `Generated ${count} actions — scroll down to start batch`);
+                  }} className="flex-1 py-3 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 rounded-xl text-sm font-medium transition">
+                    Load CSV ({taskCount} tasks × 3 credits = {taskCount * 3} credits)
+                  </button>
+                  <button type="button" onClick={() => {
+                    const { csv, count } = buildCsv();
+                    const blob = new Blob([csv], { type: "text/csv" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url; a.download = `smart_batch_${count}_actions.csv`; a.click();
+                    URL.revokeObjectURL(url);
+                  }} className="px-4 py-3 bg-white/5 hover:bg-white/10 text-white/40 rounded-xl text-sm transition">
+                    Export CSV
+                  </button>
+                </div>
+              );
+            })()}
           </div>
 
           {/* CSV Upload */}
