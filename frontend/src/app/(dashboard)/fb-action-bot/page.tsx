@@ -3834,14 +3834,39 @@ export default function FBActionBotPage() {
                         ))}
                       </div>
                     )}
-                    {smartSetupResult.stats?.codes_detected?.length > 0 && (
-                      <div className="flex gap-1.5 flex-wrap items-center">
-                        <span className="text-xs text-white/30">Codes:</span>
-                        {smartSetupResult.stats.codes_detected.map((code: string) => (
-                          <span key={code} className="px-2 py-0.5 bg-amber-500/10 text-amber-300 rounded text-xs font-mono">{code}</span>
-                        ))}
-                      </div>
-                    )}
+                    {/* Codes + readiness status */}
+                    {(() => {
+                      const codesCount = smartSetupResult.stats?.codes_detected?.length || 0;
+                      const commentsCount = smartSetupResult.stats?.comments_analyzed || 0;
+                      const isReady = codesCount >= 2;
+                      return <>
+                        {codesCount > 0 && (
+                          <div className="flex gap-1.5 flex-wrap items-center">
+                            <span className="text-xs text-white/30">Codes:</span>
+                            {smartSetupResult.stats.codes_detected.map((code: string) => (
+                              <span key={code} className="px-2 py-0.5 bg-amber-500/10 text-amber-300 rounded text-xs font-mono">{code}</span>
+                            ))}
+                          </div>
+                        )}
+                        {/* Readiness alert */}
+                        <div className={`rounded-lg px-3 py-2 text-xs flex items-center gap-2 ${
+                          isReady ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-amber-500/10 border border-amber-500/20"
+                        }`}>
+                          <span className={`w-2 h-2 rounded-full ${isReady ? "bg-emerald-500" : "bg-amber-500 animate-pulse"}`} />
+                          {isReady ? (
+                            <span className="text-emerald-300">Ready — {codesCount} codes detected, {commentsCount} comments analyzed. Good to proceed.</span>
+                          ) : (
+                            <span className="text-amber-300">
+                              {codesCount === 0
+                                ? `No product codes detected in ${commentsCount} comments. Click "Analyze More" to scrape more comments for better code detection.`
+                                : `Only ${codesCount} code detected. At least 2 recommended. Click "Analyze More" for better results.`
+                              }
+                            </span>
+                          )}
+                        </div>
+                      </>;
+                    })()}
+
                     <div className="flex gap-2 pt-1">
                       <button onClick={() => {
                         const cfg = smartSetupResult.config;
@@ -3875,7 +3900,7 @@ export default function FBActionBotPage() {
                         disabled={smartSetupLoading}
                         onClick={async () => {
                           setSmartSetupLoading(true);
-                          setSmartSetupStep("Scraping more comments...");
+                          setSmartSetupStep("Analyzing more comments...");
                           try {
                             const url = smartSetupUrl.trim();
                             const prevCount = smartSetupResult?.stats?.comments_analyzed || 0;
@@ -3895,7 +3920,7 @@ export default function FBActionBotPage() {
                           setSmartSetupLoading(false);
                         }}
                         className="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg text-sm transition disabled:opacity-40">
-                        {smartSetupLoading ? "Scraping..." : `Scrape More (+200)`}
+                        {smartSetupLoading ? "Analyzing..." : "Analyze More (+200)"}
                       </button>
                       <button onClick={() => setSmartSetupResult(null)}
                         className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/40 rounded-lg text-sm transition">
