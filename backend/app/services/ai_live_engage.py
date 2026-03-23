@@ -24,12 +24,19 @@ ORDER_PATTERNS_BY_LANG = {
         "+1", "want", "order", "want this!", "order please",
         "+1 please", "interested!", "pm", "i want this",
         "how to order?", "how much?", "take one",
+        "me!", "mine!", "reserve", "book one", "want one",
+        "grab", "get one", "take it", "yes please", "count me in",
+        "sign me up", "add me", "want to buy", "deal!",
+        "sold!", "take two", "need this", "must have",
     ],
     "chinese": [
         "+1", "要", "想要", "下单", "买", "我要",
         "拿一个", "怎么买", "多少钱", "要一个",
         "来一个", "买买买", "想买", "订一个",
         "有货吗", "还有吗", "要这个", "pm",
+        "收", "收一个", "来", "给我一个", "我也要",
+        "帮我留", "预订", "必须要", "秒杀", "抢",
+        "我先", "留一个", "买了", "出手", "冲",
     ],
 }
 # Combined fallback (English + Chinese, default)
@@ -514,18 +521,71 @@ class AILiveEngageService:
         # Fallback: language-aware generic comment if AI fails
         fallbacks_by_lang = {
             "chinese": {
-                "ask_question": ["多少钱", "有其他颜色吗", "可以包邮吗", "还有货吗"],
-                "good_vibe": ["不错", "好看", "可以", "质量不错"],
-                "react_comment": ["对啊", "是的", "确实", "我也觉得"],
-                "repeat_question": ["也想知道", "对呀多少钱", "怎么买"],
-                "share_experience": ["之前买过不错", "朋友推荐的", "用了很久了"],
+                "ask_question": [
+                    "多少钱", "有其他颜色吗", "可以包邮吗", "还有货吗",
+                    "尺寸有哪些", "材质是什么", "能退换吗", "有优惠吗",
+                    "这个重量多少", "能开发票吗", "几天能到", "有保障吗",
+                    "能刷卡吗", "有实物图吗", "限量的吗", "还会补货吗",
+                    "新款吗", "有套装吗", "能定制吗",
+                ],
+                "good_vibe": [
+                    "不错", "好看", "可以", "质量不错", "性价比高",
+                    "这个可以", "眼光好", "漂亮", "精致", "大气",
+                    "有品位", "不错不错", "越看越喜欢", "心动了",
+                    "确实好看", "值得入手", "品质在线", "爱了",
+                ],
+                "react_comment": [
+                    "对啊", "是的", "确实", "我也觉得", "同感",
+                    "说得对", "一样的想法", "赞同", "没错",
+                    "真的吗", "哇塞", "厉害了", "涨知识了",
+                    "学到了", "原来如此",
+                ],
+                "repeat_question": [
+                    "也想知道", "对呀多少钱", "怎么买", "我也想问",
+                    "同问", "求价格", "怎么下单啊", "等回复",
+                    "一样的问题", "也想了解", "求解答",
+                ],
+                "share_experience": [
+                    "之前买过不错", "朋友推荐的", "用了很久了",
+                    "上次买的质量很好", "回购好几次了", "送人也合适",
+                    "戴了好多人问", "家人都说好看", "超出预期",
+                    "收到实物比图片好看", "客服态度也不错",
+                ],
             },
             "english": {
-                "ask_question": ["how much?", "any other colors?", "can ship?", "still available?"],
-                "good_vibe": ["looks nice", "not bad", "good quality", "nice one"],
-                "react_comment": ["same here", "agree", "true", "yeah"],
-                "repeat_question": ["want to know too", "how much is it?", "same question"],
-                "share_experience": ["bought before quite good", "friend recommended", "have one already"],
+                "ask_question": [
+                    "how much?", "any other colors?", "can ship?", "still available?",
+                    "what size?", "what material?", "any discount?", "how long to ship?",
+                    "can return?", "is it new?", "limited edition?", "any warranty?",
+                    "weight?", "real or fake?", "any set deal?", "last piece?",
+                    "can customize?", "bulk price?",
+                ],
+                "good_vibe": [
+                    "looks nice", "not bad", "good quality", "nice one",
+                    "love it", "beautiful", "stunning", "great price",
+                    "worth it", "impressed", "classy", "elegant",
+                    "fire", "so pretty", "amazing quality", "want!",
+                    "eye catching", "gorgeous",
+                ],
+                "react_comment": [
+                    "same here", "agree", "true", "yeah", "exactly",
+                    "right?", "for real", "totally", "100%", "so true",
+                    "I think so too", "makes sense", "good point",
+                    "omg yes", "facts",
+                ],
+                "repeat_question": [
+                    "want to know too", "how much is it?", "same question",
+                    "also curious", "waiting for answer", "anyone know?",
+                    "me too, how much?", "same, what's the price?",
+                    "also wondering", "need to know too",
+                ],
+                "share_experience": [
+                    "bought before quite good", "friend recommended", "have one already",
+                    "got one last time, love it", "been using for months",
+                    "gave one as gift, they loved it", "second purchase already",
+                    "quality surprised me", "better than expected",
+                    "my go-to brand now", "no regrets buying this",
+                ],
             },
         }
         # Pick language from setting or auto-detect (default: English)
