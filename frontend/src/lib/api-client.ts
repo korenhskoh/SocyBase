@@ -691,7 +691,7 @@ export const fbActionApi = {
       params: { format },
       responseType: format === "csv" ? "blob" : undefined,
     }),
-  liveEngageTriggerCode: (sessionId: string, data: { code: string; count: number; duration_minutes: number }) =>
+  liveEngageTriggerCode: (sessionId: string, data: { code: string; count: number; duration_minutes: number; quantity_variation?: boolean }) =>
     api.post(`/fb-action/live-engage/${sessionId}/trigger-code`, data),
   liveEngageUpdateTrigger: (sessionId: string, triggerId: string, data: { action: string }) =>
     api.patch(`/fb-action/live-engage/${sessionId}/trigger-code/${triggerId}`, data),
