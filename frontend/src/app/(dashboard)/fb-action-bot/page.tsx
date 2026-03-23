@@ -1281,6 +1281,24 @@ export default function FBActionBotPage() {
                   </div>
                 </div>
               )}
+              {/* Recent account uploads from livestream sessions */}
+              {sbAccounts.length === 0 && (
+                <button type="button" onClick={async () => {
+                  try {
+                    const res = await fbActionApi.liveEngageRecentAccounts();
+                    const recent = res.data.recent || [];
+                    if (recent.length === 0) { showToast("info", "No recent account uploads found"); return; }
+                    // Show as selectable list
+                    const choice = recent.find((r: any) => r.account_count > 0);
+                    if (choice) {
+                      setSbAccounts(choice.accounts);
+                      showToast("success", `Loaded ${choice.account_count} accounts from "${choice.title}"`);
+                    }
+                  } catch { showToast("error", "Failed to load recent accounts"); }
+                }} className="text-xs text-blue-400/80 hover:text-blue-300 cursor-pointer">
+                  Load from recent uploads
+                </button>
+              )}
             </div>
 
             {/* Step 2: Select Actions */}
@@ -1389,6 +1407,43 @@ export default function FBActionBotPage() {
                     </div>
                   </div>
                 ))}
+              {/* Preview AI-generated values */}
+              {Object.values(sbParams).some((v: any) => Object.values(v).some((f: any) => Array.isArray(f))) && (
+                <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-white/50 font-medium">Preview (AI-generated per account)</p>
+                  <div className="max-h-48 overflow-y-auto">
+                    <table className="w-full text-[10px] text-white/40">
+                      <thead>
+                        <tr className="border-b border-white/5">
+                          <th className="text-left py-1 px-1">#</th>
+                          <th className="text-left py-1 px-1">Account</th>
+                          {Object.entries(sbActions).filter(([, v]) => v).map(([actionKey]) =>
+                            Object.keys(sbParams[actionKey] || {}).filter(f => Array.isArray((sbParams[actionKey] || {})[f])).map(field => (
+                              <th key={`${actionKey}-${field}`} className="text-left py-1 px-1">{field}</th>
+                            ))
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sbAccounts.slice(0, 10).map((acct: any, i: number) => (
+                          <tr key={i} className="border-b border-white/5">
+                            <td className="py-1 px-1 text-white/20">{i + 1}</td>
+                            <td className="py-1 px-1 truncate max-w-[120px]">{acct.email}</td>
+                            {Object.entries(sbActions).filter(([, v]) => v).map(([actionKey]) =>
+                              Object.entries(sbParams[actionKey] || {}).filter(([, v]) => Array.isArray(v)).map(([field, values]: [string, any]) => (
+                                <td key={`${actionKey}-${field}`} className="py-1 px-1 text-white/60 truncate max-w-[150px]">{values[i % values.length] || "-"}</td>
+                              ))
+                            )}
+                          </tr>
+                        ))}
+                        {sbAccounts.length > 10 && (
+                          <tr><td colSpan={20} className="py-1 px-1 text-white/20 text-center">... and {sbAccounts.length - 10} more</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
               </div>
               );
             })()}
