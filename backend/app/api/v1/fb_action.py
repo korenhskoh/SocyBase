@@ -3440,12 +3440,14 @@ async def live_engage_trigger_code(
     trigger_id = str(uuid.uuid4())[:8]
     pending = dict(session.pending_actions or {})
     queue = list(pending.get("trigger_queue", []))
+    qty_variation = bool(data.get("quantity_variation", True))
     queue.append({
         "id": trigger_id,
         "code": code,
         "count": count,
         "duration_minutes": duration_minutes,
-        "status": "pending",  # pending, running, paused, completed
+        "quantity_variation": qty_variation,
+        "status": "pending",
         "added_at": datetime.now(timezone.utc).isoformat(),
     })
     pending["trigger_queue"] = queue

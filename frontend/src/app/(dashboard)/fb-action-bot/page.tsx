@@ -312,6 +312,7 @@ export default function FBActionBotPage() {
   const [leTriggerCode, setLeTriggerCode] = useState("");
   const [leTriggerCount, setLeTriggerCount] = useState(5);
   const [leTriggerDuration, setLeTriggerDuration] = useState(2);
+  const [leTriggerVariation, setLeTriggerVariation] = useState(true);
   const [leTriggerLoading, setLeTriggerLoading] = useState(false);
   const [leEditSettings, setLeEditSettings] = useState(false);
   const [leStarting, setLeStarting] = useState(false);
@@ -4770,13 +4771,18 @@ export default function FBActionBotPage() {
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-sm text-white focus:outline-none"
                         onChange={(e) => setLeTriggerDuration(Math.max(1, parseInt(e.target.value) || 1))} />
                     </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer" title="Add +N quantity variation">
+                      <input type="checkbox" checked={leTriggerVariation} onChange={(e) => setLeTriggerVariation(e.target.checked)}
+                        className="w-3.5 h-3.5 rounded accent-amber-500" />
+                      <span className="text-[10px] text-white/30">+N</span>
+                    </label>
                     <button
                       disabled={leTriggerLoading || !leTriggerCode.trim()}
                       onClick={async () => {
                         setLeTriggerLoading(true);
                         try {
                           await fbActionApi.liveEngageTriggerCode(liveEngageSession.id, {
-                            code: leTriggerCode.trim(), count: leTriggerCount, duration_minutes: leTriggerDuration,
+                            code: leTriggerCode.trim(), count: leTriggerCount, duration_minutes: leTriggerDuration, quantity_variation: leTriggerVariation,
                           });
                           showToast("success", `Added to queue: ${leTriggerCode} x${leTriggerCount}`);
                           setLeTriggerCode("");

@@ -972,7 +972,9 @@ async def _engage_loop(
                             account_idx += 1
 
                             qty = random.choices([1, 2, 3], weights=[6, 3, 1], k=1)[0]
-                            if adaptive.quantity_variation:
+                            # Use per-trigger quantity_variation (fallback to global setting)
+                            t_qty_var = next_trigger.get("quantity_variation", adaptive.quantity_variation)
+                            if t_qty_var:
                                 burst_content = f"{t_code}+{qty}" if random.random() < 0.5 else f"{t_code} +{qty}"
                             else:
                                 burst_content = t_code
