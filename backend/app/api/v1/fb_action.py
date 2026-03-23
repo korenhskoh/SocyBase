@@ -442,6 +442,81 @@ async def download_csv_template():
     )
 
 
+# ── POST /fb-action/batch/ai-generate-params ──────────────────────
+
+@router.post("/batch/ai-generate-params")
+async def batch_ai_generate_params(
+    data: dict = Body(...),
+    user: User = Depends(get_current_user),
+):
+    """AI-generate parameters for batch actions."""
+    from openai import AsyncOpenAI
+    from app.config import get_settings
+    import asyncio as aio
+
+    settings = get_settings()
+    openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+    actions = data.get("actions", [])
+    account_count = data.get("account_count", 1)
+    prompt = data.get("prompt", "Generate natural, varied parameters")
+
+    action_schema = {
+        "change_name": {"fields": ["first", "last"], "desc": "Generate realistic full names"},
+        "change_bio": {"fields": ["bio"], "desc": "Generate short, natural bios (1-2 sentences)"},
+        "post_to_my_feed": {"fields": ["content"], "desc": "Generate varied social media posts"},
+        "comment_to_post": {"fields": ["content"], "desc": "Generate natural comments"},
+        "post_to_group": {"fields": ["content"], "desc": "Generate group post content"},
+        "page_post_to_feed": {"fields": ["content"], "desc": "Generate page post content"},
+    }
+
+    system_prompt = f"""Generate parameters for Facebook batch actions.
+User instruction: {prompt}
+Number of accounts: {account_count}
+
+For each action, generate the required fields. If the action needs unique values per account, generate {min(account_count, 20)} variations.
+
+Return JSON:
+{{
+  "params": {{
+    "action_name": {{
+      "field_name": "value or array of values for multiple accounts"
+    }}
+  }}
+}}
+
+Actions to generate for:
+"""
+    for action in actions:
+        schema = action_schema.get(action, {})
+        if schema:
+            system_prompt += f"\n- {action}: fields={schema['fields']}, {schema['desc']}"
+        else:
+            system_prompt += f"\n- {action}: generate appropriate default parameters"
+
+    try:
+        resp = await aio.wait_for(
+            openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Generate parameters for {len(actions)} actions across {account_count} accounts."},
+                ],
+                temperature=0.7, max_tokens=3000,
+                response_format={"type": "json_object"},
+            ),
+            timeout=30,
+        )
+        content = resp.choices[0].message.content or "{}"
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError:
+            result = {}
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI generation failed: {str(exc)[:200]}")
+
+
 # ── POST /fb-action/batch/upload ────────────────────────────────────
 
 @router.post("/batch/upload")
