@@ -1640,7 +1640,44 @@ export default function FBActionBotPage() {
                 <p className="text-xs text-red-400 mb-3">{activeBatch.error_message}</p>
               )}
 
-              {/* Per-account results with errors */}
+              {/* Action Logs */}
+              {(activeBatch.logs?.length ?? 0) > 0 && (
+                <div className="mb-3">
+                  <p className="text-xs text-white/30 mb-1">Action Log ({activeBatch.logs.length} entries)</p>
+                  <div className="max-h-48 overflow-y-auto space-y-1">
+                    {(activeBatch.logs || []).map((log: any, i: number) => (
+                      <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs ${
+                        log.status === "success" ? "bg-emerald-500/5" : "bg-red-500/5"
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${log.status === "success" ? "bg-emerald-400" : "bg-red-400"}`} />
+                        <span className={`font-medium ${log.status === "success" ? "text-emerald-400" : "text-red-400"}`}>
+                          {log.action_name?.replace(/_/g, " ")}
+                        </span>
+                        {log.params && (
+                          <span className="text-white/20 truncate max-w-[200px]">
+                            {log.action_name === "change_name" && `${log.params.first || ""} ${log.params.last || ""}`}
+                            {log.action_name === "change_bio" && (log.params.bio || "").substring(0, 30)}
+                            {log.action_name === "comment_to_post" && (log.params.content || "").substring(0, 30)}
+                            {log.action_name === "post_to_my_feed" && (log.params.content || "").substring(0, 30)}
+                            {log.action_name === "add_friend" && `uid: ${log.params.uid || ""}`}
+                            {log.action_name === "join_group" && `group: ${log.params.group_id || ""}`}
+                          </span>
+                        )}
+                        {log.created_at && (
+                          <span className="text-white/15 ml-auto shrink-0">
+                            {new Date(log.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                          </span>
+                        )}
+                        {log.error_message && (
+                          <span className="text-red-300/60 truncate max-w-[200px]">{log.error_message}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Legacy per-account results (for login batches) */}
               {(activeBatch.results?.length ?? 0) > 0 && (
                 <div className="mb-3 max-h-40 overflow-y-auto space-y-1">
                   {(activeBatch.results || []).map((r: any, i: number) => (

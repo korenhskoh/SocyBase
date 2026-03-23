@@ -691,6 +691,16 @@ async def get_batch_status(
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
 
+    # Fetch action logs for this batch (last 50)
+    from app.models.fb_action_log import FBActionLog
+    logs_result = await db.execute(
+        select(FBActionLog)
+        .where(FBActionLog.batch_id == batch.id)
+        .order_by(FBActionLog.created_at.desc())
+        .limit(50)
+    )
+    logs = logs_result.scalars().all()
+
     return {
         "id": str(batch.id),
         "status": batch.status,
@@ -705,6 +715,16 @@ async def get_batch_status(
         "created_at": batch.created_at.isoformat() if batch.created_at else None,
         "started_at": batch.started_at.isoformat() if batch.started_at else None,
         "completed_at": batch.completed_at.isoformat() if batch.completed_at else None,
+        "logs": [
+            {
+                "action_name": log.action_name,
+                "status": log.status,
+                "error_message": log.error_message,
+                "params": log.action_params,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in logs
+        ],
     }
 
 
