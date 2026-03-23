@@ -1287,7 +1287,7 @@ export default function FBActionBotPage() {
                   try {
                     const res = await fbActionApi.liveEngageRecentAccounts();
                     const recent = res.data.recent || [];
-                    if (recent.length === 0) { showToast("info", "No recent account uploads found"); return; }
+                    if (recent.length === 0) { showToast("error", "No recent account uploads found"); return; }
                     // Show as selectable list
                     const choice = recent.find((r: any) => r.account_count > 0);
                     if (choice) {
