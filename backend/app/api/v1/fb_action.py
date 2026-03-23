@@ -460,22 +460,21 @@ async def batch_ai_generate_params(
         raise HTTPException(status_code=400, detail="Select at least one action")
 
     # Charge 2 credits for AI generation
-    from app.models.credit import CreditTransaction
-    balance_result = await db.execute(
-        select(func.coalesce(func.sum(CreditTransaction.amount), 0)).where(
-            CreditTransaction.tenant_id == user.tenant_id
-        )
+    from app.models.credit import CreditBalance, CreditTransaction
+    bal_result = await db.execute(
+        select(CreditBalance).where(CreditBalance.tenant_id == user.tenant_id)
     )
-    balance = balance_result.scalar() or 0
-    if balance < 2:
-        raise HTTPException(status_code=402, detail="Insufficient credits (need 2)")
-    new_balance = balance - 2
+    credit_bal = bal_result.scalar_one_or_none()
+    if not credit_bal or credit_bal.balance < 2:
+        raise HTTPException(status_code=402, detail=f"Insufficient credits (need 2, have {credit_bal.balance if credit_bal else 0})")
+    credit_bal.balance -= 2
+    credit_bal.lifetime_used += 2
     db.add(CreditTransaction(
         tenant_id=user.tenant_id,
         user_id=user.id,
         type="usage",
         amount=-2,
-        balance_after=new_balance,
+        balance_after=credit_bal.balance,
         description=f"AI batch param generation ({len(actions)} actions)",
         reference_type="ai_batch_params",
     ))
